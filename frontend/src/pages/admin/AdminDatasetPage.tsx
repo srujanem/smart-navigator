@@ -17,6 +17,7 @@ import {
   getAdminIndexReport,
   getVenue,
   getVenueGraph,
+  mediaUrl,
   rebuildAdminIndex,
   uploadAdminPhotos,
 } from '../../lib/api';
@@ -547,7 +548,7 @@ export const AdminDatasetPage: React.FC = () => {
                       className="group relative overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-slate-200 shadow-sm"
                     >
                       <img
-                        src={ph.url}
+                        src={mediaUrl(ph.url)}
                         alt={selectedNode.name}
                         className="h-32 w-full object-cover"
                       />

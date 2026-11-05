@@ -24,6 +24,7 @@ import {
   fetchSamplePhotoAsFile,
   getSampleQueries,
   localizePhoto,
+  mediaUrl,
 } from '../lib/api';
 import { formatLevel } from '../lib/locationStore';
 import type {
@@ -460,7 +461,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                         >
                           <div className="relative h-24 w-full overflow-hidden bg-slate-900">
                             <img
-                              src={s.photo_url}
+                              src={mediaUrl(s.photo_url)}
                               alt={s.label}
                               className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                             />
@@ -547,7 +548,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                   {previewUrl && (
                     <div className="relative h-28 w-36 shrink-0 overflow-hidden rounded-xl ring-2 ring-cyan-400/50">
                       <img
-                        src={previewUrl}
+                        src={mediaUrl(previewUrl)}
                         alt="Uploaded query"
                         className="h-full w-full object-cover"
                       />
@@ -675,7 +676,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                   <div className="overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-slate-200">
                     <div className="relative h-44 w-full">
                       <img
-                        src={previewUrl || result.query_photo_url}
+                        src={previewUrl || mediaUrl(result.query_photo_url)}
                         alt="Your uploaded photo"
                         className="h-full w-full object-cover"
                       />
@@ -689,7 +690,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                     <div className="relative h-44 w-full flex items-center justify-center">
                       {result.best.matched_photo_url ? (
                         <img
-                          src={result.best.matched_photo_url}
+                          src={mediaUrl(result.best.matched_photo_url)}
                           alt={result.best.name}
                           className="h-full w-full object-cover"
                         />
@@ -863,7 +864,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                         <div className="relative h-32 w-full bg-slate-900">
                           {cand.matched_photo_url ? (
                             <img
-                              src={cand.matched_photo_url}
+                              src={mediaUrl(cand.matched_photo_url)}
                               alt={cand.name}
                               className="h-full w-full object-cover"
                             />

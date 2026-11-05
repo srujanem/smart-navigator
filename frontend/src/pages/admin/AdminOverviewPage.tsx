@@ -11,7 +11,7 @@ import {
   TrendingUp,
   Users,
 } from 'lucide-react';
-import { getAdminOverview } from '../../lib/api';
+import { getAdminOverview, mediaUrl } from '../../lib/api';
 import { formatLevel } from '../../lib/locationStore';
 import { ErrorState } from '../../components/ErrorState';
 import { useAdminVenue } from './adminVenueContext';
@@ -398,7 +398,7 @@ export const AdminOverviewPage: React.FC = () => {
                     <div className="h-12 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-900 ring-1 ring-slate-200">
                       {loc.photo_url ? (
                         <img
-                          src={loc.photo_url}
+                          src={mediaUrl(loc.photo_url)}
                           alt={loc.predicted_name}
                           className="h-full w-full object-cover"
                         />

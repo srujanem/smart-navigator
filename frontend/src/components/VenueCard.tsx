@@ -9,6 +9,7 @@ import {
   Users,
 } from 'lucide-react';
 import type { VenueSummary } from '../lib/types';
+import { mediaUrl } from '../lib/api';
 import { VenueTypeBadge } from './StatusChip';
 
 interface VenueCardProps {
@@ -38,7 +39,7 @@ export const VenueCard: React.FC<VenueCardProps> = ({ venue, dark = false }) => 
       <div className="relative h-44 w-full overflow-hidden bg-slate-900">
         {venue.cover_url ? (
           <img
-            src={venue.cover_url}
+            src={mediaUrl(venue.cover_url)}
             alt={venue.name}
             loading="lazy"
             className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105 opacity-90"

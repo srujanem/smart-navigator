@@ -38,7 +38,7 @@ import {
 import { FloorPlan2D } from '../components/FloorPlan2D';
 import { PhotoLocateModal, type ConfirmedSpot } from '../components/PhotoLocateModal';
 import { ErrorState, Skeleton3D } from '../components/ErrorState';
-import { computeRoute, getVenue, getVenueGraph } from '../lib/api';
+import { computeRoute, getVenue, getVenueGraph, mediaUrl } from '../lib/api';
 import {
   formatEta,
   formatLevel,
@@ -821,14 +821,14 @@ export const RoutePage: React.FC = () => {
                               onClick={(ev) => {
                                 ev.stopPropagation();
                                 setLightboxUrl({
-                                  url: step.photo_url!,
+                                  url: mediaUrl(step.photo_url)!,
                                   caption: `${step.name} (${formatLevel(step.level)})`,
                                 });
                               }}
                               className="mt-3 group relative flex items-center gap-3 rounded-xl bg-slate-50 p-2 ring-1 ring-slate-200/80 hover:ring-indigo-400 transition"
                             >
                               <img
-                                src={step.photo_url}
+                                src={mediaUrl(step.photo_url)}
                                 alt={step.name}
                                 loading="lazy"
                                 className="h-14 w-20 rounded-lg object-cover shrink-0 bg-slate-900"
@@ -878,7 +878,7 @@ export const RoutePage: React.FC = () => {
             className="relative max-w-2xl w-full overflow-hidden rounded-3xl bg-slate-900 ring-1 ring-white/20 shadow-2xl"
           >
             <img
-              src={lightboxUrl.url}
+              src={mediaUrl(lightboxUrl.url)}
               alt={lightboxUrl.caption}
               className="max-h-[75vh] w-full object-contain bg-black"
             />

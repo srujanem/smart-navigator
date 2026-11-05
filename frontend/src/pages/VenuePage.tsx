@@ -39,6 +39,7 @@ import {
   getVenue,
   getVenueGraph,
   getVenuePeople,
+  mediaUrl,
   searchVenue,
 } from '../lib/api';
 import { formatLevel, useVisitorLocation } from '../lib/locationStore';
@@ -832,7 +833,7 @@ export const VenuePage: React.FC = () => {
                 {inspectedNode.photo_url && (
                   <div className="relative h-32 w-full bg-slate-900">
                     <img
-                      src={inspectedNode.photo_url}
+                      src={mediaUrl(inspectedNode.photo_url)}
                       alt={inspectedNode.name}
                       className="h-full w-full object-cover"
                     />
@@ -1049,7 +1050,7 @@ export const VenuePage: React.FC = () => {
                     <div className="relative h-32 w-full overflow-hidden bg-slate-900">
                       {place.photo_url ? (
                         <img
-                          src={place.photo_url}
+                          src={mediaUrl(place.photo_url)}
                           alt={place.name}
                           loading="lazy"
                           className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"

@@ -68,6 +68,24 @@ export function clearAdminSession(): void {
   }
 }
 
+export const API_BASE = (
+  (import.meta as any).env?.VITE_API_URL ||
+  'https://butter-break-advancement-habits.trycloudflare.com'
+).replace(/\/$/, '');
+
+export function mediaUrl(url: string | null | undefined): string {
+  if (!url) return '';
+  if (
+    url.startsWith('http://') ||
+    url.startsWith('https://') ||
+    url.startsWith('blob:') ||
+    url.startsWith('data:')
+  ) {
+    return url;
+  }
+  return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -84,12 +102,13 @@ async function request<T>(
     }
   }
 
+  const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
   let res: Response;
   try {
-    res = await fetch(path, { ...options, headers });
+    res = await fetch(url, { ...options, headers });
   } catch {
     throw new ApiError(
-      'Unable to reach Navigator API server (/api). Ensure the backend service is running on port 8000.',
+      'Unable to reach Navigator API server. Ensure the backend service is running.',
       0,
     );
   }
@@ -187,7 +206,8 @@ export async function fetchSamplePhotoAsFile(
 ): Promise<File> {
   let res: Response;
   try {
-    res = await fetch(photoUrl);
+    const targetUrl = photoUrl.startsWith('http') ? photoUrl : `${API_BASE}${photoUrl}`;
+    res = await fetch(targetUrl);
   } catch {
     throw new ApiError('Could not load sample visitor photo from server.', 0);
   }
