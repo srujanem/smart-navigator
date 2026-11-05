@@ -1,9 +1,10 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { Float, Html, Line, OrbitControls } from '@react-three/drei';
+import { ContactShadows, Float, Html, Line, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { Navigation, Orbit } from 'lucide-react';
+import { Image as ImageIcon, Moon, Navigation, Orbit, Sun } from 'lucide-react';
 import type { Building, GEdge, GNode, Graph, VenueDetail } from '../lib/types';
+import { mediaUrl } from '../lib/api';
 import { formatLevel } from '../lib/locationStore';
 
 export interface Venue3DProps {
@@ -110,6 +111,34 @@ function rectBorder(w: number, d: number): [number, number, number][] {
   ];
 }
 
+const AnimatedLiftCab: React.FC<{
+  x: number;
+  z: number;
+  yMin: number;
+  yMax: number;
+  seed: number;
+}> = ({ x, z, yMin, yMax, seed }) => {
+  const cabRef = useRef<THREE.Mesh>(null);
+  useFrame((state) => {
+    if (!cabRef.current) return;
+    const t = state.clock.getElapsedTime() * 0.45 + seed;
+    const u = (Math.sin(t) + 1) / 2;
+    cabRef.current.position.y = yMin + 1.0 + u * Math.max(0.5, yMax - yMin - 2.0);
+  });
+  return (
+    <mesh ref={cabRef} position={[x, (yMin + yMax) / 2, z]}>
+      <boxGeometry args={[1.25, 1.35, 1.25]} />
+      <meshStandardMaterial
+        color="#22d3ee"
+        emissive="#06b6d4"
+        emissiveIntensity={1.15}
+        transparent
+        opacity={0.86}
+      />
+    </mesh>
+  );
+};
+
 const WalkerAndBeacons: React.FC<{
   routePoints: [number, number, number][];
   startPos: [number, number, number] | null;
@@ -204,12 +233,12 @@ const WalkerAndBeacons: React.FC<{
       {curve && (
         <>
           <mesh ref={walkerRef}>
-            <sphereGeometry args={[0.52, 24, 24]} />
+            <sphereGeometry args={[0.55, 24, 24]} />
             <meshBasicMaterial color="#ffffff" />
           </mesh>
           <mesh ref={walkerAuraRef}>
-            <sphereGeometry args={[1.05, 24, 24]} />
-            <meshBasicMaterial color="#22d3ee" transparent opacity={0.42} />
+            <sphereGeometry args={[1.1, 24, 24]} />
+            <meshBasicMaterial color="#22d3ee" transparent opacity={0.45} />
           </mesh>
         </>
       )}
@@ -281,7 +310,13 @@ const WalkerAndBeacons: React.FC<{
   );
 };
 
-const SceneContent: React.FC<Venue3DProps & { followWalker: boolean }> = ({
+const SceneContent: React.FC<
+  Venue3DProps & {
+    followWalker: boolean;
+    daylight: boolean;
+    showPhotoCards: boolean;
+  }
+> = ({
   venue,
   graph,
   selectedLevel,
@@ -293,6 +328,8 @@ const SceneContent: React.FC<Venue3DProps & { followWalker: boolean }> = ({
   isPlayingWalker = true,
   onSelectNode,
   followWalker,
+  daylight,
+  showPhotoCards,
 }) => {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
@@ -322,7 +359,7 @@ const SceneContent: React.FC<Venue3DProps & { followWalker: boolean }> = ({
     if (routePoints.length < 2) return undefined;
     return routePoints.map((_, idx) => {
       const t = idx / (routePoints.length - 1);
-      const c = new THREE.Color('#38bdf8').lerp(new THREE.Color('#34d399'), t);
+      const c = new THREE.Color('#06b6d4').lerp(new THREE.Color('#10b981'), t);
       return [c.r, c.g, c.b] as [number, number, number];
     });
   }, [routePoints]);
@@ -332,6 +369,8 @@ const SceneContent: React.FC<Venue3DProps & { followWalker: boolean }> = ({
       id: string;
       x: number;
       z: number;
+      yMin: number;
+      yMax: number;
       yMid: number;
       height: number;
       kind: GEdge['kind'];
@@ -348,6 +387,8 @@ const SceneContent: React.FC<Venue3DProps & { followWalker: boolean }> = ({
         id: e.id,
         x: (sx + tx) / 2,
         z: (sz + tz) / 2,
+        yMin: Math.min(sy, ty),
+        yMax: Math.max(sy, ty),
         yMid: (sy + ty) / 2,
         height: Math.abs(ty - sy),
         kind: e.kind,
@@ -367,79 +408,218 @@ const SceneContent: React.FC<Venue3DProps & { followWalker: boolean }> = ({
     ? tf.toWorld(endNode.x, endNode.y, endNode.level)
     : null;
 
+  const baseFloorY = tf.toWorld(0, 0, tf.levels[0])[1];
+
   return (
     <group>
       <gridHelper
-        args={[85, 42, '#1e293b', '#0f172a']}
-        position={[0, tf.toWorld(0, 0, tf.levels[0])[1] - 2.2, 0]}
+        args={[
+          92,
+          46,
+          daylight ? '#94a3b8' : '#1e293b',
+          daylight ? '#cbd5e1' : '#0f172a',
+        ]}
+        position={[0, baseFloorY - 2.2, 0]}
       />
 
-      {/* Building Floor Slabs */}
-      {venue.buildings.map((b: Building) =>
-        b.floors.map((fl) => {
-          const isFocused = selectedLevel === 'all' || selectedLevel === fl.level;
-          const [cx, wy, cz] = tf.toWorld(b.x + b.w / 2, b.y + b.d / 2, fl.level);
-          const sw = Math.max(b.w * tf.scale, 2.5);
-          const sd = Math.max(b.d * tf.scale, 2.5);
-          const border = rectBorder(sw, sd);
-          const isTopFloor =
-            fl.level === Math.max(...b.floors.map((f) => f.level));
+      {/* Architectural Buildings: Slabs + Glass Curtain Walls + Structural Columns */}
+      {venue.buildings.map((b: Building) => {
+        const sortedFloors = [...b.floors].sort((x, y) => x.level - y.level);
+        const topLvl =
+          sortedFloors.length > 0
+            ? sortedFloors[sortedFloors.length - 1].level
+            : 0;
+        const botLvl = sortedFloors.length > 0 ? sortedFloors[0].level : 0;
+        const [bx, botY, bz] = tf.toWorld(b.x + b.w / 2, b.y + b.d / 2, botLvl);
+        const [, topY] = tf.toWorld(b.x + b.w / 2, b.y + b.d / 2, topLvl);
+        const sw = Math.max(b.w * tf.scale, 2.5);
+        const sd = Math.max(b.d * tf.scale, 2.5);
+        const totalBldgHeight = Math.max(topY - botY + 4.4, 4.4);
+        const colCorners: [number, number][] = [
+          [-sw / 2 + 0.25, -sd / 2 + 0.25],
+          [sw / 2 - 0.25, -sd / 2 + 0.25],
+          [sw / 2 - 0.25, sd / 2 - 0.25],
+          [-sw / 2 + 0.25, sd / 2 - 0.25],
+        ];
 
-          return (
-            <group key={`${b.id}-${fl.id}`} position={[cx, wy, cz]}>
-              <mesh receiveShadow>
-                <boxGeometry args={[sw, 0.28, sd]} />
-                <meshPhysicalMaterial
-                  color={isFocused ? '#102044' : '#0b1329'}
-                  transparent
-                  opacity={isFocused ? 0.58 : 0.14}
-                  roughness={0.22}
-                  metalness={0.15}
-                />
-              </mesh>
-              <Line
-                points={border}
-                position={[0, 0.16, 0]}
-                color={isFocused ? '#38bdf8' : '#334155'}
-                lineWidth={isFocused ? 1.5 : 0.8}
-                transparent
-                opacity={isFocused ? 0.65 : 0.22}
-              />
-              {isTopFloor && (selectedLevel === 'all' || isFocused) && (
-                <Html
-                  position={[-sw / 2 + 1.2, 1.4, -sd / 2 + 1.2]}
-                  center={false}
-                  style={{ pointerEvents: 'none' }}
+        return (
+          <group key={b.id}>
+            {/* Full-Height Corner Structural Pillars */}
+            {selectedLevel === 'all' &&
+              colCorners.map(([px, pz], idx) => (
+                <mesh
+                  key={idx}
+                  position={[bx + px, botY + totalBldgHeight / 2 - 0.2, bz + pz]}
                 >
-                  <div className="whitespace-nowrap rounded-md bg-slate-950/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cyan-300 ring-1 ring-cyan-500/30 backdrop-blur-sm">
-                    {b.name}
-                  </div>
-                </Html>
-              )}
-            </group>
-          );
-        }),
-      )}
+                  <boxGeometry args={[0.28, totalBldgHeight, 0.28]} />
+                  <meshStandardMaterial
+                    color={daylight ? '#64748b' : '#38bdf8'}
+                    transparent
+                    opacity={0.42}
+                  />
+                </mesh>
+              ))}
 
-      {/* Vertical Lift & Stair Shafts */}
-      {verticalShafts.map((sh) => {
+            {sortedFloors.map((fl) => {
+              const isFocused =
+                selectedLevel === 'all' || selectedLevel === fl.level;
+              const [cx, wy, cz] = tf.toWorld(
+                b.x + b.w / 2,
+                b.y + b.d / 2,
+                fl.level,
+              );
+              const border = rectBorder(sw, sd);
+              const isTopFloor = fl.level === topLvl;
+              const wallH = selectedLevel === 'all' ? 4.2 : 3.2;
+
+              return (
+                <group key={`${b.id}-${fl.id}`} position={[cx, wy, cz]}>
+                  {/* Floor Slab */}
+                  <mesh receiveShadow>
+                    <boxGeometry args={[sw, 0.32, sd]} />
+                    <meshPhysicalMaterial
+                      color={
+                        daylight
+                          ? isFocused
+                            ? '#f1f5f9'
+                            : '#e2e8f0'
+                          : isFocused
+                            ? '#10224a'
+                            : '#0b1329'
+                      }
+                      transparent
+                      opacity={isFocused ? (daylight ? 0.88 : 0.64) : 0.14}
+                      roughness={0.2}
+                      metalness={0.18}
+                      clearcoat={0.5}
+                    />
+                  </mesh>
+
+                  {/* Translucent Architectural Glass Curtain Wall */}
+                  {isFocused && (
+                    <mesh position={[0, wallH / 2 + 0.16, 0]}>
+                      <boxGeometry args={[sw - 0.14, wallH, sd - 0.14]} />
+                      <meshPhysicalMaterial
+                        color={daylight ? '#bae6fd' : '#1e3a8a'}
+                        transparent
+                        opacity={daylight ? 0.14 : 0.08}
+                        roughness={0.1}
+                        depthWrite={false}
+                      />
+                    </mesh>
+                  )}
+
+                  <Line
+                    points={border}
+                    position={[0, 0.18, 0]}
+                    color={
+                      isFocused
+                        ? daylight
+                          ? '#0284c7'
+                          : '#38bdf8'
+                        : '#475569'
+                    }
+                    lineWidth={isFocused ? 1.7 : 0.8}
+                    transparent
+                    opacity={isFocused ? 0.72 : 0.22}
+                  />
+
+                  {isTopFloor && (selectedLevel === 'all' || isFocused) && (
+                    <Html
+                      position={[-sw / 2 + 1.4, wallH + 0.9, -sd / 2 + 1.4]}
+                      center={false}
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      <div className="whitespace-nowrap rounded-lg bg-slate-950/85 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-cyan-300 ring-1 ring-cyan-500/35 shadow-md backdrop-blur-md">
+                        {b.name}
+                      </div>
+                    </Html>
+                  )}
+                </group>
+              );
+            })}
+          </group>
+        );
+      })}
+
+      {/* Vertical Glass Lift Shafts + Moving Elevator Cars + Stepped Staircases */}
+      {verticalShafts.map((sh, idx) => {
         const color = sh.closed
           ? '#f43f5e'
           : sh.kind === 'lift'
             ? '#06b6d4'
             : '#f59e0b';
+
         return (
-          <group key={sh.id} position={[sh.x, sh.yMid, sh.z]}>
-            <mesh>
-              <cylinderGeometry args={[0.55, 0.55, sh.height, 16]} />
-              <meshStandardMaterial
-                color={color}
-                emissive={color}
-                emissiveIntensity={0.35}
-                transparent
-                opacity={selectedLevel === 'all' ? 0.26 : 0.14}
+          <group key={sh.id}>
+            <group position={[sh.x, sh.yMid, sh.z]}>
+              {sh.kind === 'lift' ? (
+                <>
+                  <mesh>
+                    <boxGeometry args={[1.65, sh.height, 1.65]} />
+                    <meshStandardMaterial
+                      color={color}
+                      emissive={color}
+                      emissiveIntensity={0.3}
+                      transparent
+                      opacity={selectedLevel === 'all' ? 0.18 : 0.1}
+                    />
+                  </mesh>
+                  <lineSegments>
+                    <edgesGeometry
+                      args={[new THREE.BoxGeometry(1.66, sh.height, 1.66)]}
+                    />
+                    <lineBasicMaterial
+                      color={color}
+                      transparent
+                      opacity={0.45}
+                    />
+                  </lineSegments>
+                </>
+              ) : (
+                <>
+                  <mesh>
+                    <cylinderGeometry args={[0.62, 0.62, sh.height, 16]} />
+                    <meshStandardMaterial
+                      color={color}
+                      emissive={color}
+                      emissiveIntensity={0.35}
+                      transparent
+                      opacity={selectedLevel === 'all' ? 0.28 : 0.14}
+                    />
+                  </mesh>
+                  {/* Stepped Stair Treads */}
+                  {selectedLevel === 'all' &&
+                    [0.18, 0.36, 0.54, 0.72, 0.88].map((frac, sIdx) => (
+                      <mesh
+                        key={sIdx}
+                        position={[
+                          Math.cos(sIdx * 0.9) * 0.35,
+                          -sh.height / 2 + sh.height * frac,
+                          Math.sin(sIdx * 0.9) * 0.35,
+                        ]}
+                      >
+                        <boxGeometry args={[0.9, 0.16, 0.55]} />
+                        <meshStandardMaterial
+                          color="#f59e0b"
+                          emissive="#d97706"
+                          emissiveIntensity={0.45}
+                        />
+                      </mesh>
+                    ))}
+                </>
+              )}
+            </group>
+
+            {sh.kind === 'lift' && !sh.closed && selectedLevel === 'all' && (
+              <AnimatedLiftCab
+                x={sh.x}
+                z={sh.z}
+                yMin={sh.yMin}
+                yMax={sh.yMax}
+                seed={idx * 1.7}
               />
-            </mesh>
+            )}
           </group>
         );
       })}
@@ -462,13 +642,13 @@ const SceneContent: React.FC<Venue3DProps & { followWalker: boolean }> = ({
           <Line
             key={e.id}
             points={[
-              [sx, sy + 0.22, sz],
-              [tx, ty + 0.22, tz],
+              [sx, sy + 0.24, sz],
+              [tx, ty + 0.24, tz],
             ]}
-            color={e.closed ? '#f43f5e' : '#64748b'}
-            lineWidth={e.closed ? 2.2 : 1.1}
+            color={e.closed ? '#f43f5e' : daylight ? '#475569' : '#64748b'}
+            lineWidth={e.closed ? 2.4 : 1.2}
             transparent
-            opacity={e.closed ? 0.85 : 0.36}
+            opacity={e.closed ? 0.9 : 0.42}
           />
         );
       })}
@@ -478,13 +658,13 @@ const SceneContent: React.FC<Venue3DProps & { followWalker: boolean }> = ({
         <Line
           points={routePoints}
           vertexColors={routeColors}
-          lineWidth={5}
+          lineWidth={5.5}
           transparent
           opacity={0.98}
         />
       )}
 
-      {/* Place & Corridor Nodes */}
+      {/* Place & Corridor Nodes + Floating Real-Photo Billboards */}
       {graph.nodes.map((node) => {
         const isStart = node.id === startNodeId;
         const isEnd = node.id === endNodeId;
@@ -512,18 +692,28 @@ const SceneContent: React.FC<Venue3DProps & { followWalker: boolean }> = ({
 
         const radius = node.is_place
           ? isSelected || isHovered
-            ? 0.62
-            : 0.44
-          : 0.22;
+            ? 0.66
+            : 0.46
+          : 0.24;
+
+        const showPhotoBillboard =
+          Boolean(node.photo_url) &&
+          (isSelected ||
+            isHovered ||
+            isStart ||
+            isEnd ||
+            (showPhotoCards && node.is_place && (inRoute || selectedLevel !== 'all')));
+
         const showLabel =
-          isHovered ||
-          isSelected ||
-          isStart ||
-          isEnd ||
-          (followWalker && inRoute && node.is_place);
+          !showPhotoBillboard &&
+          (isHovered ||
+            isSelected ||
+            isStart ||
+            isEnd ||
+            (followWalker && inRoute && node.is_place));
 
         return (
-          <group key={node.id} position={[wx, wy + 0.26, wz]}>
+          <group key={node.id} position={[wx, wy + 0.28, wz]}>
             <mesh
               onClick={(ev) => {
                 ev.stopPropagation();
@@ -539,13 +729,40 @@ const SceneContent: React.FC<Venue3DProps & { followWalker: boolean }> = ({
                 document.body.style.cursor = 'auto';
               }}
             >
-              <cylinderGeometry args={[radius, radius, 0.28, 20]} />
+              <cylinderGeometry args={[radius, radius, 0.3, 22]} />
               <meshStandardMaterial
                 color={color}
                 emissive={color}
-                emissiveIntensity={isSelected || isHovered ? 1.5 : 0.95}
+                emissiveIntensity={isSelected || isHovered ? 1.55 : 0.95}
               />
             </mesh>
+
+            {/* 3D Floating Real-Photo Billboard */}
+            {showPhotoBillboard && node.photo_url && (
+              <Html
+                position={[0, isEnd ? 3.8 : 2.2, 0]}
+                center
+                style={{ pointerEvents: 'none' }}
+              >
+                <div className="w-36 overflow-hidden rounded-xl bg-slate-950/90 text-white shadow-2xl ring-2 ring-cyan-400/70 backdrop-blur-md">
+                  <div className="relative h-16 w-full overflow-hidden bg-slate-900">
+                    <img
+                      src={mediaUrl(node.photo_url)}
+                      alt={node.name}
+                      className="h-full w-full object-cover hdr-photo"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent" />
+                    <span className="absolute bottom-1 left-1.5 text-[9px] font-bold text-cyan-300">
+                      {formatLevel(node.level)}
+                    </span>
+                  </div>
+                  <div className="px-2 py-1 text-[10px] font-bold truncate">
+                    {isStart ? '📍 ' : isEnd ? '🏁 ' : ''}
+                    {node.name}
+                  </div>
+                </div>
+              </Html>
+            )}
 
             {showLabel && (
               <Html
@@ -585,6 +802,14 @@ const SceneContent: React.FC<Venue3DProps & { followWalker: boolean }> = ({
         isPlayingWalker={isPlayingWalker}
         followWalker={followWalker}
       />
+
+      <ContactShadows
+        position={[0, baseFloorY - 2.15, 0]}
+        opacity={daylight ? 0.32 : 0.48}
+        scale={90}
+        blur={2.5}
+        far={28}
+      />
     </group>
   );
 };
@@ -592,33 +817,61 @@ const SceneContent: React.FC<Venue3DProps & { followWalker: boolean }> = ({
 const Venue3D: React.FC<Venue3DProps> = (props) => {
   const hasRoute = (props.routePath?.length ?? 0) >= 2;
   const [followWalker, setFollowWalker] = useState(false);
+  const [daylight, setDaylight] = useState(false);
+  const [showPhotoCards, setShowPhotoCards] = useState(true);
 
   return (
-    <div className="relative h-full w-full select-none rounded-2xl overflow-hidden bg-[#070B18] spatial-grid-dark">
+    <div
+      className={`relative h-full w-full select-none rounded-2xl overflow-hidden transition-colors duration-500 ${
+        daylight
+          ? 'bg-gradient-to-b from-sky-100 via-slate-100 to-slate-200 spatial-grid-light ring-1 ring-slate-300'
+          : 'bg-[#070B18] spatial-grid-dark'
+      }`}
+    >
       <Canvas
-        camera={{ position: [34, 30, 38], fov: 42 }}
+        camera={{ position: [34, 30, 38], fov: 41 }}
         dpr={[1, 2]}
         gl={{ antialias: true }}
       >
-        <color attach="background" args={['#070B18']} />
-        <ambientLight intensity={0.95} />
-        <directionalLight position={[25, 45, 25]} intensity={1.35} color="#f0f9ff" />
-        <pointLight position={[-25, 20, -20]} intensity={1.0} color="#6366f1" />
-        <pointLight position={[20, 15, 20]} intensity={0.9} color="#38bdf8" />
-        <SceneContent {...props} followWalker={hasRoute && followWalker} />
+        <color
+          attach="background"
+          args={[daylight ? '#eef4fb' : '#070B18']}
+        />
+        <ambientLight intensity={daylight ? 1.35 : 0.95} />
+        <directionalLight
+          position={[25, 48, 25]}
+          intensity={daylight ? 1.75 : 1.4}
+          color={daylight ? '#ffffff' : '#f0f9ff'}
+        />
+        <pointLight
+          position={[-25, 20, -20]}
+          intensity={daylight ? 0.5 : 1.0}
+          color="#6366f1"
+        />
+        <pointLight
+          position={[20, 15, 20]}
+          intensity={daylight ? 0.5 : 0.95}
+          color="#38bdf8"
+        />
+        <SceneContent
+          {...props}
+          followWalker={hasRoute && followWalker}
+          daylight={daylight}
+          showPhotoCards={showPhotoCards}
+        />
         {!(hasRoute && followWalker) && (
           <OrbitControls
             makeDefault
             enableDamping
             dampingFactor={0.07}
             minDistance={12}
-            maxDistance={120}
-            maxPolarAngle={Math.PI / 2.05}
+            maxDistance={125}
+            maxPolarAngle={Math.PI / 2.04}
           />
         )}
       </Canvas>
 
-      {/* Camera Mode Pill (Orbit vs Follow Walker POV) */}
+      {/* Top Left Camera Mode Pill (Orbit vs Follow Walker POV) */}
       {hasRoute && (
         <div className="absolute top-3 left-3 z-10 flex items-center gap-1 rounded-xl bg-slate-950/80 p-1 text-xs ring-1 ring-white/15 backdrop-blur-md">
           <button
@@ -648,22 +901,57 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
         </div>
       )}
 
+      {/* Top Right Lighting & 3D Photo Billboard Controls */}
+      <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => setShowPhotoCards((v) => !v)}
+          className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-[11px] font-bold ring-1 backdrop-blur-md transition ${
+            showPhotoCards
+              ? 'bg-cyan-500/90 text-slate-950 ring-cyan-300 shadow-sm'
+              : 'bg-slate-950/75 text-slate-200 ring-white/15 hover:bg-slate-900'
+          }`}
+          title="Toggle 3D floating room photo frames"
+        >
+          <ImageIcon className="h-3.5 w-3.5" />
+          3D Photos
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setDaylight((v) => !v)}
+          className="inline-flex items-center gap-1 rounded-xl bg-slate-950/80 px-2.5 py-1.5 text-[11px] font-bold text-white ring-1 ring-white/15 backdrop-blur-md hover:bg-slate-900 transition"
+        >
+          {daylight ? (
+            <>
+              <Moon className="h-3.5 w-3.5 text-cyan-400" />
+              Night
+            </>
+          ) : (
+            <>
+              <Sun className="h-3.5 w-3.5 text-amber-300" />
+              Daylight
+            </>
+          )}
+        </button>
+      </div>
+
       {/* Subtle 3D Legend Overlay */}
-      <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-950/75 px-3 py-1.5 text-[11px] text-slate-300 ring-1 ring-white/10 backdrop-blur-md">
+      <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-950/80 px-3 py-1.5 text-[11px] text-slate-200 ring-1 ring-white/10 backdrop-blur-md">
         <span className="inline-flex items-center gap-1">
           <span className="h-2 w-2 rounded-full bg-sky-400" /> Places
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-cyan-400" /> Lift Shaft
+          <span className="h-2 w-2 rounded-full bg-cyan-400" /> Moving Lift
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-amber-400" /> Stairs
+          <span className="h-2 w-2 rounded-full bg-amber-400" /> 3D Stairs
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-rose-500" /> Closed / Pin
+          <span className="h-2 w-2 rounded-full bg-rose-500" /> Destination
         </span>
         <span className="hidden sm:inline text-slate-400 ml-1">
-          · Drag to orbit · Scroll to zoom · Click any node
+          · Drag to orbit · Hover/click pins for real photos
         </span>
       </div>
     </div>

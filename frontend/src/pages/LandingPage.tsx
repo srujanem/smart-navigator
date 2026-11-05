@@ -8,12 +8,15 @@ import {
   CheckCircle2,
   Compass,
   Cpu,
+  Cuboid,
   EyeOff,
   FileSearch,
   GraduationCap,
   Hospital,
+  Languages,
   Layers,
   Lock,
+  Map as MapIcon,
   Navigation,
   Radio,
   Route as RouteIcon,
@@ -175,12 +178,13 @@ export const LandingPage: React.FC = () => {
       <Navbar variant="dark" />
 
       {/* =================================================================== */}
-      {/* HERO SECTION WITH INTERACTIVE 3D GLASS HOLOGRAM                     */}
+      {/* HERO SECTION WITH INTERACTIVE 3D ARCHITECTURAL TWIN                 */}
       {/* =================================================================== */}
       <section className="relative overflow-hidden border-b border-white/[0.08] spatial-grid-dark">
-        {/* Ambient Radial Glows */}
-        <div className="pointer-events-none absolute -top-32 left-1/4 h-[32rem] w-[32rem] rounded-full bg-cyan-500/15 blur-[130px]" />
-        <div className="pointer-events-none absolute top-24 right-1/4 h-[28rem] w-[28rem] rounded-full bg-indigo-600/20 blur-[140px]" />
+        {/* Animated Aurora Light Orbs */}
+        <div className="aurora-orb pointer-events-none absolute -top-36 left-1/5 h-[36rem] w-[36rem] rounded-full bg-cyan-500/20 blur-[135px]" />
+        <div className="aurora-orb pointer-events-none absolute top-20 right-1/5 h-[32rem] w-[32rem] rounded-full bg-indigo-600/25 blur-[145px]" />
+        <div className="pointer-events-none absolute -bottom-28 left-1/2 -translate-x-1/2 h-[22rem] w-[44rem] rounded-full bg-emerald-500/10 blur-[130px]" />
 
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-10 pb-16 lg:py-20">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-8 items-center">
@@ -191,34 +195,34 @@ export const LandingPage: React.FC = () => {
               transition={{ duration: 0.55 }}
               className="lg:col-span-6 space-y-6 z-10"
             >
-              <div className="inline-flex flex-wrap items-center gap-2 rounded-full bg-white/[0.06] px-3.5 py-1.5 text-xs font-semibold text-cyan-300 ring-1 ring-white/15 backdrop-blur-md">
+              <div className="inline-flex flex-wrap items-center gap-2 rounded-full bg-white/[0.06] px-3.5 py-1.5 text-xs font-semibold text-cyan-300 ring-1 ring-white/15 backdrop-blur-md shadow-lg shadow-black/20">
                 <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
-                <span>Universal Photo-Based Indoor Navigation</span>
+                <span>Flagship Spatial AI & 3D Digital Twin Platform</span>
                 {health && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300 ring-1 ring-emerald-400/30">
                     <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    {health.embedder} Ready
+                    {health.embedder} Active
                   </span>
                 )}
               </div>
 
-              <h1 className="font-display text-4xl sm:text-5xl lg:text-[3.35rem] font-extrabold tracking-tight leading-[1.08] text-white">
-                Lost inside a hospital or campus?{' '}
+              <h1 className="font-display text-4xl sm:text-5xl lg:text-[3.55rem] font-extrabold tracking-tight leading-[1.05] text-white">
+                Lost inside a massive building?{' '}
                 <span className="bg-gradient-to-r from-cyan-300 via-sky-400 to-indigo-400 bg-clip-text text-transparent">
-                  Upload one photo.
+                  Snap one photo.
                 </span>{' '}
-                Know exactly where to walk.
+                Walk in 3D clarity.
               </h1>
 
               <p className="text-base sm:text-lg text-slate-300 leading-relaxed max-w-xl">
-                GPS stops at the front door. Navigator uses visual embeddings and signboard OCR on a single still photo to locate you across buildings and floors — guiding you step by step with real landmark photos, 3D digital twins, and live doctor availability.
+                GPS stops at the front door. Navigator fuses DINOv2 visual geometry with signboard OCR on a single still photo — launching Cinema Street-View turn chevrons, realistic glass 3D architectural twins, and 5-language voice guidance.
               </p>
 
               {/* Primary CTAs */}
               <div className="flex flex-wrap items-center gap-3.5 pt-1">
                 <Link
                   to="/venues"
-                  className="inline-flex items-center gap-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-sky-500 to-indigo-600 px-6 py-3.5 text-sm font-bold text-white shadow-xl shadow-cyan-500/25 hover:from-cyan-400 hover:to-indigo-500 transition-all hover:-translate-y-0.5"
+                  className="inline-flex items-center gap-2.5 rounded-2xl bg-gradient-to-r from-cyan-400 via-sky-500 to-indigo-600 px-6 py-3.5 text-sm font-extrabold text-white shadow-xl shadow-cyan-500/30 hover:from-cyan-300 hover:to-indigo-500 transition-all hover:-translate-y-0.5"
                 >
                   <Navigation className="h-4 w-4" />
                   Explore Live Venues
@@ -245,21 +249,21 @@ export const LandingPage: React.FC = () => {
               {/* Architectural Pillar Highlights */}
               <div className="grid grid-cols-3 gap-3 pt-4 border-t border-white/10 max-w-lg">
                 <div>
-                  <div className="text-xs font-bold text-cyan-300">Zero Hardware</div>
+                  <div className="text-xs font-bold text-cyan-300">Cinema Street-View</div>
                   <div className="text-[11px] text-slate-400 mt-0.5">
-                    No BLE beacons or QR stickers
+                    3D AR chevrons on real photos
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs font-bold text-indigo-300">Multi-Floor 3D</div>
+                  <div className="text-xs font-bold text-indigo-300">Glass 3D Twin</div>
                   <div className="text-[11px] text-slate-400 mt-0.5">
-                    Lifts, ramps & skybridges
+                    Animated lifts, stairs & daylight
                   </div>
                 </div>
                 <div>
-                  <div className="text-xs font-bold text-emerald-300">Privacy-First</div>
+                  <div className="text-xs font-bold text-emerald-300">Creator Vault</div>
                   <div className="text-[11px] text-slate-400 mt-0.5">
-                    Face-blurred still uploads
+                    Secure multi-uploader studio
                   </div>
                 </div>
               </div>
@@ -270,33 +274,159 @@ export const LandingPage: React.FC = () => {
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.65, delay: 0.1 }}
-              className="lg:col-span-6 relative h-[400px] sm:h-[470px] lg:h-[520px] rounded-3xl bg-[#0A1024]/80 ring-1 ring-white/10 shadow-2xl overflow-hidden"
+              className="lg:col-span-6 relative h-[420px] sm:h-[490px] lg:h-[540px] rounded-3xl bg-[#0A1024]/90 ring-1 ring-white/15 shadow-[0_25px_70px_-15px_rgba(14,165,233,0.28)] overflow-hidden"
             >
               <Suspense
                 fallback={
-                  <Skeleton3D label="Rendering 3D Spatial Glass Hologram..." />
+                  <Skeleton3D label="Rendering 3D Architectural Glass Twin..." />
                 }
               >
                 <Hero3D />
               </Suspense>
 
               {/* Floating Hologram HUD Badges */}
-              <div className="pointer-events-none absolute top-4 left-4 flex items-center gap-2 rounded-xl bg-slate-950/75 px-3 py-1.5 text-xs font-medium text-cyan-300 ring-1 ring-cyan-400/30 backdrop-blur-md">
+              <div className="pointer-events-none absolute top-3.5 left-3.5 flex items-center gap-2 rounded-xl bg-slate-950/80 px-3 py-1.5 text-xs font-semibold text-cyan-300 ring-1 ring-cyan-400/30 backdrop-blur-md">
                 <span className="h-2 w-2 rounded-full bg-cyan-400 animate-ping" />
-                Interactive 3D Spatial Twin · Drag to Orbit
+                Live 3D Architectural Twin · Drag to Orbit
               </div>
 
-              <div className="pointer-events-none absolute bottom-4 left-4 right-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-slate-950/80 px-4 py-2.5 text-xs ring-1 ring-white/10 backdrop-blur-md">
+              <div className="pointer-events-none absolute bottom-3.5 left-3.5 right-3.5 flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-slate-950/80 px-4 py-2.5 text-xs ring-1 ring-white/15 backdrop-blur-md">
                 <div className="flex items-center gap-2 text-slate-200">
                   <span className="h-2.5 w-2.5 rounded-full bg-sky-400" />
-                  <span>Photo Localized: Atrium Entrance</span>
+                  <span>Photo Pinpointed: Atrium Entrance</span>
                 </div>
                 <div className="flex items-center gap-2 text-emerald-300 font-semibold">
-                  <span>Lift Core → Level 2 Specialty Wing</span>
+                  <span>Glass Lift Core → Level 2 Wing</span>
                   <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
                 </div>
               </div>
             </motion.div>
+          </div>
+        </div>
+      </section>
+
+      {/* =================================================================== */}
+      {/* FLAGSHIP BENTO ARCHITECTURE SHOWCASE                                */}
+      {/* =================================================================== */}
+      <section className="py-16 sm:py-20 bg-[#050914] border-b border-white/[0.08]">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 space-y-10">
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+            <div>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-cyan-300 ring-1 ring-cyan-400/30">
+                <Cuboid className="h-3.5 w-3.5" />
+                Next-Gen Spatial Experience
+              </span>
+              <h2 className="mt-3 font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
+                Engineered for Visual Realism & Creator Control
+              </h2>
+            </div>
+            <p className="text-sm text-slate-400 max-w-md">
+              Every corridor photo, 3D glass floor slab, signboard OCR box, and uploader account works together seamlessly.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+            {/* Large Bento 1: Cinema Street-View & 3D Glass Twin */}
+            <div className="lg:col-span-7 relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0F1B3D] via-[#0A1228] to-[#060A16] p-6 sm:p-8 ring-1 ring-white/12 shadow-2xl flex flex-col justify-between">
+              <div className="pointer-events-none absolute -right-16 -top-16 h-60 w-60 rounded-full bg-cyan-500/20 blur-3xl" />
+              <div className="relative z-10 space-y-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 px-2.5 py-1 text-[11px] font-bold text-cyan-300 ring-1 ring-cyan-400/30">
+                  <Cuboid className="h-3.5 w-3.5" />
+                  3D Glass Architecture + Street-View HUD
+                </span>
+                <h3 className="font-display text-2xl font-extrabold text-white">
+                  Walk through real HDR corridor photos with 3D perspective turn chevrons
+                </h3>
+                <p className="text-sm text-slate-300 leading-relaxed max-w-xl">
+                  Switch effortlessly between Daylight Architectural Twin and Night Hologram modes, watch glass elevators glide across floors, inspect floating room photo billboards in 3D space, and follow glowing AR-style floor chevrons step by step.
+                </p>
+              </div>
+
+              <div className="relative z-10 mt-6 grid grid-cols-3 gap-2.5 pt-4 border-t border-white/10 text-xs">
+                <div className="rounded-2xl bg-white/[0.05] p-3 ring-1 ring-white/10">
+                  <div className="font-extrabold text-cyan-300">Day / Night 3D</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">Glass facades & lift shafts</div>
+                </div>
+                <div className="rounded-2xl bg-white/[0.05] p-3 ring-1 ring-white/10">
+                  <div className="font-extrabold text-indigo-300">3D Photo Cards</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">Hovering room previews</div>
+                </div>
+                <div className="rounded-2xl bg-white/[0.05] p-3 ring-1 ring-white/10">
+                  <div className="font-extrabold text-emerald-300">AR Chevrons</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">Projected onto real photos</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Large Bento 2: Secure Uploader Vault & Visual Map Builder */}
+            <div className="lg:col-span-5 relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0D2528] via-[#091824] to-[#060B17] p-6 sm:p-8 ring-1 ring-emerald-400/25 shadow-2xl flex flex-col justify-between">
+              <div className="pointer-events-none absolute -left-12 -bottom-12 h-52 w-52 rounded-full bg-emerald-500/15 blur-3xl" />
+              <div className="relative z-10 space-y-3">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-300 ring-1 ring-emerald-400/30">
+                  <MapIcon className="h-3.5 w-3.5" />
+                  Secure Map Creator Studio
+                </span>
+                <h3 className="font-display text-2xl font-extrabold text-white">
+                  Build your own indoor map by clicking blueprints & uploading photos
+                </h3>
+                <p className="text-sm text-slate-300 leading-relaxed">
+                  Create a PBKDF2-secured uploader account, generate a blank venue, click to place rooms & lifts on your floor plan, and upload reference photos — isolated strictly to your profile vault.
+                </p>
+              </div>
+
+              <div className="relative z-10 mt-6 flex flex-wrap items-center gap-2.5 pt-4 border-t border-white/10">
+                <Link
+                  to="/admin/login?mode=register"
+                  className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-xs font-extrabold text-slate-950 hover:bg-emerald-400 transition shadow-lg shadow-emerald-500/20"
+                >
+                  Create Uploader Account
+                  <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+                <Link
+                  to="/admin/map-editor"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-3.5 py-2.5 text-xs font-bold text-white ring-1 ring-white/15 hover:bg-white/15 transition"
+                >
+                  Visual Map Builder
+                </Link>
+              </div>
+            </div>
+
+            {/* Bottom Row: 3 Compact Flagship Cards */}
+            <div className="lg:col-span-4 rounded-3xl bg-[#0B1326] p-6 ring-1 ring-white/10 space-y-2.5">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/15 text-cyan-400 ring-1 ring-cyan-400/30">
+                <Camera className="h-5 w-5" />
+              </div>
+              <h3 className="font-display text-lg font-bold text-white">
+                Laser Scan & Split-Wipe Match
+              </h3>
+              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
+                Inspect glowing signboard OCR bounding boxes and drag the interactive split-wipe slider to verify your uploaded angle against the venue reference.
+              </p>
+            </div>
+
+            <div className="lg:col-span-4 rounded-3xl bg-[#0B1326] p-6 ring-1 ring-white/10 space-y-2.5">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-400 ring-1 ring-indigo-400/30">
+                <Languages className="h-5 w-5" />
+              </div>
+              <h3 className="font-display text-lg font-bold text-white">
+                5-Language Native Voice
+              </h3>
+              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
+                Hands-free turn-by-turn voice narration in English, Kannada (ಕನ್ನಡ), Hindi (हिन्दी), Tamil (தமிழ்), and Telugu (తెలుగు).
+              </p>
+            </div>
+
+            <div className="lg:col-span-4 rounded-3xl bg-[#0B1326] p-6 ring-1 ring-white/10 space-y-2.5">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/15 text-amber-400 ring-1 ring-amber-400/30">
+                <WifiOff className="h-5 w-5" />
+              </div>
+              <h3 className="font-display text-lg font-bold text-white">
+                Offline Basement PWA Routing
+              </h3>
+              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
+                Lost signal inside a radiology basement? Navigator caches the venue graph locally and computes multi-floor A* routes right on your phone.
+              </p>
+            </div>
           </div>
         </div>
       </section>

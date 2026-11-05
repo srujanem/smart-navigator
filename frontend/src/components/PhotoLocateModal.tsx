@@ -92,6 +92,8 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
   const [visibleTraceCount, setVisibleTraceCount] = useState(0);
   const [showCandidatesOverride, setShowCandidatesOverride] = useState(false);
   const [showAiOverlay, setShowAiOverlay] = useState(true);
+  const [compareMode, setCompareMode] = useState<'side' | 'wipe'>('side');
+  const [wipePercent, setWipePercent] = useState<number>(52);
   const [copiedMeetLink, setCopiedMeetLink] = useState(false);
   const [contribute, setContribute] = useState(true);
   const [confirmingNodeId, setConfirmingNodeId] = useState<string | null>(null);
@@ -591,18 +593,28 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
               </>
             )}
 
-            {/* STAGE 2: AI VISION PIPELINE TRACE */}
+            {/* STAGE 2: AI VISION PIPELINE TRACE WITH LASER SCANNER */}
             {stage === 'analyzing' && (
-              <div className="rounded-2xl bg-[#070B18] p-5 sm:p-6 text-white ring-1 ring-white/10 space-y-5">
+              <div className="rounded-2xl bg-[#070B18] p-5 sm:p-6 text-white ring-1 ring-white/10 space-y-5 shadow-2xl">
                 <div className="flex flex-col sm:flex-row items-center gap-4">
                   {previewUrl && (
-                    <div className="relative h-28 w-36 shrink-0 overflow-hidden rounded-xl ring-2 ring-cyan-400/50">
+                    <div className="relative h-36 w-full sm:w-48 shrink-0 overflow-hidden rounded-2xl ring-2 ring-cyan-400/60 shadow-[0_0_28px_rgba(34,211,238,0.28)]">
                       <img
                         src={mediaUrl(previewUrl)}
                         alt="Uploaded query"
-                        className="h-full w-full object-cover"
+                        className="h-full w-full object-cover hdr-photo"
                       />
-                      <div className="absolute inset-0 bg-gradient-to-b from-cyan-400/25 via-transparent to-cyan-400/25 animate-pulse" />
+                      <div className="absolute inset-0 bg-gradient-to-b from-cyan-400/15 via-transparent to-indigo-500/20" />
+                      {/* Sweeping AI Laser Scan Beam */}
+                      <div className="ai-scan-beam" />
+                      {/* Corner Viewfinder Brackets */}
+                      <span className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 border-l-2 border-t-2 border-cyan-300" />
+                      <span className="pointer-events-none absolute right-2 top-2 h-3.5 w-3.5 border-r-2 border-t-2 border-cyan-300" />
+                      <span className="pointer-events-none absolute left-2 bottom-2 h-3.5 w-3.5 border-l-2 border-b-2 border-cyan-300" />
+                      <span className="pointer-events-none absolute right-2 bottom-2 h-3.5 w-3.5 border-r-2 border-b-2 border-cyan-300" />
+                      <span className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded bg-slate-950/80 px-2 py-0.5 text-[9px] font-mono font-bold tracking-wider text-cyan-300">
+                        SCANNING KEYPOINTS
+                      </span>
                     </div>
                   )}
                   <div className="flex-1 text-center sm:text-left">
@@ -715,87 +727,191 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-bold text-white">
+                    {result.best.matched_photo_url && (
+                      <div className="inline-flex items-center rounded-xl bg-white p-0.5 ring-1 ring-emerald-200 text-[11px] font-bold">
+                        <button
+                          type="button"
+                          onClick={() => setCompareMode('side')}
+                          className={`rounded-lg px-2 py-1 transition ${
+                            compareMode === 'side'
+                              ? 'bg-slate-900 text-white'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Side-by-Side
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCompareMode('wipe')}
+                          className={`rounded-lg px-2 py-1 transition ${
+                            compareMode === 'wipe'
+                              ? 'bg-slate-900 text-white'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Split-Wipe
+                        </button>
+                      </div>
+                    )}
+                    <span className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-bold text-white shadow-sm">
                       {Math.round(result.confidence * 100)}% Match
                     </span>
                   </div>
                 </div>
 
-                {/* Side-by-side Photo Comparison with Glowing AI OCR Boxes */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-slate-200">
-                    <div className="relative h-44 w-full">
+                {/* Cinema HDR Comparison Stage: Side-by-Side OR Interactive Split-Wipe */}
+                {compareMode === 'wipe' && result.best.matched_photo_url ? (
+                  <div className="space-y-2">
+                    <div className="relative h-60 w-full overflow-hidden rounded-2xl bg-slate-950 ring-2 ring-emerald-500/60 shadow-xl select-none">
+                      {/* Base Layer: Matched Venue Reference Photo */}
                       <img
-                        src={
-                          result.query_photo_url
-                            ? mediaUrl(result.query_photo_url)
-                            : previewUrl || ''
-                        }
-                        alt="Your uploaded photo"
-                        className="h-full w-full object-cover"
+                        src={mediaUrl(result.best.matched_photo_url)}
+                        alt={result.best.name}
+                        className="h-full w-full object-cover hdr-photo"
                       />
-                      {/* Glowing OCR Bounding Boxes */}
-                      {showAiOverlay &&
-                        ocrBoxes.map((b, i) => (
-                          <div
-                            key={i}
-                            style={{
-                              left: `${Math.max(0, Math.min(95, b.x * 100))}%`,
-                              top: `${Math.max(0, Math.min(92, b.y * 100))}%`,
-                              width: `${Math.max(4, Math.min(100 - b.x * 100, b.w * 100))}%`,
-                              height: `${Math.max(6, Math.min(100 - b.y * 100, b.h * 100))}%`,
-                            }}
-                            className="pointer-events-none absolute rounded border-2 border-cyan-400 bg-cyan-400/15 shadow-[0_0_12px_rgba(34,211,238,0.65)]"
-                          >
-                            <span className="absolute -top-4 left-0 whitespace-nowrap rounded bg-cyan-400 px-1 py-0.2 text-[9px] font-extrabold text-slate-950">
-                              {b.text}
-                            </span>
-                          </div>
-                        ))}
 
-                      <span className="absolute left-2.5 top-2.5 rounded-lg bg-slate-950/80 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md">
-                        Your Uploaded Photo
-                      </span>
-
-                      {ocrBoxes.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setShowAiOverlay((v) => !v)}
-                          className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1 rounded-lg bg-slate-950/80 px-2 py-1 text-[10px] font-bold text-cyan-300 ring-1 ring-cyan-400/40 backdrop-blur-md hover:bg-slate-900"
-                        >
-                          <ScanText className="h-3 w-3" />
-                          {showAiOverlay ? 'Hide AI Boxes' : `Show ${ocrBoxes.length} OCR Boxes`}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="overflow-hidden rounded-2xl bg-slate-900 ring-2 ring-emerald-500/60">
-                    <div className="relative h-44 w-full flex items-center justify-center">
-                      {result.best.matched_photo_url ? (
+                      {/* Clipped Top Layer: Visitor Uploaded Photo + OCR Boxes */}
+                      <div
+                        className="absolute inset-0 overflow-hidden"
+                        style={{
+                          clipPath: `inset(0 ${100 - wipePercent}% 0 0)`,
+                        }}
+                      >
                         <img
-                          src={mediaUrl(result.best.matched_photo_url)}
-                          alt={result.best.name}
-                          className="h-full w-full object-cover"
+                          src={
+                            result.query_photo_url
+                              ? mediaUrl(result.query_photo_url)
+                              : previewUrl || ''
+                          }
+                          alt="Your uploaded photo"
+                          className="h-full w-full object-cover hdr-photo"
                         />
-                      ) : (
-                        <div className="text-center text-slate-400 p-4">
-                          <ImageIcon className="h-8 w-8 mx-auto mb-1 opacity-50" />
-                          <span className="text-xs">Matched via Signboard OCR</span>
+                        {showAiOverlay &&
+                          ocrBoxes.map((b, i) => (
+                            <div
+                              key={i}
+                              style={{
+                                left: `${Math.max(0, Math.min(95, b.x * 100))}%`,
+                                top: `${Math.max(0, Math.min(92, b.y * 100))}%`,
+                                width: `${Math.max(4, Math.min(100 - b.x * 100, b.w * 100))}%`,
+                                height: `${Math.max(6, Math.min(100 - b.y * 100, b.h * 100))}%`,
+                              }}
+                              className="pointer-events-none absolute rounded border-2 border-cyan-400 bg-cyan-400/15 shadow-[0_0_12px_rgba(34,211,238,0.65)]"
+                            >
+                              <span className="absolute -top-4 left-0 whitespace-nowrap rounded bg-cyan-400 px-1 py-0.2 text-[9px] font-extrabold text-slate-950">
+                                {b.text}
+                              </span>
+                            </div>
+                          ))}
+                      </div>
+
+                      {/* Glowing Vertical Wipe Divider */}
+                      <div
+                        className="pointer-events-none absolute inset-y-0 w-0.5 bg-cyan-300 shadow-[0_0_14px_rgba(34,211,238,0.95)]"
+                        style={{ left: `${wipePercent}%` }}
+                      >
+                        <div className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-full bg-slate-950 text-[10px] font-extrabold text-cyan-300 ring-2 ring-cyan-400 shadow-lg">
+                          ↔
                         </div>
-                      )}
-                      <span className="absolute left-2.5 top-2.5 rounded-lg bg-emerald-600/95 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md">
-                        Matched Venue Reference
+                      </div>
+
+                      <span className="pointer-events-none absolute left-3 top-3 rounded-lg bg-slate-950/80 px-2.5 py-1 text-[11px] font-semibold text-cyan-200 ring-1 ring-cyan-400/35 backdrop-blur-md">
+                        Your Photo
                       </span>
-                      {formatHeadingLabel(result.best.matched_heading_deg) && (
-                        <span className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1 rounded-lg bg-slate-950/80 px-2 py-1 text-[10px] font-bold text-amber-300 ring-1 ring-amber-400/30 backdrop-blur-md">
-                          <Compass className="h-3 w-3" />
-                          Facing {formatHeadingLabel(result.best.matched_heading_deg)}
+                      <span className="pointer-events-none absolute right-3 top-3 rounded-lg bg-emerald-600/95 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md">
+                        Venue Reference
+                      </span>
+
+                      <input
+                        type="range"
+                        min={5}
+                        max={95}
+                        value={wipePercent}
+                        onChange={(e) => setWipePercent(Number(e.target.value))}
+                        aria-label="Slide to compare your photo with matched venue reference"
+                        className="absolute inset-0 h-full w-full cursor-ew-resize opacity-0"
+                      />
+                    </div>
+                    <p className="text-center text-[11px] font-medium text-slate-500">
+                      Drag left or right across the photo to inspect visual alignment
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-slate-200 shadow-md">
+                      <div className="relative h-52 w-full">
+                        <img
+                          src={
+                            result.query_photo_url
+                              ? mediaUrl(result.query_photo_url)
+                              : previewUrl || ''
+                          }
+                          alt="Your uploaded photo"
+                          className="h-full w-full object-cover hdr-photo"
+                        />
+                        {/* Glowing OCR Bounding Boxes */}
+                        {showAiOverlay &&
+                          ocrBoxes.map((b, i) => (
+                            <div
+                              key={i}
+                              style={{
+                                left: `${Math.max(0, Math.min(95, b.x * 100))}%`,
+                                top: `${Math.max(0, Math.min(92, b.y * 100))}%`,
+                                width: `${Math.max(4, Math.min(100 - b.x * 100, b.w * 100))}%`,
+                                height: `${Math.max(6, Math.min(100 - b.y * 100, b.h * 100))}%`,
+                              }}
+                              className="pointer-events-none absolute rounded border-2 border-cyan-400 bg-cyan-400/15 shadow-[0_0_12px_rgba(34,211,238,0.65)]"
+                            >
+                              <span className="absolute -top-4 left-0 whitespace-nowrap rounded bg-cyan-400 px-1 py-0.2 text-[9px] font-extrabold text-slate-950">
+                                {b.text}
+                              </span>
+                            </div>
+                          ))}
+
+                        <span className="absolute left-2.5 top-2.5 rounded-lg bg-slate-950/80 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md">
+                          Your Uploaded Photo
                         </span>
-                      )}
+
+                        {ocrBoxes.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setShowAiOverlay((v) => !v)}
+                            className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1 rounded-lg bg-slate-950/80 px-2 py-1 text-[10px] font-bold text-cyan-300 ring-1 ring-cyan-400/40 backdrop-blur-md hover:bg-slate-900"
+                          >
+                            <ScanText className="h-3 w-3" />
+                            {showAiOverlay ? 'Hide AI Boxes' : `Show ${ocrBoxes.length} OCR Boxes`}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="overflow-hidden rounded-2xl bg-slate-900 ring-2 ring-emerald-500/65 shadow-[0_10px_28px_-8px_rgba(16,185,129,0.28)]">
+                      <div className="relative h-52 w-full flex items-center justify-center">
+                        {result.best.matched_photo_url ? (
+                          <img
+                            src={mediaUrl(result.best.matched_photo_url)}
+                            alt={result.best.name}
+                            className="h-full w-full object-cover hdr-photo"
+                          />
+                        ) : (
+                          <div className="text-center text-slate-400 p-4">
+                            <ImageIcon className="h-8 w-8 mx-auto mb-1 opacity-50" />
+                            <span className="text-xs">Matched via Signboard OCR</span>
+                          </div>
+                        )}
+                        <span className="absolute left-2.5 top-2.5 rounded-lg bg-emerald-600/95 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md">
+                          Matched Venue Reference
+                        </span>
+                        {formatHeadingLabel(result.best.matched_heading_deg) && (
+                          <span className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1 rounded-lg bg-slate-950/80 px-2 py-1 text-[10px] font-bold text-amber-300 ring-1 ring-amber-400/30 backdrop-blur-md">
+                            <Compass className="h-3 w-3" />
+                            Facing {formatHeadingLabel(result.best.matched_heading_deg)}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
 
                 {/* Matched Spot Details + Visual vs OCR Breakdown */}
                 <div className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200/80 space-y-3">

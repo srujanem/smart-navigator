@@ -109,6 +109,66 @@ body {
   }
 }
 
+/*HDR Cinema Image Tone Enhancement*/
+.hdr-photo {
+  filter: contrast(1.06) saturate(1.1) brightness(1.02);
+}
+
+/* AI Vision Laser Scan Sweep */
+@keyframes scan-beam {
+  0% {
+    top: -12%;
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    top: 102%;
+    opacity: 0;
+  }
+}
+.ai-scan-beam {
+  animation: scan-beam 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+/* Aurora Mesh Drift */
+@keyframes aurora-drift {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(28px, -22px, 0) scale(1.08);
+  }
+}
+.aurora-orb {
+  animation: aurora-drift 11s ease-in-out infinite;
+}
+
+/* 3D Perspective Street-View Chevron Pulse */
+@keyframes chevron-pulse {
+  0%, 100% {
+    opacity: 0.28;
+    transform: translateY(4px) scale(0.94);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-4px) scale(1.05);
+  }
+}
+.street-chevron-1 {
+  animation: chevron-pulse 1.5s ease-in-out infinite;
+}
+.street-chevron-2 {
+  animation: chevron-pulse 1.5s ease-in-out 0.22s infinite;
+}
+.street-chevron-3 {
+  animation: chevron-pulse 1.5s ease-in-out 0.44s infinite;
+}
+
 .spatial-grid-dark {
   background-image: linear-gradient(rgba(56, 189, 248, 0.06) 1px, transparent 1px),
     linear-gradient(90deg, rgba(56, 189, 248, 0.06) 1px, transparent 1px);

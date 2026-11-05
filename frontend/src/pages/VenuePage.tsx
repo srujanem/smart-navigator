@@ -38,6 +38,7 @@ import {
   X,
 } from 'lucide-react';
 import { FloorPlan2D } from '../components/FloorPlan2D';
+import { IsometricVenueArt } from '../components/VenueCard';
 import { PhotoLocateModal, type ConfirmedSpot } from '../components/PhotoLocateModal';
 import { StatusChip, VenueTypeBadge } from '../components/StatusChip';
 import { ErrorState, Skeleton3D } from '../components/ErrorState';
@@ -1032,7 +1033,7 @@ export const VenuePage: React.FC = () => {
             </div>
           </div>
 
-          <div className="relative h-[430px] sm:h-[500px] w-full">
+          <div className="relative h-[450px] sm:h-[530px] w-full">
             {twinMode === '3d' ? (
               <Suspense fallback={<Skeleton3D />}>
                 <Venue3D
@@ -1063,23 +1064,30 @@ export const VenuePage: React.FC = () => {
             {/* Selected Node Inspector Overlay Card */}
             {inspectedNode && (
               <div className="absolute right-3 top-3 z-20 w-72 sm:w-80 overflow-hidden rounded-2xl bg-white/95 shadow-2xl ring-1 ring-slate-900/10 backdrop-blur-xl">
-                {inspectedNode.photo_url && (
-                  <div className="relative h-32 w-full bg-slate-900">
+                <div className="relative h-36 w-full bg-slate-900 overflow-hidden">
+                  {inspectedNode.photo_url ? (
                     <img
                       src={mediaUrl(inspectedNode.photo_url)}
                       alt={inspectedNode.name}
-                      className="h-full w-full object-cover"
+                      className="h-full w-full object-cover hdr-photo"
                     />
-                    <button
-                      type="button"
-                      onClick={() => setInspectedNode(null)}
-                      className="absolute right-2 top-2 rounded-full bg-slate-950/70 p-1.5 text-white hover:bg-slate-950"
-                      aria-label="Close inspector"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                )}
+                  ) : (
+                    <IsometricVenueArt
+                      accent={venue.accent || '#0ea5e9'}
+                      buildings={1}
+                      floors={Math.max(2, Math.abs(inspectedNode.level) + 2)}
+                      compact
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setInspectedNode(null)}
+                    className="absolute right-2 top-2 rounded-full bg-slate-950/75 p-1.5 text-white hover:bg-slate-950 transition"
+                    aria-label="Close inspector"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
                 <div className="p-4 space-y-3">
                   <div className="flex items-start justify-between gap-2">
                     <div>
@@ -1096,16 +1104,6 @@ export const VenuePage: React.FC = () => {
                         {inspectedNode.photo_count === 1 ? 'photo' : 'photos'}
                       </p>
                     </div>
-                    {!inspectedNode.photo_url && (
-                      <button
-                        type="button"
-                        onClick={() => setInspectedNode(null)}
-                        className="rounded-lg p-1 text-slate-400 hover:bg-slate-100"
-                        aria-label="Close inspector"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    )}
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 pt-1">
@@ -1272,44 +1270,50 @@ export const VenuePage: React.FC = () => {
           </div>
 
           {/* Places Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             {filteredPlaces.map((place) => {
               const isCurrentLoc = visitorLoc?.nodeId === place.id;
               const inTrip = tripStops.some((s) => s.id === place.id);
               return (
                 <div
                   key={place.id}
-                  className="group overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200/80 shadow-soft hover:shadow-lift transition flex flex-col justify-between"
+                  className="group overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200/85 hover:ring-indigo-500/45 shadow-soft hover:shadow-xl hover:-translate-y-1 transition-all duration-300 flex flex-col justify-between"
                 >
                   <div>
-                    <div className="relative h-32 w-full overflow-hidden bg-slate-900">
+                    <div className="relative h-40 w-full overflow-hidden bg-[#060A16]">
                       {place.photo_url ? (
-                        <img
-                          src={mediaUrl(place.photo_url)}
-                          alt={place.name}
-                          loading="lazy"
-                          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                        />
+                        <>
+                          <img
+                            src={mediaUrl(place.photo_url)}
+                            alt={place.name}
+                            loading="lazy"
+                            className="h-full w-full object-cover hdr-photo transition-transform duration-500 ease-out group-hover:scale-110"
+                          />
+                          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-slate-950/75 via-transparent to-transparent" />
+                        </>
                       ) : (
-                        <div className="flex h-full w-full items-center justify-center spatial-grid-dark bg-[#0C1428] text-slate-500 text-xs">
-                          <MapPin className="h-5 w-5 text-cyan-500/60" />
-                        </div>
+                        <IsometricVenueArt
+                          accent={venue.accent || '#0ea5e9'}
+                          buildings={1}
+                          floors={Math.max(2, Math.abs(place.level) + 2)}
+                          compact
+                        />
                       )}
-                      <span className="absolute left-2.5 top-2.5 rounded-md bg-slate-950/75 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur-sm">
+                      <span className="absolute left-2.5 top-2.5 rounded-lg bg-slate-950/80 px-2.5 py-0.5 text-[10px] font-bold text-white ring-1 ring-white/15 backdrop-blur-md">
                         {formatLevel(place.level, place.floor_name)}
                       </span>
                       {isCurrentLoc && (
-                        <span className="absolute right-2.5 top-2.5 rounded-md bg-emerald-500 px-2 py-0.5 text-[10px] font-bold text-slate-950">
+                        <span className="absolute right-2.5 top-2.5 rounded-lg bg-emerald-500 px-2.5 py-0.5 text-[10px] font-extrabold text-slate-950 shadow-sm">
                           You are here
                         </span>
                       )}
                     </div>
 
-                    <div className="p-3.5">
-                      <div className="text-[11px] font-semibold text-slate-500 truncate">
+                    <div className="p-4">
+                      <div className="text-[11px] font-semibold text-indigo-600/90 truncate">
                         {place.building_name}
                       </div>
-                      <h3 className="font-display text-sm font-bold text-slate-900 truncate mt-0.5">
+                      <h3 className="font-display text-sm font-extrabold text-slate-900 truncate mt-0.5 group-hover:text-indigo-600 transition-colors">
                         {place.name}
                       </h3>
                     </div>

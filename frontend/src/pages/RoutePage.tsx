@@ -18,9 +18,13 @@ import {
   Camera,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
   Compass,
   CornerUpLeft,
   CornerUpRight,
+  Eye,
   Footprints,
   Flag,
   Languages,
@@ -29,6 +33,7 @@ import {
   Loader2,
   Map as MapIcon,
   MapPin,
+  Maximize2,
   MoveUp,
   Pause,
   Play,
@@ -42,8 +47,10 @@ import {
   VolumeX,
   WifiOff,
   X,
+  ZoomIn,
 } from 'lucide-react';
 import { FloorPlan2D } from '../components/FloorPlan2D';
+import { IsometricVenueArt } from '../components/VenueCard';
 import { PhotoLocateModal, type ConfirmedSpot } from '../components/PhotoLocateModal';
 import { ErrorState, Skeleton3D } from '../components/ErrorState';
 import {
@@ -226,6 +233,8 @@ export const RoutePage: React.FC = () => {
 
   // Re-check Location Modal & Lightbox
   const [recheckOpen, setRecheckOpen] = useState(false);
+  const [showStreetStage, setShowStreetStage] = useState(true);
+  const [lightboxZoom, setLightboxZoom] = useState<number>(1);
   const [lightboxUrl, setLightboxUrl] = useState<{
     url: string;
     caption: string;
@@ -982,11 +991,173 @@ export const RoutePage: React.FC = () => {
           </div>
         ) : route ? (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-            {/* RIGHT ON DESKTOP / TOP ON MOBILE: 3D/2D ROUTE TWIN */}
-            <div className="lg:col-span-7 lg:order-2 lg:sticky lg:top-36 space-y-3">
+            {/* RIGHT ON DESKTOP / TOP ON MOBILE: CINEMA STREET-VIEW + 3D/2D TWIN */}
+            <div className="lg:col-span-7 lg:order-2 lg:sticky lg:top-32 space-y-3">
+              {/* CINEMA "STREET-VIEW" ACTIVE LANDMARK PHOTO STAGE */}
+              {activeStep && showStreetStage && (
+                <div className="relative overflow-hidden rounded-3xl bg-[#050914] ring-1 ring-slate-900/15 shadow-2xl">
+                  {/* Ambient Color-Matched Backlight Glow */}
+                  {activeStep.photo_url && (
+                    <img
+                      src={mediaUrl(activeStep.photo_url)}
+                      alt=""
+                      aria-hidden="true"
+                      className="pointer-events-none absolute -inset-4 h-[calc(100%+2rem)] w-[calc(100%+2rem)] object-cover blur-2xl opacity-45 scale-110"
+                    />
+                  )}
+
+                  <div className="relative h-52 sm:h-60 w-full overflow-hidden">
+                    {activeStep.photo_url ? (
+                      <img
+                        src={mediaUrl(activeStep.photo_url)}
+                        alt={activeStep.name}
+                        className="h-full w-full object-cover hdr-photo transition-all duration-500"
+                      />
+                    ) : (
+                      <IsometricVenueArt
+                        accent={venue.accent || '#0ea5e9'}
+                        buildings={venue.buildings.length}
+                        floors={Math.max(2, route.levels.length)}
+                        compact
+                      />
+                    )}
+
+                    {/* Cinema Vignette */}
+                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#050914] via-[#050914]/25 to-slate-950/45" />
+
+                    {/* 3D Perspective AR-Style Directional Chevrons Overlaid on Corridor Floor */}
+                    <div className="pointer-events-none absolute inset-x-0 bottom-14 flex items-center justify-center">
+                      {activeStep.icon === 'arrive' ? (
+                        <div className="flex flex-col items-center gap-1 rounded-2xl bg-emerald-500/25 px-4 py-2 ring-2 ring-emerald-400/80 backdrop-blur-md shadow-[0_0_30px_rgba(16,185,129,0.55)]">
+                          <Flag className="h-6 w-6 text-emerald-300" />
+                          <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-200">
+                            Destination Reached
+                          </span>
+                        </div>
+                      ) : activeStep.icon === 'lift' ||
+                        activeStep.icon === 'up' ||
+                        activeStep.icon === 'down' ? (
+                        <div className="flex items-center gap-2 rounded-2xl bg-amber-500/25 px-4 py-2 ring-2 ring-amber-400/80 backdrop-blur-md shadow-[0_0_28px_rgba(245,158,11,0.45)]">
+                          {activeStep.icon === 'down' ? (
+                            <ArrowDown className="h-5 w-5 text-amber-300 animate-bounce" />
+                          ) : (
+                            <ArrowUp className="h-5 w-5 text-amber-300 animate-bounce" />
+                          )}
+                          <span className="text-xs font-extrabold uppercase tracking-wider text-amber-100">
+                            {activeStep.icon === 'lift'
+                              ? `Take Lift · ${formatLevel(activeStep.level)}`
+                              : `Take Stairs · ${formatLevel(activeStep.level)}`}
+                          </span>
+                        </div>
+                      ) : (
+                        <div
+                          style={{
+                            transform: `perspective(420px) rotateX(54deg) rotateZ(${
+                              activeStep.icon === 'left'
+                                ? '-38deg'
+                                : activeStep.icon === 'right'
+                                  ? '38deg'
+                                  : '0deg'
+                            })`,
+                          }}
+                          className="flex flex-col items-center -space-y-3 drop-shadow-[0_0_16px_rgba(34,211,238,0.95)]"
+                        >
+                          <ChevronUp className="h-9 w-9 text-cyan-300 stroke-[3] street-chevron-3" />
+                          <ChevronUp className="h-10 w-10 text-cyan-300 stroke-[3] street-chevron-2" />
+                          <ChevronUp className="h-11 w-11 text-white stroke-[3.2] street-chevron-1" />
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Top HUD Badges */}
+                    <div className="absolute left-3.5 top-3.5 flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-950/80 px-3 py-1 text-[11px] font-extrabold text-cyan-300 ring-1 ring-cyan-400/40 backdrop-blur-md">
+                        <Eye className="h-3 w-3" />
+                        STREET-VIEW · STEP {activeStepIdx + 1}/{route.steps.length}
+                      </span>
+                      <span className="rounded-full bg-slate-950/70 px-2.5 py-1 text-[11px] font-semibold text-white ring-1 ring-white/15 backdrop-blur-md">
+                        {formatLevel(activeStep.level)}
+                      </span>
+                    </div>
+
+                    <div className="absolute right-3.5 top-3.5 flex items-center gap-1.5">
+                      {activeStep.photo_url && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setLightboxZoom(1);
+                            setLightboxUrl({
+                              url: mediaUrl(activeStep.photo_url)!,
+                              caption: `${activeStep.name} (${formatLevel(activeStep.level)})`,
+                            });
+                          }}
+                          className="inline-flex items-center gap-1 rounded-xl bg-slate-950/75 px-2.5 py-1.5 text-[11px] font-bold text-white ring-1 ring-white/20 backdrop-blur-md hover:bg-slate-900 transition"
+                        >
+                          <Maximize2 className="h-3 w-3 text-cyan-300" />
+                          HD Zoom
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setShowStreetStage(false)}
+                        className="rounded-xl bg-slate-950/75 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300 ring-1 ring-white/15 backdrop-blur-md hover:text-white transition"
+                        title="Minimize Street-View stage"
+                      >
+                        Hide
+                      </button>
+                    </div>
+
+                    {/* Bottom Glass Step Controller */}
+                    <div className="absolute inset-x-3 bottom-3 flex items-center justify-between gap-3 rounded-2xl bg-slate-950/80 px-3.5 py-2.5 text-white ring-1 ring-white/15 backdrop-blur-xl">
+                      <div className="min-w-0">
+                        <div className="text-xs sm:text-sm font-extrabold leading-snug truncate">
+                          {activeStep.instruction}
+                        </div>
+                        <div className="text-[11px] text-cyan-200/90 truncate">
+                          {activeStep.name}
+                          {activeStep.distance_m > 0
+                            ? ` · Walk ${Math.round(activeStep.distance_m)} m`
+                            : ''}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          disabled={activeStepIdx <= 0}
+                          onClick={() => {
+                            const prev = Math.max(0, activeStepIdx - 1);
+                            handleStepClick(route.steps[prev], prev);
+                          }}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-white/10 text-white ring-1 ring-white/15 hover:bg-white/20 disabled:opacity-35 transition"
+                          aria-label="Previous step"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          disabled={activeStepIdx >= route.steps.length - 1}
+                          onClick={() => {
+                            const nxt = Math.min(
+                              route.steps.length - 1,
+                              activeStepIdx + 1,
+                            );
+                            handleStepClick(route.steps[nxt], nxt);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-xl bg-cyan-500 px-3 py-1.5 text-xs font-extrabold text-slate-950 hover:bg-cyan-400 disabled:opacity-35 transition"
+                        >
+                          Next
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Twin Controls Bar */}
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-white p-2.5 ring-1 ring-slate-200/80 shadow-soft">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={() => {
@@ -1009,6 +1180,17 @@ export const RoutePage: React.FC = () => {
                       </>
                     )}
                   </button>
+
+                  {!showStreetStage && (
+                    <button
+                      type="button"
+                      onClick={() => setShowStreetStage(true)}
+                      className="inline-flex items-center gap-1 rounded-xl bg-cyan-50 px-2.5 py-1.5 text-xs font-bold text-cyan-800 ring-1 ring-cyan-200 hover:bg-cyan-100 transition"
+                    >
+                      <Eye className="h-3.5 w-3.5 text-cyan-600" />
+                      Show Street-View
+                    </button>
+                  )}
 
                   {twinMode === '3d' && (
                     <select
@@ -1219,26 +1401,32 @@ export const RoutePage: React.FC = () => {
                             <div
                               onClick={(ev) => {
                                 ev.stopPropagation();
+                                setLightboxZoom(1);
                                 setLightboxUrl({
                                   url: mediaUrl(step.photo_url)!,
                                   caption: `${step.name} (${formatLevel(step.level)})`,
                                 });
                               }}
-                              className="mt-3 group relative flex items-center gap-3 rounded-xl bg-slate-50 p-2 ring-1 ring-slate-200/80 hover:ring-indigo-400 transition"
+                              className="mt-3 group relative flex items-center gap-3 rounded-xl bg-slate-50 p-2 ring-1 ring-slate-200/80 hover:ring-indigo-400 hover:bg-indigo-50/30 transition"
                             >
-                              <img
-                                src={mediaUrl(step.photo_url)}
-                                alt={step.name}
-                                loading="lazy"
-                                className="h-14 w-20 rounded-lg object-cover shrink-0 bg-slate-900"
-                              />
+                              <div className="relative h-16 w-24 shrink-0 overflow-hidden rounded-lg bg-slate-900 ring-1 ring-slate-900/10">
+                                <img
+                                  src={mediaUrl(step.photo_url)}
+                                  alt={step.name}
+                                  loading="lazy"
+                                  className="h-full w-full object-cover hdr-photo transition-transform duration-300 group-hover:scale-110"
+                                />
+                                <span className="absolute right-1 bottom-1 rounded bg-slate-950/75 p-0.5 text-cyan-300 opacity-0 group-hover:opacity-100 transition">
+                                  <ZoomIn className="h-3 w-3" />
+                                </span>
+                              </div>
                               <div className="min-w-0">
                                 <div className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600">
                                   <CheckCircle2 className="h-3 w-3" />
-                                  Look for this spot
+                                  Look for this landmark
                                 </div>
                                 <div className="text-xs text-slate-600 truncate">
-                                  Tap to enlarge landmark photo
+                                  Tap for full HDR inspection
                                 </div>
                               </div>
                             </div>
@@ -1267,30 +1455,54 @@ export const RoutePage: React.FC = () => {
         onConfirmedLocation={handleRecheckedLocation}
       />
 
-      {/* Landmark Photo Lightbox */}
+      {/* Zoomable HDR Landmark Photo Lightbox */}
       {lightboxUrl && (
         <div
           onClick={() => setLightboxUrl(null)}
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-md"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-lg"
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="relative max-w-2xl w-full overflow-hidden rounded-3xl bg-slate-900 ring-1 ring-white/20 shadow-2xl"
+            className="relative max-w-4xl w-full overflow-hidden rounded-3xl bg-[#070B18] ring-1 ring-white/20 shadow-2xl"
           >
-            <img
-              src={mediaUrl(lightboxUrl.url)}
-              alt={lightboxUrl.caption}
-              className="max-h-[75vh] w-full object-contain bg-black"
-            />
-            <div className="flex items-center justify-between px-5 py-3.5 text-white">
+            <div className="relative max-h-[76vh] w-full overflow-auto bg-black flex items-center justify-center">
+              <img
+                src={mediaUrl(lightboxUrl.url)}
+                alt={lightboxUrl.caption}
+                style={{
+                  transform: `scale(${lightboxZoom})`,
+                  transformOrigin: 'center center',
+                }}
+                className="max-h-[74vh] w-full object-contain hdr-photo transition-transform duration-200"
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 text-white border-t border-white/10">
               <span className="text-sm font-bold">{lightboxUrl.caption}</span>
-              <button
-                type="button"
-                onClick={() => setLightboxUrl(null)}
-                className="rounded-lg bg-white/10 p-1.5 hover:bg-white/20"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                <div className="inline-flex items-center rounded-xl bg-white/10 p-0.5 text-xs font-bold">
+                  {[1, 1.75, 2.5].map((z) => (
+                    <button
+                      key={z}
+                      type="button"
+                      onClick={() => setLightboxZoom(z)}
+                      className={`rounded-lg px-2.5 py-1 transition ${
+                        lightboxZoom === z
+                          ? 'bg-cyan-400 text-slate-950'
+                          : 'text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      {z}x
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setLightboxUrl(null)}
+                  className="rounded-xl bg-white/10 p-2 hover:bg-white/20 transition"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
