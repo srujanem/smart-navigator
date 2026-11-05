@@ -1,444 +1,731 @@
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import {
-    GraduationCap, Settings, Navigation, Camera,
-    Map, Building2, ArrowRight, CheckCircle, Layers, Mic,
-    Shield, Sparkles, Compass, AlertTriangle, Users, BookOpen,
-    Utensils, BedDouble, Search, ChevronRight, Activity, Clock
+  ArrowRight,
+  Briefcase,
+  Camera,
+  CheckCircle2,
+  Compass,
+  Cpu,
+  EyeOff,
+  FileSearch,
+  GraduationCap,
+  Hospital,
+  Layers,
+  Lock,
+  Navigation,
+  Radio,
+  Route as RouteIcon,
+  ShieldCheck,
+  ShoppingBag,
+  Sparkles,
+  WifiOff,
 } from 'lucide-react';
+import { Navbar } from '../components/Navbar';
+import { VenueCard } from '../components/VenueCard';
+import { ErrorState, Skeleton3D } from '../components/ErrorState';
+import { getHealth, getVenues } from '../lib/api';
+import type { HealthStatus, VenueSummary } from '../lib/types';
+
+const Hero3D = lazy(() => import('../components/Hero3D'));
+
+const HOW_IT_WORKS_STEPS = [
+  {
+    num: '01',
+    title: 'Snap or upload where you stand',
+    subtitle: 'Still photo · Zero app install · Instant EXIF stripping',
+    description:
+      'Take a single still photo of any hallway, reception desk, clinic signboard, or building atrium right from your mobile browser — or pick from sample visitor shots.',
+    icon: Camera,
+    accent: 'from-cyan-400 to-sky-500',
+    highlights: [
+      'Works on any smartphone or laptop browser',
+      'No continuous camera stream or battery drain',
+      'Optional floor hint or automatic multi-floor detection',
+    ],
+  },
+  {
+    num: '02',
+    title: 'DINOv2 + Signboard OCR pinpoint your spot',
+    subtitle: 'Visual feature embeddings fused with scene text',
+    description:
+      'Navigator extracts dense visual descriptors alongside multi-script signboard OCR to distinguish visually similar corridors across floors and wings.',
+    icon: Cpu,
+    accent: 'from-indigo-400 to-violet-500',
+    highlights: [
+      'Side-by-side reference photo verification',
+      'Reads room numbers, ward boards & directional signs',
+      'Transparent AI pipeline trace on every localization',
+    ],
+  },
+  {
+    num: '03',
+    title: 'Visual photo-by-photo A* routing to any room or doctor',
+    subtitle: 'Multi-building · Lift-only stretcher mode · Live closures',
+    description:
+      'Follow clear landmark photos and voice instructions in English, Hindi, Tamil, or Telugu — automatically routing around closed corridors or relocated doctors.',
+    icon: RouteIcon,
+    accent: 'from-emerald-400 to-teal-500',
+    highlights: [
+      'Wheelchair & hospital stretcher lift-only routing',
+      'Live doctor & faculty availability + cabin relocation updates',
+      'Interactive 3D spatial twin & 2D floor blueprints',
+    ],
+  },
+];
+
+const INDOOR_WORLDS = [
+  {
+    title: 'Multi-Speciality Hospitals',
+    badge: 'Healthcare',
+    icon: Hospital,
+    gradient: 'from-rose-500/20 via-rose-500/5 to-transparent',
+    border: 'hover:ring-rose-400/40',
+    iconBg: 'bg-rose-500/15 text-rose-400 ring-rose-400/30',
+    description:
+      'Guide anxious patients and families straight to OPD clinics, Cardiology, X-Ray & MRI suites, billing counters, and on-duty specialists.',
+    features: [
+      '1-Tap Emergency Department routing',
+      'Stretcher & wheelchair lift-only paths',
+      'Live doctor cabin & OT relocation status',
+    ],
+  },
+  {
+    title: 'University Campuses',
+    badge: 'Higher Education',
+    icon: GraduationCap,
+    gradient: 'from-indigo-500/20 via-indigo-500/5 to-transparent',
+    border: 'hover:ring-indigo-400/40',
+    iconBg: 'bg-indigo-500/15 text-indigo-400 ring-indigo-400/30',
+    description:
+      'Connect sprawling academic blocks, AI & robotics labs, lecture theatres, libraries, hostels, and faculty cabins across outdoor walkways and multi-story wings.',
+    features: [
+      'Faculty cabin directory & visiting hours',
+      'Exam hall & lab search by course or topic',
+      'Cross-building outdoor + indoor routing',
+    ],
+  },
+  {
+    title: 'Airports & Shopping Malls',
+    badge: 'Transit & Retail',
+    icon: ShoppingBag,
+    gradient: 'from-amber-500/20 via-amber-500/5 to-transparent',
+    border: 'hover:ring-amber-400/40',
+    iconBg: 'bg-amber-500/15 text-amber-400 ring-amber-400/30',
+    description:
+      'Turn any concourse pillar or storefront photo into immediate directions to boarding gates, anchor stores, lounges, washrooms, and family elevators.',
+    features: [
+      'Natural intent queries ("nearest washroom")',
+      'Stroller & luggage accessible lift paths',
+      'Instant escalator/corridor maintenance rerouting',
+    ],
+  },
+  {
+    title: 'Civic & Tech Parks',
+    badge: 'Enterprise & Public',
+    icon: Briefcase,
+    gradient: 'from-cyan-500/20 via-cyan-500/5 to-transparent',
+    border: 'hover:ring-cyan-400/40',
+    iconBg: 'bg-cyan-500/15 text-cyan-400 ring-cyan-400/30',
+    description:
+      'Help visitors, citizens, and new hires navigate multi-tower campuses, public service counters, conference suites, and skybridges effortlessly.',
+    features: [
+      'Zero hardware beacons or Wi-Fi modifications',
+      'Officer & service counter live status',
+      'Self-serve Admin Studio dataset builder',
+    ],
+  },
+];
 
 export const LandingPage: React.FC = () => {
-    const navigate = useNavigate();
-    const [quickStart, setQuickStart] = useState('entrance_main');
-    const [quickEnd, setQuickEnd] = useState('ai_lab');
+  const [venues, setVenues] = useState<VenueSummary[]>([]);
+  const [loadingVenues, setLoadingVenues] = useState(true);
+  const [venuesError, setVenuesError] = useState<string | null>(null);
+  const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [activeStep, setActiveStep] = useState(0);
 
-    const handleQuickRoute = (e: React.FormEvent) => {
-        e.preventDefault();
-        navigate(`/student?start=${encodeURIComponent(quickStart)}&end=${encodeURIComponent(quickEnd)}`);
-    };
+  const loadData = useCallback(async () => {
+    setLoadingVenues(true);
+    setVenuesError(null);
+    try {
+      const [vList, hStatus] = await Promise.all([
+        getVenues(),
+        getHealth().catch(() => null),
+      ]);
+      setVenues(vList);
+      if (hStatus) setHealth(hStatus);
+    } catch (err) {
+      setVenuesError(
+        err instanceof Error
+          ? err.message
+          : 'Could not load live venues from the API server.',
+      );
+    } finally {
+      setLoadingVenues(false);
+    }
+  }, []);
 
-    return (
-        <div className="h-full overflow-y-auto bg-slate-50 text-slate-800">
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
 
-            {/* ── HERO SECTION ── */}
-            <section className="bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 text-white px-4 sm:px-6 py-12 md:py-16 border-b border-slate-800">
-                <div className="max-w-5xl mx-auto text-center">
-                    {/* Badge */}
-                    <div className="inline-flex items-center gap-2 bg-blue-950/80 border border-blue-700/60 text-blue-200 text-xs font-semibold px-3.5 py-1 rounded-full mb-5 shadow-inner">
-                        <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-                        INSTITUTIONAL INDOOR NAVIGATION & SPATIAL TWIN SYSTEM
-                    </div>
+  return (
+    <div className="min-h-screen bg-[#070B18] text-white selection:bg-cyan-500/30 selection:text-cyan-200">
+      <Navbar variant="dark" />
 
-                    <h1 className="text-3xl sm:text-4xl md:text-5xl font-black text-white tracking-tight mb-4 leading-tight">
-                        Campus Navigator — Intelligent Indoor Navigation
-                    </h1>
-                    
-                    <p className="text-slate-300 text-sm sm:text-base max-w-2xl mx-auto mb-8 leading-relaxed font-normal">
-                        Autonomous zero-hardware campus routing, AI door-sign vision recognition, dynamic maintenance hazard avoidance, and multi-language voice guidance across academic, residential, and dining blocks.
-                    </p>
+      {/* =================================================================== */}
+      {/* HERO SECTION WITH INTERACTIVE 3D GLASS HOLOGRAM                     */}
+      {/* =================================================================== */}
+      <section className="relative overflow-hidden border-b border-white/[0.08] spatial-grid-dark">
+        {/* Ambient Radial Glows */}
+        <div className="pointer-events-none absolute -top-32 left-1/4 h-[32rem] w-[32rem] rounded-full bg-cyan-500/15 blur-[130px]" />
+        <div className="pointer-events-none absolute top-24 right-1/4 h-[28rem] w-[28rem] rounded-full bg-indigo-600/20 blur-[140px]" />
 
-                    {/* Quick Route Search Bar Component */}
-                    <div className="max-w-3xl mx-auto bg-white/95 backdrop-blur-md p-4 sm:p-5 rounded-2xl shadow-xl border border-slate-200/80 text-left mb-10 text-slate-900">
-                        <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2.5">
-                            <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5 uppercase tracking-wider">
-                                <Compass size={14} className="text-blue-600" />
-                                Instant Route Finder
-                            </span>
-                            <span className="text-[11px] text-slate-500 font-medium hidden sm:inline">
-                                Direct to Step-by-Step Directions
-                            </span>
-                        </div>
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-10 pb-16 lg:py-20">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-8 items-center">
+            {/* Hero Copy */}
+            <motion.div
+              initial={{ opacity: 0, y: 18 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.55 }}
+              className="lg:col-span-6 space-y-6 z-10"
+            >
+              <div className="inline-flex flex-wrap items-center gap-2 rounded-full bg-white/[0.06] px-3.5 py-1.5 text-xs font-semibold text-cyan-300 ring-1 ring-white/15 backdrop-blur-md">
+                <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
+                <span>Universal Photo-Based Indoor Navigation</span>
+                {health && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-bold text-emerald-300 ring-1 ring-emerald-400/30">
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                    {health.embedder} Ready
+                  </span>
+                )}
+              </div>
 
-                        <form onSubmit={handleQuickRoute} className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
-                            <div className="sm:col-span-5">
-                                <label className="block text-[11px] font-semibold text-slate-600 uppercase mb-1">
-                                    Current Location / Origin
-                                </label>
-                                <select
-                                    value={quickStart}
-                                    onChange={(e) => setQuickStart(e.target.value)}
-                                    className="w-full text-xs font-semibold px-3 py-2.5 rounded-lg border border-slate-300 bg-slate-50 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                    <option value="entrance_main">Main Gate (Academic Ground)</option>
-                                    <option value="room_309">Room 309 (Hostel Block F3)</option>
-                                    <option value="central_library">Central Library (Reading Floor)</option>
-                                    <option value="canteen">Campus Canteen (Food Court)</option>
-                                    <option value="reception">Admin Reception (Ground Floor)</option>
-                                </select>
-                            </div>
+              <h1 className="font-display text-4xl sm:text-5xl lg:text-[3.35rem] font-extrabold tracking-tight leading-[1.08] text-white">
+                Lost inside a hospital or campus?{' '}
+                <span className="bg-gradient-to-r from-cyan-300 via-sky-400 to-indigo-400 bg-clip-text text-transparent">
+                  Upload one photo.
+                </span>{' '}
+                Know exactly where to walk.
+              </h1>
 
-                            <div className="sm:col-span-5">
-                                <label className="block text-[11px] font-semibold text-slate-600 uppercase mb-1">
-                                    Destination Room / POI
-                                </label>
-                                <select
-                                    value={quickEnd}
-                                    onChange={(e) => setQuickEnd(e.target.value)}
-                                    className="w-full text-xs font-semibold px-3 py-2.5 rounded-lg border border-slate-300 bg-slate-50 text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                >
-                                    <option value="ai_lab">AI Lab (Academic Block F2)</option>
-                                    <option value="room_104">Room 104 (Academic Block F1)</option>
-                                    <option value="room_305">Room 305 (Academic Block F3)</option>
-                                    <option value="central_library">Central Library & Reading Hall</option>
-                                    <option value="canteen">Campus Food Court & Canteen</option>
-                                    <option value="hostel_mess">Hostel Dining Mess</option>
-                                </select>
-                            </div>
+              <p className="text-base sm:text-lg text-slate-300 leading-relaxed max-w-xl">
+                GPS stops at the front door. Navigator uses visual embeddings and signboard OCR on a single still photo to locate you across buildings and floors — guiding you step by step with real landmark photos, 3D digital twins, and live doctor availability.
+              </p>
 
-                            <div className="sm:col-span-2">
-                                <button
-                                    type="submit"
-                                    className="w-full h-[38px] bg-blue-700 hover:bg-blue-800 text-white text-xs font-bold rounded-lg transition-colors flex items-center justify-center gap-1.5 shadow-sm"
-                                >
-                                    <Navigation size={14} /> Navigate
-                                </button>
-                            </div>
-                        </form>
+              {/* Primary CTAs */}
+              <div className="flex flex-wrap items-center gap-3.5 pt-1">
+                <Link
+                  to="/venues"
+                  className="inline-flex items-center gap-2.5 rounded-2xl bg-gradient-to-r from-cyan-500 via-sky-500 to-indigo-600 px-6 py-3.5 text-sm font-bold text-white shadow-xl shadow-cyan-500/25 hover:from-cyan-400 hover:to-indigo-500 transition-all hover:-translate-y-0.5"
+                >
+                  <Navigation className="h-4 w-4" />
+                  Explore Live Venues
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
 
-                        {/* Popular Quick-Select Chips */}
-                        <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2 text-xs">
-                            <span className="text-[11px] text-slate-400 font-medium">Quick Routes:</span>
-                            <button
-                                type="button"
-                                onClick={() => { setQuickStart('room_309'); setQuickEnd('ai_lab'); }}
-                                className="text-[11px] bg-slate-100 hover:bg-blue-50 hover:text-blue-700 text-slate-700 font-medium px-2.5 py-0.5 rounded-full border border-slate-200 transition"
-                            >
-                                Hostel 309 → AI Lab
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => { setQuickStart('entrance_main'); setQuickEnd('central_library'); }}
-                                className="text-[11px] bg-slate-100 hover:bg-blue-50 hover:text-blue-700 text-slate-700 font-medium px-2.5 py-0.5 rounded-full border border-slate-200 transition"
-                            >
-                                Main Gate → Library
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => { setQuickStart('canteen'); setQuickEnd('room_305'); }}
-                                className="text-[11px] bg-slate-100 hover:bg-blue-50 hover:text-blue-700 text-slate-700 font-medium px-2.5 py-0.5 rounded-full border border-slate-200 transition"
-                            >
-                                Canteen → Room 305
-                            </button>
-                        </div>
-                    </div>
+                <Link
+                  to="/admin"
+                  className="inline-flex items-center gap-2 rounded-2xl bg-white/[0.07] px-5 py-3.5 text-sm font-semibold text-white ring-1 ring-white/15 hover:bg-white/[0.12] transition"
+                >
+                  <Lock className="h-4 w-4 text-cyan-400" />
+                  Admin Studio
+                </Link>
+              </div>
 
-                    {/* 3 Main Action Hub Cards */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 max-w-4xl mx-auto text-left">
-                        <Link
-                            to="/student"
-                            className="bg-slate-800/90 hover:bg-slate-800 border border-slate-700/80 hover:border-blue-500 rounded-xl p-5 transition-all group flex flex-col justify-between shadow-lg"
-                        >
-                            <div>
-                                <div className="flex items-center justify-between mb-3">
-                                    <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center text-white shadow-sm">
-                                        <GraduationCap size={20} />
-                                    </div>
-                                    <ArrowRight size={16} className="text-slate-400 group-hover:text-blue-400 group-hover:translate-x-1 transition-all" />
-                                </div>
-                                <h3 className="text-base font-bold text-white mb-1">Student Navigation</h3>
-                                <p className="text-xs text-slate-300 leading-relaxed">
-                                    Turn-by-turn floor plan routing, AR door camera scanner, voice guidance, and timetable synchronization.
-                                </p>
-                            </div>
-                            <div className="mt-4 pt-3 border-t border-slate-700/60 flex items-center justify-between">
-                                <span className="text-[11px] font-bold text-blue-400 group-hover:text-blue-300">
-                                    Launch Student Portal →
-                                </span>
-                                <span className="text-[10px] bg-blue-900/60 text-blue-300 font-medium px-2 py-0.5 rounded border border-blue-700/60">
-                                    4 Languages
-                                </span>
-                            </div>
-                        </Link>
-
-                        <Link
-                            to="/admin/qr"
-                            className="bg-slate-800/90 hover:bg-slate-800 border border-slate-700/80 hover:border-indigo-500 rounded-xl p-5 transition-all group flex flex-col justify-between shadow-lg"
-                        >
-                            <div>
-                                <div className="flex items-center justify-between mb-3">
-                                    <div className="w-10 h-10 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-sm">
-                                        <Camera size={20} />
-                                    </div>
-                                    <ArrowRight size={16} className="text-slate-400 group-hover:text-indigo-400 group-hover:translate-x-1 transition-all" />
-                                </div>
-                                <h3 className="text-base font-bold text-white mb-1">Printable Door QRs</h3>
-                                <p className="text-xs text-slate-300 leading-relaxed">
-                                    Generate high-resolution printable door placards for every classroom, lab, washroom, and staircase.
-                                </p>
-                            </div>
-                            <div className="mt-4 pt-3 border-t border-slate-700/60 flex items-center justify-between">
-                                <span className="text-[11px] font-bold text-indigo-400 group-hover:text-indigo-300">
-                                    Print QR Cards →
-                                </span>
-                                <span className="text-[10px] bg-indigo-900/60 text-indigo-300 font-medium px-2 py-0.5 rounded border border-indigo-700/60">
-                                    Zero-Hardware
-                                </span>
-                            </div>
-                        </Link>
-
-                        <Link
-                            to="/admin"
-                            className="bg-slate-800/90 hover:bg-slate-800 border border-slate-700/80 hover:border-slate-500 rounded-xl p-5 transition-all group flex flex-col justify-between shadow-lg"
-                        >
-                            <div>
-                                <div className="flex items-center justify-between mb-3">
-                                    <div className="w-10 h-10 rounded-lg bg-slate-700 flex items-center justify-center text-white shadow-sm">
-                                        <Settings size={20} />
-                                    </div>
-                                    <ArrowRight size={16} className="text-slate-400 group-hover:text-slate-200 group-hover:translate-x-1 transition-all" />
-                                </div>
-                                <h3 className="text-base font-bold text-white mb-1">Facilities & Operations</h3>
-                                <p className="text-xs text-slate-300 leading-relaxed">
-                                    Live campus blueprint studio, maintenance hazard rerouting, timetable sync, and traffic telemetry.
-                                </p>
-                            </div>
-                            <div className="mt-4 pt-3 border-t border-slate-700/60 flex items-center justify-between">
-                                <span className="text-[11px] font-bold text-slate-300 group-hover:text-white">
-                                    Open Command Center →
-                                </span>
-                                <span className="text-[10px] bg-slate-700/80 text-slate-300 font-medium px-2 py-0.5 rounded border border-slate-600">
-                                    Admin Access
-                                </span>
-                            </div>
-                        </Link>
-                    </div>
+              {/* Architectural Pillar Highlights */}
+              <div className="grid grid-cols-3 gap-3 pt-4 border-t border-white/10 max-w-lg">
+                <div>
+                  <div className="text-xs font-bold text-cyan-300">Zero Hardware</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">
+                    No BLE beacons or QR stickers
+                  </div>
                 </div>
-            </section>
-
-            {/* ── LIVE TELEMETRY BAR ── */}
-            <section className="border-b border-slate-200 bg-white shadow-xs">
-                <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-                    <div className="p-2">
-                        <p className="text-2xl font-black text-slate-900">4 Buildings</p>
-                        <p className="text-xs font-medium text-slate-500 mt-0.5">Academic, Library, Dining & Hostel</p>
-                    </div>
-                    <div className="p-2 border-l border-slate-100">
-                        <p className="text-2xl font-black text-slate-900">55 Nodes</p>
-                        <p className="text-xs font-medium text-slate-500 mt-0.5">Indexed Rooms, Labs & Walkways</p>
-                    </div>
-                    <div className="p-2 border-l border-slate-100">
-                        <p className="text-2xl font-black text-blue-700">98.4% Acc.</p>
-                        <p className="text-xs font-medium text-slate-500 mt-0.5">Zero-Hardware Vision / QR Engine</p>
-                    </div>
-                    <div className="p-2 border-l border-slate-100">
-                        <p className="text-2xl font-black text-emerald-700">&lt; 100ms</p>
-                        <p className="text-xs font-medium text-slate-500 mt-0.5">Dual-Route A* Calculation</p>
-                    </div>
+                <div>
+                  <div className="text-xs font-bold text-indigo-300">Multi-Floor 3D</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">
+                    Lifts, ramps & skybridges
+                  </div>
                 </div>
-            </section>
-
-            {/* ── MULTI-BUILDING CAMPUS DIRECTORY SHOWCASE ── */}
-            <section className="py-14 px-4 sm:px-6 max-w-5xl mx-auto">
-                <div className="text-center mb-10">
-                    <span className="text-xs font-bold text-blue-700 uppercase tracking-widest bg-blue-50 px-3 py-1 rounded-full border border-blue-200">
-                        Campus Spatial Coverage
-                    </span>
-                    <h2 className="text-2xl font-bold text-slate-900 mt-3">
-                        Integrated Multi-Building Navigation
-                    </h2>
-                    <p className="text-xs text-slate-500 max-w-lg mx-auto mt-1">
-                        Seamlessly navigate inside and between the primary sectors of the university campus.
-                    </p>
+                <div>
+                  <div className="text-xs font-bold text-emerald-300">Privacy-First</div>
+                  <div className="text-[11px] text-slate-400 mt-0.5">
+                    Face-blurred still uploads
+                  </div>
                 </div>
+              </div>
+            </motion.div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    {/* Academic Block */}
-                    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs hover:border-blue-400 transition-all">
-                        <div className="w-9 h-9 rounded-lg bg-blue-100 text-blue-700 flex items-center justify-center mb-3">
-                            <Building2 size={18} />
-                        </div>
-                        <h4 className="text-sm font-bold text-slate-900">Academic Block A</h4>
-                        <p className="text-[11px] text-blue-700 font-semibold mb-2">4 Floors · 28 Rooms</p>
-                        <p className="text-xs text-slate-500 leading-relaxed">
-                            Lecture Halls 101–305, Advanced AI Research Lab, Reception, Staircases A/B, and Wheelchair Elevator.
-                        </p>
-                    </div>
+            {/* Interactive 3D Architectural Glass Hologram */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.65, delay: 0.1 }}
+              className="lg:col-span-6 relative h-[400px] sm:h-[470px] lg:h-[520px] rounded-3xl bg-[#0A1024]/80 ring-1 ring-white/10 shadow-2xl overflow-hidden"
+            >
+              <Suspense
+                fallback={
+                  <Skeleton3D label="Rendering 3D Spatial Glass Hologram..." />
+                }
+              >
+                <Hero3D />
+              </Suspense>
 
-                    {/* Central Library */}
-                    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs hover:border-blue-400 transition-all">
-                        <div className="w-9 h-9 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center mb-3">
-                            <BookOpen size={18} />
-                        </div>
-                        <h4 className="text-sm font-bold text-slate-900">Central Library</h4>
-                        <p className="text-[11px] text-indigo-700 font-semibold mb-2">Ground Level · Reading Wing</p>
-                        <p className="text-xs text-slate-500 leading-relaxed">
-                            Quiet study halls, digital periodicals stack, reference desk, and research terminal stations.
-                        </p>
-                    </div>
+              {/* Floating Hologram HUD Badges */}
+              <div className="pointer-events-none absolute top-4 left-4 flex items-center gap-2 rounded-xl bg-slate-950/75 px-3 py-1.5 text-xs font-medium text-cyan-300 ring-1 ring-cyan-400/30 backdrop-blur-md">
+                <span className="h-2 w-2 rounded-full bg-cyan-400 animate-ping" />
+                Interactive 3D Spatial Twin · Drag to Orbit
+              </div>
 
-                    {/* Canteen & Dining */}
-                    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs hover:border-blue-400 transition-all">
-                        <div className="w-9 h-9 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center mb-3">
-                            <Utensils size={18} />
-                        </div>
-                        <h4 className="text-sm font-bold text-slate-900">Campus Food Court</h4>
-                        <p className="text-[11px] text-amber-700 font-semibold mb-2">Ground Level · Dining Plaza</p>
-                        <p className="text-xs text-slate-500 leading-relaxed">
-                            Student cafeteria, refreshment counters, social courtyard, and daily catering facilities.
-                        </p>
-                    </div>
-
-                    {/* Hostel Block */}
-                    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs hover:border-blue-400 transition-all">
-                        <div className="w-9 h-9 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center mb-3">
-                            <BedDouble size={18} />
-                        </div>
-                        <h4 className="text-sm font-bold text-slate-900">Student Hostels & Mess</h4>
-                        <p className="text-[11px] text-emerald-700 font-semibold mb-2">Ground & 3rd Floor</p>
-                        <p className="text-xs text-slate-500 leading-relaxed">
-                            Resident dormitories (Room 309, 310), Ground Dining Mess Hall, and Chief Warden Administrative Office.
-                        </p>
-                    </div>
+              <div className="pointer-events-none absolute bottom-4 left-4 right-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-slate-950/80 px-4 py-2.5 text-xs ring-1 ring-white/10 backdrop-blur-md">
+                <div className="flex items-center gap-2 text-slate-200">
+                  <span className="h-2.5 w-2.5 rounded-full bg-sky-400" />
+                  <span>Photo Localized: Atrium Entrance</span>
                 </div>
-            </section>
-
-            {/* ── DETAILED CAPABILITIES GRID ── */}
-            <section className="py-12 px-4 sm:px-6 bg-slate-100/70 border-t border-b border-slate-200">
-                <div className="max-w-5xl mx-auto">
-                    <div className="text-center mb-10">
-                        <h2 className="text-2xl font-bold text-slate-900">
-                            Enterprise Navigation Features
-                        </h2>
-                        <p className="text-xs text-slate-500 max-w-md mx-auto mt-1">
-                            Engineered for zero-hardware deployment without costly Bluetooth beacons or Wi-Fi fingerprinting.
-                        </p>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        {/* 1. Zero Hardware Vision */}
-                        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
-                            <div className="w-8 h-8 rounded bg-blue-50 text-blue-700 flex items-center justify-center mb-3">
-                                <Camera size={16} />
-                            </div>
-                            <h4 className="text-sm font-bold text-slate-900 mb-1">Zero-Hardware Vision Localizer</h4>
-                            <p className="text-xs text-slate-500 leading-relaxed">
-                                Simply point any mobile phone camera at an existing room sign or corridor doorway. The AI Vision pipeline matches room plaques with 98%+ confidence.
-                            </p>
-                        </div>
-
-                        {/* 2. Dynamic Hazard Rerouting */}
-                        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
-                            <div className="w-8 h-8 rounded bg-amber-50 text-amber-700 flex items-center justify-center mb-3">
-                                <AlertTriangle size={16} />
-                            </div>
-                            <h4 className="text-sm font-bold text-slate-900 mb-1">Dynamic Maintenance Rerouting</h4>
-                            <p className="text-xs text-slate-500 leading-relaxed">
-                                When facilities mark a corridor for cleaning or repair, the navigation engine automatically recalculates routes away from the blocked hallway in real-time.
-                            </p>
-                        </div>
-
-                        {/* 3. Meet a Friend */}
-                        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
-                            <div className="w-8 h-8 rounded bg-indigo-50 text-indigo-700 flex items-center justify-center mb-3">
-                                <Users size={16} />
-                            </div>
-                            <h4 className="text-sm font-bold text-slate-900 mb-1">Meet-a-Friend Midpoint Finder</h4>
-                            <p className="text-xs text-slate-500 leading-relaxed">
-                                Two students at opposite ends of campus can calculate an optimal, fair-distance meeting room (e.g. Student in 309 & Student in 101 meet at Room 204).
-                            </p>
-                        </div>
-
-                        {/* 4. Multi-Language Voice */}
-                        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
-                            <div className="w-8 h-8 rounded bg-emerald-50 text-emerald-700 flex items-center justify-center mb-3">
-                                <Mic size={16} />
-                            </div>
-                            <h4 className="text-sm font-bold text-slate-900 mb-1">4-Language Voice Navigation</h4>
-                            <p className="text-xs text-slate-500 leading-relaxed">
-                                Native speech synthesizer directions in English, हिन्दी (Hindi), తెలుగు (Telugu), and தமிழ் (Tamil) for full student accessibility.
-                            </p>
-                        </div>
-
-                        {/* 5. Emergency SOS Evacuation */}
-                        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
-                            <div className="w-8 h-8 rounded bg-red-50 text-red-700 flex items-center justify-center mb-3">
-                                <Shield size={16} />
-                            </div>
-                            <h4 className="text-sm font-bold text-slate-900 mb-1">1-Click Emergency Evacuation</h4>
-                            <p className="text-xs text-slate-500 leading-relaxed">
-                                In case of fire or hazard, a single tap routes you immediately to the nearest safe emergency exit and staircase, avoiding elevators.
-                            </p>
-                        </div>
-
-                        {/* 6. 3D Digital Twin Inspector */}
-                        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs">
-                            <div className="w-8 h-8 rounded bg-purple-50 text-purple-700 flex items-center justify-center mb-3">
-                                <Layers size={16} />
-                            </div>
-                            <h4 className="text-sm font-bold text-slate-900 mb-1">3D Spatial Digital Twin</h4>
-                            <p className="text-xs text-slate-500 leading-relaxed">
-                                Interactive Three.js spatial building explorer displaying all 4 building levels, vertical elevation shifts, and stair connections.
-                            </p>
-                        </div>
-                    </div>
+                <div className="flex items-center gap-2 text-emerald-300 font-semibold">
+                  <span>Lift Core → Level 2 Specialty Wing</span>
+                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
                 </div>
-            </section>
-
-            {/* ── HOW IT WORKS ARCHITECTURE ── */}
-            <section className="py-14 px-4 sm:px-6 max-w-5xl mx-auto">
-                <div className="text-center mb-10">
-                    <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">
-                        Core Architecture
-                    </span>
-                    <h2 className="text-2xl font-bold text-slate-900 mt-2">
-                        How Campus Navigator Maps the Physical World
-                    </h2>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    {[
-                        {
-                            step: '01',
-                            title: 'Blueprint Ingestion',
-                            desc: 'Architectural floor plans or CAD PDFs are parsed into walkable corridor axes and room polygon coordinates.'
-                        },
-                        {
-                            step: '02',
-                            title: 'Topological Extraction',
-                            desc: 'The engine constructs a multi-floor network graph linking rooms, stairs, lifts, and fire exits.'
-                        },
-                        {
-                            step: '03',
-                            title: 'Zero-Hardware Vision',
-                            desc: 'Corridor sign photos train the VLM model to recognize door numbers and landmarks without beacons.'
-                        },
-                        {
-                            step: '04',
-                            title: 'A* Multimodal Dispatch',
-                            desc: 'Turn-by-turn guidance is delivered with 2D floor plans, voice directions, and real-time hazard rerouting.'
-                        }
-                    ].map(st => (
-                        <div key={st.step} className="bg-white border border-slate-200 rounded-xl p-5 relative shadow-xs">
-                            <span className="text-3xl font-black text-blue-600 block mb-2">{st.step}</span>
-                            <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wide mb-1.5">{st.title}</h4>
-                            <p className="text-xs text-slate-500 leading-relaxed">{st.desc}</p>
-                        </div>
-                    ))}
-                </div>
-            </section>
-
-            {/* ── FOOTER ── */}
-            <footer className="border-t border-slate-200 bg-white py-8 px-4 sm:px-6 text-slate-500">
-                <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-                    <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-lg bg-blue-700 flex items-center justify-center text-white">
-                            <Building2 size={16} />
-                        </div>
-                        <div>
-                            <p className="text-xs font-bold text-slate-900">Campus Navigator — Official Navigation Platform</p>
-                            <p className="text-[10px] text-slate-400">Institutional Facilities & Campus Safety System</p>
-                        </div>
-                    </div>
-                    <div className="flex items-center gap-4 text-xs font-medium">
-                        <Link to="/student" className="hover:text-blue-700">Student Portal</Link>
-                        <Link to="/admin" className="hover:text-blue-700">Admin Operations</Link>
-                        <Link to="/admin/qr" className="hover:text-blue-700">Printable QRs</Link>
-                        <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono border border-slate-200">
-                            v2.4 LTS
-                        </span>
-                    </div>
-                </div>
-            </footer>
+              </div>
+            </motion.div>
+          </div>
         </div>
-    );
+      </section>
+
+      {/* =================================================================== */}
+      {/* INTERACTIVE HOW IT WORKS (3-STEP VISUAL FLOW)                       */}
+      {/* =================================================================== */}
+      <section
+        id="how-it-works"
+        className="bg-slate-50 text-slate-900 py-20 sm:py-24 border-b border-slate-200/80"
+      >
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="max-w-2xl">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-indigo-700 ring-1 ring-indigo-200">
+              <Layers className="h-3.5 w-3.5" />
+              How Navigator Works
+            </span>
+            <h2 className="mt-3 font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-950">
+              From a single hallway photo to turn-by-turn indoor clarity
+            </h2>
+            <p className="mt-3 text-base text-slate-600">
+              No mobile app downloads, no Bluetooth calibration, and no QR codes on walls. Every venue runs on pure visual understanding and topological A* routing.
+            </p>
+          </div>
+
+          <div className="mt-12 grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
+            {/* Step Selector Cards */}
+            <div className="lg:col-span-7 space-y-4">
+              {HOW_IT_WORKS_STEPS.map((st, idx) => {
+                const Icon = st.icon;
+                const isSelected = activeStep === idx;
+                return (
+                  <button
+                    key={st.num}
+                    type="button"
+                    onClick={() => setActiveStep(idx)}
+                    className={`w-full text-left rounded-2xl p-5 sm:p-6 transition-all ${
+                      isSelected
+                        ? 'bg-white shadow-lift ring-2 ring-indigo-500'
+                        : 'bg-white/75 hover:bg-white ring-1 ring-slate-200/90'
+                    }`}
+                  >
+                    <div className="flex items-start gap-4">
+                      <div
+                        className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ${st.accent} text-white shadow-md`}
+                      >
+                        <Icon className="h-6 w-6" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold uppercase tracking-wider text-indigo-600">
+                            Step {st.num} · {st.subtitle}
+                          </span>
+                        </div>
+                        <h3 className="mt-1 font-display text-lg font-bold text-slate-900">
+                          {st.title}
+                        </h3>
+                        <p className="mt-1.5 text-sm text-slate-600 leading-relaxed">
+                          {st.description}
+                        </p>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Interactive Step Stage Preview */}
+            <div className="lg:col-span-5">
+              <div className="h-full rounded-3xl bg-[#070B18] p-6 sm:p-7 text-white ring-1 ring-slate-900/10 shadow-xl flex flex-col justify-between spatial-grid-dark">
+                <div>
+                  <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                    <span className="text-xs font-bold uppercase tracking-wider text-cyan-400">
+                      Pipeline Stage {HOW_IT_WORKS_STEPS[activeStep].num}
+                    </span>
+                    <span className="rounded-full bg-white/10 px-2.5 py-0.5 text-[11px] font-semibold text-slate-200">
+                      Real-Time Spatial Engine
+                    </span>
+                  </div>
+
+                  <h4 className="mt-5 font-display text-xl font-bold text-white">
+                    {HOW_IT_WORKS_STEPS[activeStep].title}
+                  </h4>
+
+                  {/* Dynamic Visual Illustration per Step */}
+                  <div className="mt-5 rounded-2xl bg-white/[0.05] p-4 ring-1 ring-white/10 space-y-3">
+                    {activeStep === 0 && (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between rounded-xl bg-cyan-500/10 px-3.5 py-2.5 ring-1 ring-cyan-400/30">
+                          <span className="text-xs font-semibold text-cyan-200">
+                            📷 visitor_corridor_still.jpg
+                          </span>
+                          <span className="rounded bg-cyan-400/20 px-2 py-0.5 text-[10px] font-bold text-cyan-300">
+                            EXIF Stripped
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <div className="rounded-xl bg-white/[0.04] p-3 ring-1 ring-white/10">
+                            <div className="text-slate-400 text-[11px]">Input Mode</div>
+                            <div className="font-bold text-white mt-0.5">
+                              Still Photo / Drop
+                            </div>
+                          </div>
+                          <div className="rounded-xl bg-white/[0.04] p-3 ring-1 ring-white/10">
+                            <div className="text-slate-400 text-[11px]">Privacy Filter</div>
+                            <div className="font-bold text-emerald-300 mt-0.5">
+                              Auto Face-Blur
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {activeStep === 1 && (
+                      <div className="space-y-2.5 text-xs">
+                        <div className="flex items-center justify-between rounded-xl bg-indigo-500/15 px-3 py-2 ring-1 ring-indigo-400/30">
+                          <span className="font-semibold text-indigo-200">
+                            DINOv2 Cosine Embedding Match
+                          </span>
+                          <span className="font-mono text-cyan-300">Visual Vector</span>
+                        </div>
+                        <div className="flex items-center justify-between rounded-xl bg-emerald-500/15 px-3 py-2 ring-1 ring-emerald-400/30">
+                          <span className="font-semibold text-emerald-200">
+                            Signboard OCR Fusion
+                          </span>
+                          <span className="font-mono text-emerald-300">
+                            "CARDIOLOGY · L2"
+                          </span>
+                        </div>
+                        <div className="rounded-xl bg-white/[0.04] p-2.5 text-[11px] text-slate-300">
+                          Side-by-side reference verification ensures you confirm the exact spot before walking.
+                        </div>
+                      </div>
+                    )}
+
+                    {activeStep === 2 && (
+                      <div className="space-y-2.5 text-xs">
+                        <div className="flex items-center gap-2.5 rounded-xl bg-white/[0.06] px-3 py-2">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-cyan-500 text-slate-950 font-bold">
+                            1
+                          </span>
+                          <div>
+                            <div className="font-semibold text-white">
+                              Walk straight past Main Reception
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              Ground Floor · Landmark photo attached
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2.5 rounded-xl bg-white/[0.06] px-3 py-2">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-500 text-white font-bold">
+                            2
+                          </span>
+                          <div>
+                            <div className="font-semibold text-white">
+                              Take Central Lift to Floor 2 (Accessible)
+                            </div>
+                            <div className="text-[10px] text-emerald-300">
+                              Closed East Staircase automatically avoided
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <ul className="mt-5 space-y-2.5">
+                    {HOW_IT_WORKS_STEPS[activeStep].highlights.map((item, i) => (
+                      <li
+                        key={i}
+                        className="flex items-center gap-2.5 text-xs sm:text-sm text-slate-300"
+                      >
+                        <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="mt-6 pt-4 border-t border-white/10 flex items-center justify-between">
+                  <span className="text-xs text-slate-400">
+                    Ready to try it in a live building?
+                  </span>
+                  <Link
+                    to="/venues"
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-cyan-300 hover:text-cyan-200"
+                  >
+                    Open a Venue <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* =================================================================== */}
+      {/* BUILT FOR COMPLEX INDOOR WORLDS                                     */}
+      {/* =================================================================== */}
+      <section
+        id="worlds"
+        className="py-20 sm:py-24 bg-[#070B18] border-b border-white/[0.08]"
+      >
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="text-center max-w-3xl mx-auto">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/10 px-3 py-1 text-xs font-bold uppercase tracking-wider text-cyan-300 ring-1 ring-cyan-400/30">
+              <Compass className="h-3.5 w-3.5" />
+              Universal Spatial Platform
+            </span>
+            <h2 className="mt-3 font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
+              Built for Complex Indoor Worlds
+            </h2>
+            <p className="mt-3 text-base text-slate-400">
+              One unified graph, vision, and directory architecture tailored to the places where getting lost costs critical time.
+            </p>
+          </div>
+
+          <div className="mt-12 grid grid-cols-1 md:grid-cols-2 gap-6">
+            {INDOOR_WORLDS.map((w) => {
+              const Icon = w.icon;
+              return (
+                <div
+                  key={w.title}
+                  className={`relative overflow-hidden rounded-3xl bg-[#0C1328] p-6 sm:p-7 ring-1 ring-white/10 transition-all duration-300 ${w.border}`}
+                >
+                  <div
+                    className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${w.gradient}`}
+                  />
+                  <div className="relative z-10 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div
+                        className={`flex h-12 w-12 items-center justify-center rounded-2xl ring-1 ${w.iconBg}`}
+                      >
+                        <Icon className="h-6 w-6" />
+                      </div>
+                      <span className="rounded-full bg-white/[0.06] px-3 py-1 text-xs font-semibold text-slate-300 ring-1 ring-white/10">
+                        {w.badge}
+                      </span>
+                    </div>
+
+                    <h3 className="font-display text-xl font-bold text-white">
+                      {w.title}
+                    </h3>
+                    <p className="text-sm text-slate-300 leading-relaxed">
+                      {w.description}
+                    </p>
+
+                    <div className="pt-2 space-y-2 border-t border-white/[0.08]">
+                      {w.features.map((f, idx) => (
+                        <div
+                          key={idx}
+                          className="flex items-center gap-2 text-xs text-slate-300"
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5 text-cyan-400 shrink-0" />
+                          <span>{f}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </section>
+
+      {/* =================================================================== */}
+      {/* LIVE VENUES PREVIEW (FROM GET /api/venues)                          */}
+      {/* =================================================================== */}
+      <section className="py-20 sm:py-24 bg-slate-50 text-slate-900 border-b border-slate-200/80">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 mb-10">
+            <div>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-emerald-700 ring-1 ring-emerald-200">
+                <Radio className="h-3.5 w-3.5 text-emerald-600" />
+                Live Spatial Twins
+              </span>
+              <h2 className="mt-3 font-display text-3xl sm:text-4xl font-extrabold tracking-tight text-slate-950">
+                Explore Active Venues
+              </h2>
+              <p className="mt-2 text-base text-slate-600">
+                Select any venue below to test 1-click visitor photo localization, smart doctor/room search, and 3D multi-floor routing.
+              </p>
+            </div>
+            <Link
+              to="/venues"
+              className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-bold text-white hover:bg-slate-800 transition shrink-0"
+            >
+              View All Venues
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
+
+          {loadingVenues ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[0, 1, 2].map((i) => (
+                <div
+                  key={i}
+                  className="h-96 rounded-2xl bg-white ring-1 ring-slate-200 p-4 animate-pulse flex flex-col justify-between"
+                >
+                  <div className="h-44 rounded-xl bg-slate-200" />
+                  <div className="space-y-3">
+                    <div className="h-4 w-2/3 rounded bg-slate-200" />
+                    <div className="h-3 w-full rounded bg-slate-100" />
+                    <div className="h-12 w-full rounded-xl bg-slate-100" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : venuesError ? (
+            <ErrorState
+              title="Backend Venue Service Starting Up"
+              message={venuesError}
+              onRetry={() => void loadData()}
+            />
+          ) : venues.length === 0 ? (
+            <div className="rounded-2xl bg-white p-10 text-center ring-1 ring-slate-200">
+              <p className="text-sm text-slate-600">
+                No venues are indexed yet. Open Admin Studio to configure a venue.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {venues.slice(0, 6).map((venue) => (
+                <VenueCard key={venue.id} venue={venue} />
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* =================================================================== */}
+      {/* PRIVACY & ZERO-HARDWARE ARCHITECTURE                                */}
+      {/* =================================================================== */}
+      <section id="privacy" className="py-20 sm:py-24 bg-[#070B18] text-white">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+          <div className="rounded-3xl bg-gradient-to-br from-[#0D1630] via-[#0B1226] to-[#070B18] p-8 sm:p-12 ring-1 ring-white/10 shadow-2xl">
+            <div className="max-w-2xl">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 px-3 py-1 text-xs font-bold uppercase tracking-wider text-emerald-300 ring-1 ring-emerald-400/30">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Privacy-By-Design & Zero Hardware
+              </span>
+              <h2 className="mt-3 font-display text-2xl sm:text-3xl font-extrabold tracking-tight">
+                Engineered for medical & institutional trust
+              </h2>
+              <p className="mt-2.5 text-sm sm:text-base text-slate-300 leading-relaxed">
+                Navigator requires zero physical installation on hospital or campus walls and treats every uploaded query image with strict automated privacy safeguards.
+              </p>
+            </div>
+
+            <div className="mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+              <div className="rounded-2xl bg-white/[0.04] p-5 ring-1 ring-white/10 space-y-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-400">
+                  <EyeOff className="h-5 w-5" />
+                </div>
+                <h3 className="font-display text-sm font-bold">
+                  Automatic Face Blurring
+                </h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Bystander faces detected in visitor or admin photos are blurred automatically before storage or optional dataset contribution.
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-white/[0.04] p-5 ring-1 ring-white/10 space-y-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-500/15 text-cyan-400">
+                  <FileSearch className="h-5 w-5" />
+                </div>
+                <h3 className="font-display text-sm font-bold">
+                  Instant EXIF Stripping
+                </h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Device serials, timestamps, and camera metadata headers are stripped on ingestion so uploads remain anonymous.
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-white/[0.04] p-5 ring-1 ring-white/10 space-y-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/15 text-indigo-400">
+                  <WifiOff className="h-5 w-5" />
+                </div>
+                <h3 className="font-display text-sm font-bold">
+                  Zero BLE Beacons or Tags
+                </h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Deploy across an entire hospital or university using ordinary hallway photos — no battery beacons, Wi-Fi sniffing, or wall stickers.
+                </p>
+              </div>
+
+              <div className="rounded-2xl bg-white/[0.04] p-5 ring-1 ring-white/10 space-y-2.5">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/15 text-violet-400">
+                  <ShieldCheck className="h-5 w-5" />
+                </div>
+                <h3 className="font-display text-sm font-bold">
+                  No Live Person Tracking
+                </h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Localization happens strictly on-demand when you choose to upload a still photo — never via background tracking or live video feeds.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* =================================================================== */}
+      {/* FOOTER                                                              */}
+      {/* =================================================================== */}
+      <footer className="border-t border-white/[0.08] bg-[#050812] py-10 text-slate-400">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-cyan-500 to-indigo-600 text-white">
+              <Compass className="h-4 w-4" />
+            </div>
+            <span className="font-display text-sm font-bold text-white">
+              Navigator
+            </span>
+            <span className="text-xs text-slate-500">
+              · Universal Visual Indoor Navigation
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-5 text-xs font-medium">
+            <Link to="/venues" className="hover:text-white transition">
+              Live Venues
+            </Link>
+            <a href="#how-it-works" className="hover:text-white transition">
+              How It Works
+            </a>
+            <a href="#privacy" className="hover:text-white transition">
+              Privacy
+            </a>
+            <Link to="/admin" className="hover:text-cyan-300 transition">
+              Admin Studio
+            </Link>
+          </div>
+        </div>
+      </footer>
+    </div>
+  );
 };

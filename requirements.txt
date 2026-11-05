@@ -1,0 +1,8 @@
+fastapi>=0.115.0
+sqlmodel>=0.0.22
+networkx>=3.2
+pydantic>=2.7.0
+python-multipart>=0.0.9
+pillow>=10.0.0
+numpy>=1.26.0,<2.3
+rapidfuzz>=3.9.0

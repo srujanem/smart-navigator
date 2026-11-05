@@ -1,11 +1,11 @@
 {
-  "name": "Campus Navigator - Smart Indoor Navigation",
-  "short_name": "CampusNav",
-  "description": "Smart indoor campus navigation system for college students and staff",
-  "start_url": "/student",
+  "name": "Navigator — Photo-based indoor navigation",
+  "short_name": "Navigator",
+  "description": "Take a photo inside any building and get guided to where you need to go.",
+  "start_url": "/",
   "display": "standalone",
-  "background_color": "#f8fafc",
-  "theme_color": "#1d4ed8",
+  "background_color": "#0b1020",
+  "theme_color": "#0b1020",
   "icons": [
     {
       "src": "/favicon.svg",
