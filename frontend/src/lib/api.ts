@@ -70,7 +70,7 @@ export function clearAdminSession(): void {
 
 export const API_BASE = (
   (import.meta as any).env?.VITE_API_URL ||
-  'https://butter-break-advancement-habits.trycloudflare.com'
+  'https://appendix-respective-buys-applied.trycloudflare.com'
 ).replace(/\/$/, '');
 
 export function mediaUrl(url: string | null | undefined): string {
