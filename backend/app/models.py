@@ -26,6 +26,8 @@ class Venue(SQLModel, table=True):
     cover_path: Optional[str] = None
     emergency_node_id: Optional[str] = None
     entrance_node_id: Optional[str] = None
+    owner_id: Optional[str] = Field(default=None, index=True)
+    owner_name: str = ""
 
 
 class Building(SQLModel, table=True):
@@ -44,6 +46,7 @@ class Floor(SQLModel, table=True):
     building_id: str = Field(index=True)
     level: int
     name: str
+    blueprint_path: Optional[str] = None
 
 
 class Node(SQLModel, table=True):
@@ -69,6 +72,7 @@ class Edge(SQLModel, table=True):
     distance: float
     kind: str = "walk"                         # walk | door | stairs | lift | outdoor
     accessible: bool = True
+    stretcher_ok: bool = True
 
 
 class Closure(SQLModel, table=True):
@@ -99,11 +103,13 @@ class Photo(SQLModel, table=True):
     venue_id: str = Field(index=True)
     node_id: str = Field(index=True)
     path: str                                  # relative to MEDIA_DIR
-    source: str = "admin"                      # seed | admin | visitor
+    source: str = "admin"                      # seed | admin | visitor | uploader
     quality: float = 1.0
     embedding: Optional[bytes] = None          # float32 vector
     embedder: Optional[str] = None
     ocr_text: str = ""
+    heading_deg: Optional[float] = None        # optional 0..360 camera orientation on floorplan
+    uploaded_by_id: Optional[str] = None
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -146,5 +152,12 @@ class User(SQLModel, table=True):
     id: str = Field(default_factory=_id, primary_key=True)
     email: str = Field(unique=True, index=True)
     name: str
-    role: str = "admin"                        # admin | staff
+    role: str = "uploader"                     # admin (superadmin) | uploader (map creator) | staff
     password_hash: str
+    organization: str = ""
+    bio: str = ""
+    avatar_color: str = "#0ea5e9"
+    token_version: int = 1
+    failed_attempts: int = 0
+    locked_until: Optional[float] = None
+    created_at: Optional[datetime] = Field(default_factory=_now)

@@ -2,6 +2,7 @@ import React, { useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Float, Html, Line, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
+import { Navigation, Orbit } from 'lucide-react';
 import type { Building, GEdge, GNode, Graph, VenueDetail } from '../lib/types';
 import { formatLevel } from '../lib/locationStore';
 
@@ -13,7 +14,7 @@ export interface Venue3DProps {
   startNodeId?: string | null;
   endNodeId?: string | null;
   routePath?: string[];
-  walkerProgress?: number | null; // 0..1 when externally scrubbed, null for automatic loop
+  walkerProgress?: number | null;
   isPlayingWalker?: boolean;
   onSelectNode?: (node: GNode) => void;
 }
@@ -115,12 +116,21 @@ const WalkerAndBeacons: React.FC<{
   endPos: [number, number, number] | null;
   walkerProgress?: number | null;
   isPlayingWalker: boolean;
-}> = ({ routePoints, startPos, endPos, walkerProgress, isPlayingWalker }) => {
+  followWalker: boolean;
+}> = ({
+  routePoints,
+  startPos,
+  endPos,
+  walkerProgress,
+  isPlayingWalker,
+  followWalker,
+}) => {
   const walkerRef = useRef<THREE.Mesh>(null);
   const walkerAuraRef = useRef<THREE.Mesh>(null);
   const startRingRef = useRef<THREE.Mesh>(null);
   const endRingRef = useRef<THREE.Mesh>(null);
   const internalProgress = useRef(0);
+  const smoothLook = useRef(new THREE.Vector3());
 
   const curve = useMemo(() => {
     if (routePoints.length < 2) return null;
@@ -153,6 +163,25 @@ const WalkerAndBeacons: React.FC<{
       walkerRef.current.position.copy(pt);
       walkerAuraRef.current.position.copy(pt);
       walkerAuraRef.current.scale.setScalar(1 + Math.sin(t * 6) * 0.25);
+
+      if (followWalker) {
+        const tangent = curve.getTangentAt(Math.min(0.995, u));
+        const horiz = new THREE.Vector3(tangent.x, 0, tangent.z);
+        if (horiz.lengthSq() < 0.01) {
+          horiz.set(0.6, 0, 0.8);
+        }
+        horiz.normalize();
+
+        const desiredCam = pt
+          .clone()
+          .sub(horiz.clone().multiplyScalar(11.5))
+          .add(new THREE.Vector3(0, 6.8, 0));
+        const desiredTarget = pt.clone().add(horiz.clone().multiplyScalar(3.5));
+
+        state.camera.position.lerp(desiredCam, Math.min(1, delta * 3.8));
+        smoothLook.current.lerp(desiredTarget, Math.min(1, delta * 4.5));
+        state.camera.lookAt(smoothLook.current);
+      }
     }
 
     if (startRingRef.current) {
@@ -252,7 +281,7 @@ const WalkerAndBeacons: React.FC<{
   );
 };
 
-const SceneContent: React.FC<Venue3DProps> = ({
+const SceneContent: React.FC<Venue3DProps & { followWalker: boolean }> = ({
   venue,
   graph,
   selectedLevel,
@@ -263,6 +292,7 @@ const SceneContent: React.FC<Venue3DProps> = ({
   walkerProgress = null,
   isPlayingWalker = true,
   onSelectNode,
+  followWalker,
 }) => {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
@@ -297,7 +327,6 @@ const SceneContent: React.FC<Venue3DProps> = ({
     });
   }, [routePoints]);
 
-  // Vertical shafts for lift/stairs edges connecting different levels
   const verticalShafts = useMemo(() => {
     const list: {
       id: string;
@@ -340,7 +369,6 @@ const SceneContent: React.FC<Venue3DProps> = ({
 
   return (
     <group>
-      {/* Subtle Ground Spatial Grid */}
       <gridHelper
         args={[85, 42, '#1e293b', '#0f172a']}
         position={[0, tf.toWorld(0, 0, tf.levels[0])[1] - 2.2, 0]}
@@ -482,8 +510,17 @@ const SceneContent: React.FC<Venue3DProps> = ({
               ? '#c084fc'
               : nodeColor(node);
 
-        const radius = node.is_place ? (isSelected || isHovered ? 0.62 : 0.44) : 0.22;
-        const showLabel = isHovered || isSelected || isStart || isEnd;
+        const radius = node.is_place
+          ? isSelected || isHovered
+            ? 0.62
+            : 0.44
+          : 0.22;
+        const showLabel =
+          isHovered ||
+          isSelected ||
+          isStart ||
+          isEnd ||
+          (followWalker && inRoute && node.is_place);
 
         return (
           <group key={node.id} position={[wx, wy + 0.26, wz]}>
@@ -539,19 +576,23 @@ const SceneContent: React.FC<Venue3DProps> = ({
         );
       })}
 
-      {/* Animated Walker + Start/Destination Beacons */}
+      {/* Animated Walker + Follow Camera + Start/Destination Beacons */}
       <WalkerAndBeacons
         routePoints={routePoints}
         startPos={startPos}
         endPos={endPos}
         walkerProgress={walkerProgress}
         isPlayingWalker={isPlayingWalker}
+        followWalker={followWalker}
       />
     </group>
   );
 };
 
 const Venue3D: React.FC<Venue3DProps> = (props) => {
+  const hasRoute = (props.routePath?.length ?? 0) >= 2;
+  const [followWalker, setFollowWalker] = useState(false);
+
   return (
     <div className="relative h-full w-full select-none rounded-2xl overflow-hidden bg-[#070B18] spatial-grid-dark">
       <Canvas
@@ -564,16 +605,48 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
         <directionalLight position={[25, 45, 25]} intensity={1.35} color="#f0f9ff" />
         <pointLight position={[-25, 20, -20]} intensity={1.0} color="#6366f1" />
         <pointLight position={[20, 15, 20]} intensity={0.9} color="#38bdf8" />
-        <SceneContent {...props} />
-        <OrbitControls
-          makeDefault
-          enableDamping
-          dampingFactor={0.07}
-          minDistance={12}
-          maxDistance={120}
-          maxPolarAngle={Math.PI / 2.05}
-        />
+        <SceneContent {...props} followWalker={hasRoute && followWalker} />
+        {!(hasRoute && followWalker) && (
+          <OrbitControls
+            makeDefault
+            enableDamping
+            dampingFactor={0.07}
+            minDistance={12}
+            maxDistance={120}
+            maxPolarAngle={Math.PI / 2.05}
+          />
+        )}
       </Canvas>
+
+      {/* Camera Mode Pill (Orbit vs Follow Walker POV) */}
+      {hasRoute && (
+        <div className="absolute top-3 left-3 z-10 flex items-center gap-1 rounded-xl bg-slate-950/80 p-1 text-xs ring-1 ring-white/15 backdrop-blur-md">
+          <button
+            type="button"
+            onClick={() => setFollowWalker(false)}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-bold transition ${
+              !followWalker
+                ? 'bg-cyan-500 text-slate-950 shadow-sm'
+                : 'text-slate-300 hover:bg-white/10'
+            }`}
+          >
+            <Orbit className="h-3.5 w-3.5" />
+            Orbit 3D
+          </button>
+          <button
+            type="button"
+            onClick={() => setFollowWalker(true)}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-bold transition ${
+              followWalker
+                ? 'bg-emerald-400 text-slate-950 shadow-sm'
+                : 'text-slate-300 hover:bg-white/10'
+            }`}
+          >
+            <Navigation className="h-3.5 w-3.5" />
+            Follow Walker POV
+          </button>
+        </div>
+      )}
 
       {/* Subtle 3D Legend Overlay */}
       <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-950/75 px-3 py-1.5 text-[11px] text-slate-300 ring-1 ring-white/10 backdrop-blur-md">

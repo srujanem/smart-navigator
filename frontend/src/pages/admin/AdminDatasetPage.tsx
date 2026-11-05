@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Camera,
   CheckCircle2,
+  Compass,
   Cpu,
   Loader2,
   Search,
@@ -19,6 +20,7 @@ import {
   getVenueGraph,
   mediaUrl,
   rebuildAdminIndex,
+  updateAdminPhoto,
   uploadAdminPhotos,
 } from '../../lib/api';
 import { formatLevel } from '../../lib/locationStore';
@@ -103,6 +105,7 @@ export const AdminDatasetPage: React.FC = () => {
 
   // Upload & Rebuild States
   const [uploading, setUploading] = useState(false);
+  const [uploadHeading, setUploadHeading] = useState<string>('');
   const [dragOver, setDragOver] = useState(false);
   const [uploadResult, setUploadResult] = useState<UploadPhotosResponse | null>(
     null,
@@ -190,10 +193,12 @@ export const AdminDatasetPage: React.FC = () => {
     setUploading(true);
     setUploadResult(null);
     try {
+      const parsedHeading = uploadHeading !== '' ? Number(uploadHeading) : null;
       const res = await uploadAdminPhotos(
         selectedSlug,
         selectedNode.node_id,
         files,
+        parsedHeading,
       );
       setUploadResult(res);
       await refreshDatasetOnly();
@@ -434,6 +439,27 @@ export const AdminDatasetPage: React.FC = () => {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             {/* Multi-file Drag-and-Drop Photo Uploader */}
             <div className="lg:col-span-5 space-y-3">
+              <div className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200/80">
+                <span className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
+                  <Compass className="h-3.5 w-3.5 text-indigo-600" />
+                  Camera Heading:
+                </span>
+                <select
+                  value={uploadHeading}
+                  onChange={(e) => setUploadHeading(e.target.value)}
+                  className="rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-slate-800 ring-1 ring-slate-200"
+                >
+                  <option value="">Unspecified</option>
+                  <option value="0">0° North</option>
+                  <option value="45">45° NE</option>
+                  <option value="90">90° East</option>
+                  <option value="135">135° SE</option>
+                  <option value="180">180° South</option>
+                  <option value="225">225° SW</option>
+                  <option value="270">270° West</option>
+                  <option value="315">315° NW</option>
+                </select>
+              </div>
               <div
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -552,20 +578,46 @@ export const AdminDatasetPage: React.FC = () => {
                         alt={selectedNode.name}
                         className="h-32 w-full object-cover"
                       />
-                      <div className="flex items-center justify-between bg-white px-2.5 py-2 text-[11px]">
-                        <div className="flex items-center gap-1.5">
-                          <span className="rounded bg-slate-100 px-1.5 py-0.5 font-semibold text-slate-700 capitalize">
-                            {ph.source}
-                          </span>
+                      <div className="flex items-center justify-between bg-white px-2.5 py-2 text-[11px] gap-1">
+                        <div className="flex items-center gap-1 min-w-0">
                           <span className="font-mono text-emerald-700 font-bold">
                             Q:{Math.round(ph.quality * 100)}%
                           </span>
+                          <select
+                            value={
+                              ph.heading_deg !== null && ph.heading_deg !== undefined
+                                ? String(Math.round(ph.heading_deg))
+                                : ''
+                            }
+                            onChange={async (e) => {
+                              const val =
+                                e.target.value === '' ? null : Number(e.target.value);
+                              try {
+                                await updateAdminPhoto(ph.id, val);
+                                await refreshDatasetOnly();
+                              } catch {
+                                // Ignore
+                              }
+                            }}
+                            className="rounded bg-slate-100 px-1 py-0.5 text-[10px] font-semibold text-slate-700"
+                            title="Camera compass heading"
+                          >
+                            <option value="">Dir: —</option>
+                            <option value="0">0° N</option>
+                            <option value="45">45° NE</option>
+                            <option value="90">90° E</option>
+                            <option value="135">135° SE</option>
+                            <option value="180">180° S</option>
+                            <option value="225">225° SW</option>
+                            <option value="270">270° W</option>
+                            <option value="315">315° NW</option>
+                          </select>
                         </div>
                         <button
                           type="button"
                           disabled={deletingPhotoId === ph.id}
                           onClick={() => void handleDeletePhoto(ph.id)}
-                          className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition"
+                          className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition shrink-0"
                           title="Delete photo"
                         >
                           {deletingPhotoId === ph.id ? (

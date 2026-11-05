@@ -2,9 +2,16 @@ import type {
   AdminOverview,
   AdminUser,
   AuthResponse,
+  Building,
   Closure,
+  CreateEdgePayload,
+  CreateNodePayload,
   CreatePersonPayload,
+  CreateVenuePayload,
   DatasetResponse,
+  Floor,
+  GEdge,
+  GNode,
   Graph,
   HealthStatus,
   IndexReport,
@@ -14,11 +21,22 @@ import type {
   RouteProfile,
   SampleQuery,
   SearchResponse,
+  UpdateNodePayload,
   UpdatePersonPayload,
+  UploaderProfileResponse,
   UploadPhotosResponse,
   VenueDetail,
   VenueSummary,
 } from './types';
+import {
+  cacheVenueDetail,
+  cacheVenueGraph,
+  cacheVenuesList,
+  computeOfflineRoute,
+  getCachedVenueDetail,
+  getCachedVenueGraph,
+  getCachedVenuesList,
+} from './offlineRouter';
 
 const ADMIN_TOKEN_KEY = 'navigator_admin_token';
 const ADMIN_USER_KEY = 'navigator_admin_user';
@@ -70,7 +88,7 @@ export function clearAdminSession(): void {
 
 export const API_BASE = (
   (import.meta as any).env?.VITE_API_URL ||
-  'https://appendix-respective-buys-applied.trycloudflare.com'
+  'https://win-petite-compete-jaguar.trycloudflare.com'
 ).replace(/\/$/, '');
 
 export function mediaUrl(url: string | null | undefined): string {
@@ -108,14 +126,14 @@ async function request<T>(
     res = await fetch(url, { ...options, headers });
   } catch {
     throw new ApiError(
-      'Unable to reach Navigator API server. Ensure the backend service is running.',
+      'Unable to reach Navigator API server. Check connection or use cached offline mode.',
       0,
     );
   }
 
   if (res.status === 401 && auth) {
     clearAdminSession();
-    throw new ApiError('Your admin session expired. Please sign in again.', 401);
+    throw new ApiError('Your session expired or was revoked. Please sign in again.', 401);
   }
 
   if (!res.ok) {
@@ -140,24 +158,63 @@ async function request<T>(
 }
 
 // ---------------------------------------------------------------------------
-// Public API
+// Public API (with seamless Offline Basement Cache Fallback)
 // ---------------------------------------------------------------------------
 
 export function getHealth(): Promise<HealthStatus> {
   return request<HealthStatus>('/api/health');
 }
 
-export function getVenues(q?: string): Promise<VenueSummary[]> {
+export async function getVenues(q?: string): Promise<VenueSummary[]> {
   const qs = q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
-  return request<VenueSummary[]>(`/api/venues${qs}`);
+  try {
+    const list = await request<VenueSummary[]>(`/api/venues${qs}`);
+    if (!q?.trim()) {
+      cacheVenuesList(list);
+    }
+    return list;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 0) {
+      const cached = getCachedVenuesList();
+      if (cached) {
+        const ql = q?.trim().toLowerCase();
+        return ql
+          ? cached.filter((v) =>
+              `${v.name} ${v.city} ${v.type} ${v.tagline}`.toLowerCase().includes(ql),
+            )
+          : cached;
+      }
+    }
+    throw err;
+  }
 }
 
-export function getVenue(slug: string): Promise<VenueDetail> {
-  return request<VenueDetail>(`/api/venues/${encodeURIComponent(slug)}`);
+export async function getVenue(slug: string): Promise<VenueDetail> {
+  try {
+    const detail = await request<VenueDetail>(`/api/venues/${encodeURIComponent(slug)}`);
+    cacheVenueDetail(slug, detail);
+    return detail;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 0) {
+      const cached = getCachedVenueDetail(slug);
+      if (cached) return cached;
+    }
+    throw err;
+  }
 }
 
-export function getVenueGraph(slug: string): Promise<Graph> {
-  return request<Graph>(`/api/venues/${encodeURIComponent(slug)}/graph`);
+export async function getVenueGraph(slug: string): Promise<Graph> {
+  try {
+    const g = await request<Graph>(`/api/venues/${encodeURIComponent(slug)}/graph`);
+    cacheVenueGraph(slug, g);
+    return g;
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 0) {
+      const cached = getCachedVenueGraph(slug);
+      if (cached) return cached;
+    }
+    throw err;
+  }
 }
 
 export function getVenuePeople(slug: string, q?: string): Promise<Person[]> {
@@ -188,11 +245,15 @@ export function localizePhoto(
   slug: string,
   file: File,
   level?: number | null,
+  priorNodeId?: string | null,
 ): Promise<LocalizeResult> {
   const fd = new FormData();
   fd.append('file', file);
   if (level !== undefined && level !== null) {
     fd.append('level', String(level));
+  }
+  if (priorNodeId) {
+    fd.append('prior_node_id', priorNodeId);
   }
   return request<LocalizeResult>(`/api/venues/${encodeURIComponent(slug)}/localize`, {
     method: 'POST',
@@ -240,24 +301,74 @@ export function confirmLocalization(
   );
 }
 
-export function computeRoute(
+export async function computeRoute(
   slug: string,
   fromNode: string,
   toNode: string,
   profile: RouteProfile = 'walk',
+  options?: { avoidCrowds?: boolean; headingDeg?: number | null },
 ): Promise<Route> {
-  return request<Route>(`/api/venues/${encodeURIComponent(slug)}/route`, {
+  try {
+    return await request<Route>(`/api/venues/${encodeURIComponent(slug)}/route`, {
+      method: 'POST',
+      body: JSON.stringify({
+        from_node: fromNode,
+        to_node: toNode,
+        profile,
+        avoid_crowds: Boolean(options?.avoidCrowds),
+        heading_deg: options?.headingDeg ?? null,
+      }),
+    });
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 0) {
+      const cachedGraph = getCachedVenueGraph(slug);
+      if (cachedGraph) {
+        return computeOfflineRoute(cachedGraph, fromNode, toNode, profile);
+      }
+    }
+    throw err;
+  }
+}
+
+export function computeNearestRoute(
+  slug: string,
+  fromNode: string,
+  targetKind: string,
+  profile: RouteProfile = 'walk',
+  options?: { avoidCrowds?: boolean; headingDeg?: number | null },
+): Promise<Route> {
+  return request<Route>(`/api/venues/${encodeURIComponent(slug)}/route/nearest`, {
     method: 'POST',
     body: JSON.stringify({
       from_node: fromNode,
-      to_node: toNode,
+      target_kind: targetKind,
       profile,
+      avoid_crowds: Boolean(options?.avoidCrowds),
+      heading_deg: options?.headingDeg ?? null,
+    }),
+  });
+}
+
+export function computeMultiStopRoute(
+  slug: string,
+  stops: string[],
+  profile: RouteProfile = 'walk',
+  options?: { optimize?: boolean; avoidCrowds?: boolean; headingDeg?: number | null },
+): Promise<Route> {
+  return request<Route>(`/api/venues/${encodeURIComponent(slug)}/route/multi`, {
+    method: 'POST',
+    body: JSON.stringify({
+      stops,
+      profile,
+      optimize: Boolean(options?.optimize),
+      avoid_crowds: Boolean(options?.avoidCrowds),
+      heading_deg: options?.headingDeg ?? null,
     }),
   });
 }
 
 // ---------------------------------------------------------------------------
-// Admin API
+// Secure Uploader Auth & User Profile Vault API
 // ---------------------------------------------------------------------------
 
 export async function adminLogin(
@@ -271,6 +382,229 @@ export async function adminLogin(
   setAdminSession(data.token, data.user);
   return data;
 }
+
+export async function registerUploader(payload: {
+  name: string;
+  email: string;
+  password: string;
+  organization?: string;
+  bio?: string;
+  account_type?: 'uploader' | 'staff';
+}): Promise<AuthResponse> {
+  const data = await request<AuthResponse>('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  setAdminSession(data.token, data.user);
+  return data;
+}
+
+export function getMyProfile(): Promise<UploaderProfileResponse> {
+  return request<UploaderProfileResponse>('/api/auth/me', {}, true);
+}
+
+export async function updateMyProfile(payload: {
+  name?: string;
+  organization?: string;
+  bio?: string;
+  avatar_color?: string;
+}): Promise<{ user: AdminUser }> {
+  const res = await request<{ user: AdminUser }>(
+    '/api/auth/profile',
+    { method: 'PATCH', body: JSON.stringify(payload) },
+    true,
+  );
+  const tok = getAdminToken();
+  if (tok) setAdminSession(tok, res.user);
+  return res;
+}
+
+export async function changeAdminPassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<AuthResponse> {
+  const data = await request<AuthResponse>(
+    '/api/auth/change-password',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword,
+      }),
+    },
+    true,
+  );
+  setAdminSession(data.token, data.user);
+  return data;
+}
+
+export async function revokeOtherSessions(): Promise<AuthResponse> {
+  const data = await request<AuthResponse>(
+    '/api/auth/revoke-sessions',
+    { method: 'POST' },
+    true,
+  );
+  setAdminSession(data.token, data.user);
+  return data;
+}
+
+// ---------------------------------------------------------------------------
+// Tenant-Isolated Venue & Visual Map Builder API
+// ---------------------------------------------------------------------------
+
+export function getAdminVenues(): Promise<VenueSummary[]> {
+  return request<VenueSummary[]>('/api/admin/venues', {}, true);
+}
+
+export function createAdminVenue(payload: CreateVenuePayload): Promise<VenueSummary> {
+  return request<VenueSummary>(
+    '/api/admin/venues',
+    { method: 'POST', body: JSON.stringify(payload) },
+    true,
+  );
+}
+
+export function updateAdminVenue(
+  slug: string,
+  payload: Partial<CreateVenuePayload> & {
+    entrance_node_id?: string | null;
+    emergency_node_id?: string | null;
+  },
+): Promise<VenueSummary> {
+  return request<VenueSummary>(
+    `/api/admin/venues/${encodeURIComponent(slug)}`,
+    { method: 'PATCH', body: JSON.stringify(payload) },
+    true,
+  );
+}
+
+export function uploadAdminVenueCover(
+  slug: string,
+  file: File,
+): Promise<VenueSummary> {
+  const fd = new FormData();
+  fd.append('file', file);
+  return request<VenueSummary>(
+    `/api/admin/venues/${encodeURIComponent(slug)}/cover`,
+    { method: 'POST', body: fd },
+    true,
+  );
+}
+
+export function deleteAdminVenue(slug: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/api/admin/venues/${encodeURIComponent(slug)}`,
+    { method: 'DELETE' },
+    true,
+  );
+}
+
+export function createAdminBuilding(
+  slug: string,
+  payload: {
+    name: string;
+    x?: number;
+    y?: number;
+    w?: number;
+    d?: number;
+    initial_level?: number;
+    initial_floor_name?: string;
+  },
+): Promise<Building> {
+  return request<Building>(
+    `/api/admin/venues/${encodeURIComponent(slug)}/buildings`,
+    { method: 'POST', body: JSON.stringify(payload) },
+    true,
+  );
+}
+
+export function updateAdminBuilding(
+  buildingId: string,
+  payload: { name?: string; x?: number; y?: number; w?: number; d?: number },
+): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/api/admin/buildings/${encodeURIComponent(buildingId)}`,
+    { method: 'PATCH', body: JSON.stringify(payload) },
+    true,
+  );
+}
+
+export function createAdminFloor(
+  slug: string,
+  payload: { building_id: string; level: number; name?: string },
+): Promise<Floor> {
+  return request<Floor>(
+    `/api/admin/venues/${encodeURIComponent(slug)}/floors`,
+    { method: 'POST', body: JSON.stringify(payload) },
+    true,
+  );
+}
+
+export function uploadFloorBlueprint(
+  floorId: string,
+  file: File,
+): Promise<{ ok: boolean; blueprint_url: string }> {
+  const fd = new FormData();
+  fd.append('file', file);
+  return request<{ ok: boolean; blueprint_url: string }>(
+    `/api/admin/floors/${encodeURIComponent(floorId)}/blueprint`,
+    { method: 'POST', body: fd },
+    true,
+  );
+}
+
+export function createAdminNode(
+  slug: string,
+  payload: CreateNodePayload,
+): Promise<GNode> {
+  return request<GNode>(
+    `/api/admin/venues/${encodeURIComponent(slug)}/nodes`,
+    { method: 'POST', body: JSON.stringify(payload) },
+    true,
+  );
+}
+
+export function updateAdminNode(
+  nodeId: string,
+  payload: UpdateNodePayload,
+): Promise<{ ok: boolean; x: number; y: number }> {
+  return request<{ ok: boolean; x: number; y: number }>(
+    `/api/admin/nodes/${encodeURIComponent(nodeId)}`,
+    { method: 'PATCH', body: JSON.stringify(payload) },
+    true,
+  );
+}
+
+export function deleteAdminNode(nodeId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/api/admin/nodes/${encodeURIComponent(nodeId)}`,
+    { method: 'DELETE' },
+    true,
+  );
+}
+
+export function createAdminEdge(
+  slug: string,
+  payload: CreateEdgePayload,
+): Promise<GEdge> {
+  return request<GEdge>(
+    `/api/admin/venues/${encodeURIComponent(slug)}/edges`,
+    { method: 'POST', body: JSON.stringify(payload) },
+    true,
+  );
+}
+
+export function deleteAdminEdge(edgeId: string): Promise<{ ok: boolean }> {
+  return request<{ ok: boolean }>(
+    `/api/admin/edges/${encodeURIComponent(edgeId)}`,
+    { method: 'DELETE' },
+    true,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Analytics, Dataset, Staff & Closures API
+// ---------------------------------------------------------------------------
 
 export function getAdminOverview(slug: string): Promise<AdminOverview> {
   return request<AdminOverview>(
@@ -292,15 +626,30 @@ export function uploadAdminPhotos(
   slug: string,
   nodeId: string,
   files: File[],
+  headingDeg?: number | null,
 ): Promise<UploadPhotosResponse> {
   const fd = new FormData();
   fd.append('node_id', nodeId);
+  if (headingDeg !== undefined && headingDeg !== null) {
+    fd.append('heading_deg', String(headingDeg));
+  }
   for (const f of files) {
     fd.append('files', f);
   }
   return request<UploadPhotosResponse>(
     `/api/admin/venues/${encodeURIComponent(slug)}/photos`,
     { method: 'POST', body: fd },
+    true,
+  );
+}
+
+export function updateAdminPhoto(
+  photoId: string,
+  headingDeg: number | null,
+): Promise<{ ok: boolean; heading_deg: number | null }> {
+  return request<{ ok: boolean; heading_deg: number | null }>(
+    `/api/admin/photos/${encodeURIComponent(photoId)}`,
+    { method: 'PATCH', body: JSON.stringify({ heading_deg: headingDeg }) },
     true,
   );
 }

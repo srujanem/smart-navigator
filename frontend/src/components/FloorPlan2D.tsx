@@ -1,6 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
 import type { CoverageLevel, GEdge, GNode, Graph, VenueDetail } from '../lib/types';
+import { mediaUrl } from '../lib/api';
 import { formatLevel } from '../lib/locationStore';
 
 export interface FloorPlan2DProps {
@@ -18,6 +19,11 @@ export interface FloorPlan2DProps {
   onSelectNode?: (node: GNode) => void;
   onSelectEdge?: (edge: GEdge) => void;
   dark?: boolean;
+  // Interactive Map Builder extensions
+  editorMode?: 'view' | 'select' | 'add_node' | 'connect';
+  connectFromNodeId?: string | null;
+  onCanvasClick?: (x: number, y: number) => void;
+  onNodeDragEnd?: (node: GNode, x: number, y: number) => void;
 }
 
 export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
@@ -35,12 +41,45 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
   onSelectNode,
   onSelectEdge,
   dark = false,
+  editorMode = 'view',
+  connectFromNodeId = null,
+  onCanvasClick,
+  onNodeDragEnd,
 }) => {
+  const svgRef = useRef<SVGSVGElement>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [dragging, setDragging] = useState<{ startX: number; startY: number } | null>(
+  const [draggingPan, setDraggingPan] = useState<{
+    startX: number;
+    startY: number;
+    moved: boolean;
+  } | null>(null);
+  const [draggingNode, setDraggingNode] = useState<{
+    node: GNode;
+    x: number;
+    y: number;
+    moved: boolean;
+  } | null>(null);
+  const [cursorWorld, setCursorWorld] = useState<{ x: number; y: number } | null>(
     null,
   );
+
+  const isEditing = editorMode !== 'view';
+
+  const clientToSvgPoint = (clientX: number, clientY: number) => {
+    const svg = svgRef.current;
+    if (!svg) return null;
+    const pt = svg.createSVGPoint();
+    pt.x = clientX;
+    pt.y = clientY;
+    const ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    const res = pt.matrixTransform(ctm.inverse());
+    return {
+      x: Math.round(res.x * 10) / 10,
+      y: Math.round(res.y * 10) / 10,
+    };
+  };
 
   const levels = useMemo(() => {
     const s = new Set<number>();
@@ -117,7 +156,6 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
     [graph.edges, nodeMap, selectedLevel],
   );
 
-  // Route segments on the currently viewed floor
   const floorRouteSegments = useMemo(() => {
     const segs: { x1: number; y1: number; x2: number; y2: number }[] = [];
     for (let i = 0; i < routePath.length - 1; i++) {
@@ -133,6 +171,7 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
   const routeNodeSet = useMemo(() => new Set(routePath), [routePath]);
 
   const fillForNode = (n: GNode): string => {
+    if (n.id === connectFromNodeId) return '#f59e0b';
     if (coverageByNode) {
       const cov = coverageByNode[n.id] ?? 'none';
       if (cov === 'good') return '#10b981';
@@ -146,7 +185,8 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
     if (k.includes('emergency')) return '#ef4444';
     if (k.includes('lift')) return '#06b6d4';
     if (k.includes('stair')) return '#f59e0b';
-    if (k.includes('entrance')) return '#10b981';
+    if (k.includes('entrance') || k.includes('exit')) return '#10b981';
+    if (!n.is_place) return dark ? '#64748b' : '#94a3b8';
     return dark ? '#38bdf8' : '#4f46e5';
   };
 
@@ -154,6 +194,10 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
     setZoom(1);
     setPan({ x: 0, y: 0 });
   };
+
+  const connectSourceNode = connectFromNodeId
+    ? nodeMap.get(connectFromNodeId) ?? null
+    : null;
 
   return (
     <div
@@ -194,9 +238,14 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
         </div>
 
         <div className="flex items-center gap-1">
+          {isEditing && cursorWorld && (
+            <span className="mr-2 rounded-md bg-slate-900/80 px-2 py-0.5 font-mono text-[10px] text-cyan-300">
+              x:{cursorWorld.x.toFixed(1)}, y:{cursorWorld.y.toFixed(1)}
+            </span>
+          )}
           <button
             type="button"
-            onClick={() => setZoom((z) => Math.min(3.2, +(z + 0.25).toFixed(2)))}
+            onClick={() => setZoom((z) => Math.min(3.4, +(z + 0.25).toFixed(2)))}
             className={`rounded-lg p-1.5 transition ${
               dark ? 'hover:bg-white/10 text-slate-300' : 'hover:bg-slate-100 text-slate-600'
             }`}
@@ -206,7 +255,7 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
           </button>
           <button
             type="button"
-            onClick={() => setZoom((z) => Math.max(0.7, +(z - 0.25).toFixed(2)))}
+            onClick={() => setZoom((z) => Math.max(0.65, +(z - 0.25).toFixed(2)))}
             className={`rounded-lg p-1.5 transition ${
               dark ? 'hover:bg-white/10 text-slate-300' : 'hover:bg-slate-100 text-slate-600'
             }`}
@@ -229,21 +278,70 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
 
       {/* Interactive SVG Blueprint */}
       <div
-        className="relative flex-1 overflow-hidden cursor-grab active:cursor-grabbing"
-        onMouseDown={(e) =>
-          setDragging({ startX: e.clientX - pan.x, startY: e.clientY - pan.y })
-        }
-        onMouseMove={(e) => {
-          if (!dragging) return;
-          setPan({
-            x: e.clientX - dragging.startX,
-            y: e.clientY - dragging.startY,
+        className={`relative flex-1 overflow-hidden ${
+          editorMode === 'add_node'
+            ? 'cursor-crosshair'
+            : editorMode === 'connect'
+              ? 'cursor-pointer'
+              : 'cursor-grab active:cursor-grabbing'
+        }`}
+        onMouseDown={(e) => {
+          if (draggingNode) return;
+          setDraggingPan({
+            startX: e.clientX - pan.x,
+            startY: e.clientY - pan.y,
+            moved: false,
           });
         }}
-        onMouseUp={() => setDragging(null)}
-        onMouseLeave={() => setDragging(null)}
+        onMouseMove={(e) => {
+          const wpt = clientToSvgPoint(e.clientX, e.clientY);
+          if (wpt) setCursorWorld(wpt);
+
+          if (draggingNode && wpt) {
+            setDraggingNode({
+              ...draggingNode,
+              x: wpt.x,
+              y: wpt.y,
+              moved: true,
+            });
+            return;
+          }
+
+          if (draggingPan) {
+            const nx = e.clientX - draggingPan.startX;
+            const ny = e.clientY - draggingPan.startY;
+            const dist = Math.hypot(nx - pan.x, ny - pan.y);
+            if (dist > 3) {
+              setPan({ x: nx, y: ny });
+              if (!draggingPan.moved) {
+                setDraggingPan({ ...draggingPan, moved: true });
+              }
+            }
+          }
+        }}
+        onMouseUp={(e) => {
+          if (draggingNode) {
+            const dn = draggingNode;
+            setDraggingNode(null);
+            if (dn.moved && onNodeDragEnd) {
+              onNodeDragEnd(dn.node, dn.x, dn.y);
+            }
+            return;
+          }
+          const wasMoved = draggingPan?.moved ?? false;
+          setDraggingPan(null);
+          if (!wasMoved && editorMode === 'add_node' && onCanvasClick) {
+            const pt = clientToSvgPoint(e.clientX, e.clientY);
+            if (pt) onCanvasClick(pt.x, pt.y);
+          }
+        }}
+        onMouseLeave={() => {
+          setDraggingPan(null);
+          setDraggingNode(null);
+        }}
       >
         <svg
+          ref={svgRef}
           viewBox={`${bounds.x} ${bounds.y} ${bounds.w} ${bounds.h}`}
           className="h-full w-full"
           style={{
@@ -251,7 +349,7 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
             transformOrigin: 'center center',
           }}
         >
-          {/* Building Footprints */}
+          {/* Building Footprints + Optional Uploaded Floorplan Blueprint Image */}
           {floorBuildings.map((b) => {
             const fl = b.floors.find((f) => f.level === selectedLevel);
             return (
@@ -267,6 +365,17 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
                   strokeOpacity={dark ? 0.45 : 0.65}
                   strokeWidth={unit * 0.35}
                 />
+                {fl?.blueprint_url && (
+                  <image
+                    href={mediaUrl(fl.blueprint_url)}
+                    x={b.x}
+                    y={b.y}
+                    width={b.w}
+                    height={b.d}
+                    preserveAspectRatio="none"
+                    opacity={dark ? 0.48 : 0.72}
+                  />
+                )}
                 <text
                   x={b.x + unit * 1.4}
                   y={b.y + unit * 2.5}
@@ -282,12 +391,20 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
 
           {/* Corridor & Transition Edges */}
           {floorEdges.map((e) => {
-            const s = nodeMap.get(e.source);
-            const t = nodeMap.get(e.target);
-            if (!s || !t) return null;
+            const sRaw = nodeMap.get(e.source);
+            const tRaw = nodeMap.get(e.target);
+            if (!sRaw || !tRaw) return null;
+            const sx =
+              draggingNode && draggingNode.node.id === sRaw.id ? draggingNode.x : sRaw.x;
+            const sy =
+              draggingNode && draggingNode.node.id === sRaw.id ? draggingNode.y : sRaw.y;
+            const tx =
+              draggingNode && draggingNode.node.id === tRaw.id ? draggingNode.x : tRaw.x;
+            const ty =
+              draggingNode && draggingNode.node.id === tRaw.id ? draggingNode.y : tRaw.y;
             const isSelectedEdge = selectedEdgeId === e.id;
-            const mx = (s.x + t.x) / 2;
-            const my = (s.y + t.y) / 2;
+            const mx = (sx + tx) / 2;
+            const my = (sy + ty) / 2;
 
             return (
               <g
@@ -302,19 +419,19 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
               >
                 {onSelectEdge && (
                   <line
-                    x1={s.x}
-                    y1={s.y}
-                    x2={t.x}
-                    y2={t.y}
+                    x1={sx}
+                    y1={sy}
+                    x2={tx}
+                    y2={ty}
                     stroke="transparent"
                     strokeWidth={unit * 2.5}
                   />
                 )}
                 <line
-                  x1={s.x}
-                  y1={s.y}
-                  x2={t.x}
-                  y2={t.y}
+                  x1={sx}
+                  y1={sy}
+                  x2={tx}
+                  y2={ty}
                   stroke={
                     e.closed
                       ? '#ef4444'
@@ -345,6 +462,23 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
               </g>
             );
           })}
+
+          {/* Live Rubber-Band Line in Connect Mode */}
+          {editorMode === 'connect' &&
+            connectSourceNode &&
+            connectSourceNode.level === selectedLevel &&
+            cursorWorld && (
+              <line
+                x1={connectSourceNode.x}
+                y1={connectSourceNode.y}
+                x2={cursorWorld.x}
+                y2={cursorWorld.y}
+                stroke="#f59e0b"
+                strokeWidth={unit * 0.65}
+                strokeDasharray={`${unit * 1.1} ${unit * 0.7}`}
+                pointerEvents="none"
+              />
+            )}
 
           {/* Active Route Segments on This Floor */}
           {floorRouteSegments.map((seg, idx) => (
@@ -377,16 +511,21 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
           {floorNodes.map((n) => {
             const isStart = n.id === startNodeId;
             const isEnd = n.id === endNodeId;
-            const isSelected = n.id === selectedNodeId;
+            const isSelected = n.id === selectedNodeId || n.id === connectFromNodeId;
             const isWalker = n.id === walkerNodeId;
             const inRoute = routeNodeSet.has(n.id);
 
-            if (!n.is_place && !coverageByNode && !inRoute && !isSelected) {
+            const drawX =
+              draggingNode && draggingNode.node.id === n.id ? draggingNode.x : n.x;
+            const drawY =
+              draggingNode && draggingNode.node.id === n.id ? draggingNode.y : n.y;
+
+            if (!n.is_place && !coverageByNode && !inRoute && !isSelected && !isEditing) {
               return (
                 <circle
                   key={n.id}
-                  cx={n.x}
-                  cy={n.y}
+                  cx={drawX}
+                  cy={drawY}
                   r={unit * 0.45}
                   fill={dark ? '#475569' : '#94a3b8'}
                   opacity={0.55}
@@ -400,17 +539,30 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
                 ? unit * 1.45
                 : n.is_place
                   ? unit * 1.05
-                  : unit * 0.72;
+                  : unit * 0.78;
 
             return (
               <g
                 key={n.id}
-                transform={`translate(${n.x}, ${n.y})`}
+                transform={`translate(${drawX}, ${drawY})`}
+                onMouseDown={(ev) => {
+                  if (editorMode === 'select' && onNodeDragEnd) {
+                    ev.stopPropagation();
+                    setDraggingNode({
+                      node: n,
+                      x: n.x,
+                      y: n.y,
+                      moved: false,
+                    });
+                  }
+                }}
                 onClick={(ev) => {
                   ev.stopPropagation();
                   onSelectNode?.(n);
                 }}
-                style={{ cursor: 'pointer' }}
+                style={{
+                  cursor: editorMode === 'select' && onNodeDragEnd ? 'move' : 'pointer',
+                }}
               >
                 {(isStart || isEnd || isSelected || isWalker) && (
                   <circle
@@ -425,12 +577,12 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
                   stroke={dark ? '#0f172a' : '#ffffff'}
                   strokeWidth={unit * 0.3}
                 />
-                {(n.is_place || isStart || isEnd || isSelected) && (
+                {(n.is_place || isStart || isEnd || isSelected || isEditing) && (
                   <text
                     y={r + unit * 1.55}
                     textAnchor="middle"
                     fill={dark ? '#e2e8f0' : '#1e293b'}
-                    fontSize={unit * 1.35}
+                    fontSize={unit * 1.32}
                     fontWeight={isStart || isEnd || isSelected ? 700 : 600}
                   >
                     {n.name}

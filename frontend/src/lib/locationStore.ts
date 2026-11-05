@@ -6,11 +6,14 @@ export interface SavedVisitorLocation {
   buildingName: string;
   level: number;
   floorName?: string;
+  headingDeg?: number | null;
   source: 'photo' | 'manual';
   updatedAt: number;
 }
 
 const EVENT_NAME = 'navigator:location-changed';
+const SENIOR_EVENT = 'navigator:senior-mode-changed';
+const SENIOR_KEY = 'navigator_senior_mode';
 
 function storageKey(slug: string): string {
   return `navigator_visitor_loc_${slug}`;
@@ -73,6 +76,48 @@ export function useVisitorLocation(slug: string | undefined) {
   );
 
   return { location, setLocation };
+}
+
+export function useSeniorMode() {
+  const [seniorMode, setSeniorState] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(SENIOR_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    const sync = () => {
+      try {
+        const active = localStorage.getItem(SENIOR_KEY) === '1';
+        setSeniorState(active);
+        document.documentElement.classList.toggle('senior-mode', active);
+      } catch {
+        // Ignore
+      }
+    };
+    window.addEventListener(SENIOR_EVENT, sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener(SENIOR_EVENT, sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
+
+  const toggleSeniorMode = useCallback(() => {
+    try {
+      const next = localStorage.getItem(SENIOR_KEY) !== '1';
+      localStorage.setItem(SENIOR_KEY, next ? '1' : '0');
+      document.documentElement.classList.toggle('senior-mode', next);
+      setSeniorState(next);
+      window.dispatchEvent(new CustomEvent(SENIOR_EVENT));
+    } catch {
+      // Ignore
+    }
+  }, []);
+
+  return { seniorMode, toggleSeniorMode };
 }
 
 export function formatEta(seconds: number): string {

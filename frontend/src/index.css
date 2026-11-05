@@ -6,6 +6,25 @@ html {
   scroll-behavior: smooth;
 }
 
+html.senior-mode {
+  font-size: 18px;
+}
+
+html.senior-mode body {
+  letter-spacing: 0.01em;
+}
+
+html.senior-mode .text-slate-500,
+html.senior-mode .text-slate-600 {
+  color: #1e293b !important;
+  font-weight: 500;
+}
+
+html.senior-mode .card {
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.14);
+  outline: 2px solid #cbd5e1;
+}
+
 body {
   margin: 0;
   font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;

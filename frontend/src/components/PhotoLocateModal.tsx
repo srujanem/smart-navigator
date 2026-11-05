@@ -3,8 +3,10 @@ import { AnimatePresence, motion } from 'framer-motion';
 import {
   AlertTriangle,
   Camera,
+  Check,
   CheckCircle2,
   ChevronRight,
+  Compass,
   Cpu,
   Eye,
   FileText,
@@ -13,7 +15,9 @@ import {
   Loader2,
   MapPin,
   RefreshCw,
+  ScanText,
   Search,
+  Share2,
   ShieldCheck,
   Sparkles,
   Upload,
@@ -41,6 +45,7 @@ export interface ConfirmedSpot {
   buildingName: string;
   level: number;
   floorName?: string;
+  headingDeg?: number | null;
   source: 'photo' | 'manual';
 }
 
@@ -50,11 +55,20 @@ interface PhotoLocateModalProps {
   venue: VenueDetail;
   nodes: GNode[];
   initialFile?: File | null;
+  priorNodeId?: string | null;
   queuedDestination?: { nodeId: string; name: string } | null;
   onConfirmedLocation: (spot: ConfirmedSpot) => void;
 }
 
 type ModalStage = 'idle' | 'analyzing' | 'result';
+
+function formatHeadingLabel(deg: number | null | undefined): string | null {
+  if (deg === null || deg === undefined || !Number.isFinite(deg)) return null;
+  const norm = ((Math.round(deg) % 360) + 360) % 360;
+  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  const idx = Math.round(norm / 45) % 8;
+  return `${norm}° ${dirs[idx]}`;
+}
 
 export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
   open,
@@ -62,6 +76,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
   venue,
   nodes,
   initialFile = null,
+  priorNodeId = null,
   queuedDestination = null,
   onConfirmedLocation,
 }) => {
@@ -76,6 +91,8 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
   const [result, setResult] = useState<LocalizeResult | null>(null);
   const [visibleTraceCount, setVisibleTraceCount] = useState(0);
   const [showCandidatesOverride, setShowCandidatesOverride] = useState(false);
+  const [showAiOverlay, setShowAiOverlay] = useState(true);
+  const [copiedMeetLink, setCopiedMeetLink] = useState(false);
   const [contribute, setContribute] = useState(true);
   const [confirmingNodeId, setConfirmingNodeId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -107,6 +124,11 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
     );
   }, [venue.entrance_node_id, nodes]);
 
+  const priorNode = useMemo(
+    () => (priorNodeId ? nodes.find((n) => n.id === priorNodeId) ?? null : null),
+    [nodes, priorNodeId],
+  );
+
   const filteredManualNodes = useMemo(() => {
     const q = manualSearch.trim().toLowerCase();
     const places = nodes.filter((n) => n.is_place);
@@ -121,7 +143,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
       .slice(0, 24);
   }, [nodes, manualSearch]);
 
-  // Load sample visitor test photos when modal opens
+  // Load sample visitor test photos when modal opens (only venues that have real samples)
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -155,6 +177,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
     setResult(null);
     setVisibleTraceCount(0);
     setShowCandidatesOverride(false);
+    setCopiedMeetLink(false);
     setError(null);
   }, []);
 
@@ -162,6 +185,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
     async (file: File) => {
       setError(null);
       setShowCandidatesOverride(false);
+      setCopiedMeetLink(false);
       setResult(null);
       setVisibleTraceCount(0);
 
@@ -176,7 +200,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
       const startedAt = performance.now();
 
       try {
-        const res = await localizePhoto(venue.slug, file, parsedLevel);
+        const res = await localizePhoto(venue.slug, file, parsedLevel, priorNodeId);
         setResult(res);
 
         // Sequence the AI trace steps over ~900ms so visitors see the real pipeline clearly
@@ -201,7 +225,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
         );
       }
     },
-    [levelHint, venue.slug],
+    [levelHint, priorNodeId, venue.slug],
   );
 
   // Run initialFile if dropped on parent hero card
@@ -252,6 +276,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
       buildingName: cand.building_name,
       level: cand.level,
       floorName: cand.floor_name,
+      headingDeg: cand.matched_heading_deg ?? null,
       source: 'photo',
     });
     onClose();
@@ -264,9 +289,26 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
       buildingName: node.building_name,
       level: node.level,
       floorName: node.floor_name,
+      headingDeg: null,
       source: 'manual',
     });
     onClose();
+  };
+
+  const handleShareSpot = async (cand: Candidate, viaWhatsApp = false) => {
+    const meetUrl = `${window.location.origin}/v/${encodeURIComponent(venue.slug)}?meet=${encodeURIComponent(cand.node_id)}`;
+    const text = `Meet me at ${cand.name} (${cand.building_name}, ${formatLevel(cand.level, cand.floor_name)}) inside ${venue.name}: ${meetUrl}`;
+    if (viaWhatsApp) {
+      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(meetUrl);
+      setCopiedMeetLink(true);
+      setTimeout(() => setCopiedMeetLink(false), 2500);
+    } catch {
+      // Fallback
+    }
   };
 
   if (!open) return null;
@@ -288,6 +330,8 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
     result &&
     (result.status === 'no_match' ||
       (result.status === 'uncertain' && result.candidates.length === 0));
+
+  const ocrBoxes = result?.ocr_boxes ?? [];
 
   return (
     <AnimatePresence>
@@ -345,6 +389,16 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                   <ChevronRight className="h-3.5 w-3.5" />
                 </button>
               )}
+            </div>
+          )}
+
+          {/* Continuity Prior Indicator */}
+          {priorNode && stage === 'idle' && (
+            <div className="flex items-center gap-2 bg-cyan-50/80 px-5 py-2 border-b border-cyan-100 text-[11px] text-cyan-900">
+              <Compass className="h-3.5 w-3.5 text-cyan-600 shrink-0" />
+              <span>
+                Spatial Continuity Prior active near <strong>{priorNode.name}</strong> ({formatLevel(priorNode.level, priorNode.floor_name)}) — breaks lookalike corridor ties automatically.
+              </span>
             </div>
           )}
 
@@ -428,7 +482,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                     Take a Still Photo or Drop an Image Here
                   </p>
                   <p className="mt-1 text-xs text-slate-500 max-w-md mx-auto">
-                    Faces are blurred automatically and EXIF GPS metadata is stripped on upload. No live video feed required.
+                    Faces are blurred automatically via YuNet and EXIF GPS metadata is stripped on upload. No live video feed required.
                   </p>
                   <div className="mt-4 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800">
                     <Camera className="h-3.5 w-3.5 text-cyan-400" />
@@ -436,59 +490,55 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                   </div>
                 </div>
 
-                {/* One-Click Visitor Sample Queries */}
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-500">
-                      <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
-                      Try a Real Visitor Test Photo (1-Click Demo)
+                {/* One-Click Visitor Sample Queries (Only displayed if venue has real sample queries) */}
+                {(loadingSamples || samples.length > 0) && (
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-500">
+                        <Sparkles className="h-3.5 w-3.5 text-indigo-500" />
+                        Try a Real Visitor Test Photo (1-Click Demo)
+                      </div>
+                      {loadingSamples && (
+                        <span className="text-xs text-slate-400 flex items-center gap-1">
+                          <Loader2 className="h-3 w-3 animate-spin" /> Loading...
+                        </span>
+                      )}
                     </div>
-                    {loadingSamples && (
-                      <span className="text-xs text-slate-400 flex items-center gap-1">
-                        <Loader2 className="h-3 w-3 animate-spin" /> Loading samples...
-                      </span>
+
+                    {samples.length > 0 && (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        {samples.map((s) => (
+                          <button
+                            key={s.id}
+                            type="button"
+                            onClick={() => void handleSampleClick(s)}
+                            className="group relative flex flex-col overflow-hidden rounded-xl bg-white text-left ring-1 ring-slate-200 hover:ring-2 hover:ring-cyan-500 transition shadow-sm"
+                          >
+                            <div className="relative h-24 w-full overflow-hidden bg-slate-900">
+                              <img
+                                src={mediaUrl(s.photo_url)}
+                                alt={s.label}
+                                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
+                              />
+                              <div className="absolute inset-0 bg-gradient-to-t from-slate-950/75 via-transparent to-transparent" />
+                              <span className="absolute bottom-1.5 right-1.5 rounded-md bg-cyan-500 px-1.5 py-0.5 text-[10px] font-bold text-slate-950 opacity-0 group-hover:opacity-100 transition">
+                                Test AI →
+                              </span>
+                            </div>
+                            <div className="p-2.5">
+                              <div className="text-xs font-bold text-slate-900 truncate">
+                                {s.label}
+                              </div>
+                              <div className="text-[11px] text-slate-500 truncate">
+                                {s.hint}
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
                     )}
                   </div>
-
-                  {samples.length > 0 ? (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                      {samples.map((s) => (
-                        <button
-                          key={s.id}
-                          type="button"
-                          onClick={() => void handleSampleClick(s)}
-                          className="group relative flex flex-col overflow-hidden rounded-xl bg-white text-left ring-1 ring-slate-200 hover:ring-2 hover:ring-cyan-500 transition shadow-sm"
-                        >
-                          <div className="relative h-24 w-full overflow-hidden bg-slate-900">
-                            <img
-                              src={mediaUrl(s.photo_url)}
-                              alt={s.label}
-                              className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                            />
-                            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/75 via-transparent to-transparent" />
-                            <span className="absolute bottom-1.5 right-1.5 rounded-md bg-cyan-500 px-1.5 py-0.5 text-[10px] font-bold text-slate-950 opacity-0 group-hover:opacity-100 transition">
-                              Test AI →
-                            </span>
-                          </div>
-                          <div className="p-2.5">
-                            <div className="text-xs font-bold text-slate-900 truncate">
-                              {s.label}
-                            </div>
-                            <div className="text-[11px] text-slate-500 truncate">
-                              {s.hint}
-                            </div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  ) : (
-                    !loadingSamples && (
-                      <p className="text-xs text-slate-400 italic">
-                        No sample visitor photos available for this venue yet. Upload any corridor or room photo above.
-                      </p>
-                    )
-                  )}
-                </div>
+                )}
 
                 {/* Manual Starting Spot Fallback */}
                 <div className="border-t border-slate-100 pt-3">
@@ -671,18 +721,52 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                   </div>
                 </div>
 
-                {/* Side-by-side Photo Comparison */}
+                {/* Side-by-side Photo Comparison with Glowing AI OCR Boxes */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-slate-200">
                     <div className="relative h-44 w-full">
                       <img
-                        src={previewUrl || mediaUrl(result.query_photo_url)}
+                        src={
+                          result.query_photo_url
+                            ? mediaUrl(result.query_photo_url)
+                            : previewUrl || ''
+                        }
                         alt="Your uploaded photo"
                         className="h-full w-full object-cover"
                       />
+                      {/* Glowing OCR Bounding Boxes */}
+                      {showAiOverlay &&
+                        ocrBoxes.map((b, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              left: `${Math.max(0, Math.min(95, b.x * 100))}%`,
+                              top: `${Math.max(0, Math.min(92, b.y * 100))}%`,
+                              width: `${Math.max(4, Math.min(100 - b.x * 100, b.w * 100))}%`,
+                              height: `${Math.max(6, Math.min(100 - b.y * 100, b.h * 100))}%`,
+                            }}
+                            className="pointer-events-none absolute rounded border-2 border-cyan-400 bg-cyan-400/15 shadow-[0_0_12px_rgba(34,211,238,0.65)]"
+                          >
+                            <span className="absolute -top-4 left-0 whitespace-nowrap rounded bg-cyan-400 px-1 py-0.2 text-[9px] font-extrabold text-slate-950">
+                              {b.text}
+                            </span>
+                          </div>
+                        ))}
+
                       <span className="absolute left-2.5 top-2.5 rounded-lg bg-slate-950/80 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md">
                         Your Uploaded Photo
                       </span>
+
+                      {ocrBoxes.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setShowAiOverlay((v) => !v)}
+                          className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1 rounded-lg bg-slate-950/80 px-2 py-1 text-[10px] font-bold text-cyan-300 ring-1 ring-cyan-400/40 backdrop-blur-md hover:bg-slate-900"
+                        >
+                          <ScanText className="h-3 w-3" />
+                          {showAiOverlay ? 'Hide AI Boxes' : `Show ${ocrBoxes.length} OCR Boxes`}
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -703,6 +787,12 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                       <span className="absolute left-2.5 top-2.5 rounded-lg bg-emerald-600/95 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur-md">
                         Matched Venue Reference
                       </span>
+                      {formatHeadingLabel(result.best.matched_heading_deg) && (
+                        <span className="absolute right-2.5 bottom-2.5 inline-flex items-center gap-1 rounded-lg bg-slate-950/80 px-2 py-1 text-[10px] font-bold text-amber-300 ring-1 ring-amber-400/30 backdrop-blur-md">
+                          <Compass className="h-3 w-3" />
+                          Facing {formatHeadingLabel(result.best.matched_heading_deg)}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -725,7 +815,10 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                       </span>
                       {result.engine.face_blur && (
                         <span className="chip bg-emerald-100 text-emerald-800">
-                          <ShieldCheck className="h-3 w-3" /> Face-Blurred
+                          <ShieldCheck className="h-3 w-3" />
+                          {result.faces_blurred && result.faces_blurred > 0
+                            ? `${result.faces_blurred} Face${result.faces_blurred > 1 ? 's' : ''} Blurred`
+                            : 'Privacy Protected'}
                         </span>
                       )}
                     </div>
@@ -780,6 +873,39 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                       ))}
                     </div>
                   )}
+
+                  {/* Share My Spot ("Meet Me Here" Handoff) */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/80 pt-3">
+                    <span className="text-xs font-semibold text-slate-600">
+                      Meeting family or colleagues? Share your pinpointed spot:
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => result.best && void handleShareSpot(result.best, false)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 ring-1 ring-slate-200 hover:bg-slate-100 transition"
+                      >
+                        {copiedMeetLink ? (
+                          <>
+                            <Check className="h-3.5 w-3.5 text-emerald-600" />
+                            Link Copied!
+                          </>
+                        ) : (
+                          <>
+                            <Share2 className="h-3.5 w-3.5 text-indigo-600" />
+                            Copy Meet Link
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => result.best && void handleShareSpot(result.best, true)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-emerald-500 transition"
+                      >
+                        WhatsApp
+                      </button>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Contribute Toggle */}

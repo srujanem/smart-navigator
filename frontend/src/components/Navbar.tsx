@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Compass, Layers, Lock, Menu, Sparkles, X } from 'lucide-react';
+import { Compass, Eye, Layers, Lock, Menu, Sparkles, UserCheck, X } from 'lucide-react';
+import { getAdminToken, getAdminUser } from '../lib/api';
+import { useSeniorMode } from '../lib/locationStore';
 
 interface NavbarProps {
   variant?: 'dark' | 'light';
@@ -10,6 +12,9 @@ export const Navbar: React.FC<NavbarProps> = ({ variant = 'dark' }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const isDark = variant === 'dark';
+  const { seniorMode, toggleSeniorMode } = useSeniorMode();
+  const token = getAdminToken();
+  const studioUser = token ? getAdminUser() : null;
 
   return (
     <header
@@ -81,16 +86,16 @@ export const Navbar: React.FC<NavbarProps> = ({ variant = 'dark' }) => {
           >
             How It Works
           </a>
-          <a
-            href="/#worlds"
+          <Link
+            to="/admin/map-editor"
             className={`rounded-lg px-3.5 py-2 text-sm font-medium transition ${
               isDark
                 ? 'text-slate-300 hover:bg-white/[0.06] hover:text-white'
                 : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
             }`}
           >
-            Use Cases
-          </a>
+            Map Creator
+          </Link>
           <a
             href="/#privacy"
             className={`rounded-lg px-3.5 py-2 text-sm font-medium transition ${
@@ -104,18 +109,44 @@ export const Navbar: React.FC<NavbarProps> = ({ variant = 'dark' }) => {
         </nav>
 
         {/* Actions */}
-        <div className="hidden md:flex items-center gap-2.5">
+        <div className="hidden md:flex items-center gap-2">
+          <button
+            type="button"
+            onClick={toggleSeniorMode}
+            title="Toggle Senior Large-Text & High-Contrast Mode"
+            className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 py-2 text-xs font-bold transition ${
+              seniorMode
+                ? 'bg-amber-400 text-slate-950 shadow-sm'
+                : isDark
+                  ? 'bg-white/[0.07] text-slate-300 ring-1 ring-white/15 hover:bg-white/[0.12]'
+                  : 'bg-slate-100 text-slate-700 ring-1 ring-slate-200 hover:bg-slate-200/70'
+            }`}
+          >
+            <Eye className="h-3.5 w-3.5" />
+            Aa+
+          </button>
+
           <Link
-            to="/admin"
+            to={studioUser ? '/admin/profile' : '/admin/login?mode=register'}
             className={`inline-flex items-center gap-2 rounded-xl px-3.5 py-2 text-xs font-semibold transition ${
               isDark
                 ? 'bg-white/[0.07] text-slate-200 ring-1 ring-white/15 hover:bg-white/[0.12] hover:text-white'
                 : 'bg-slate-100 text-slate-700 ring-1 ring-slate-200 hover:bg-slate-200/70 hover:text-slate-900'
             }`}
           >
-            <Lock className="h-3.5 w-3.5 text-cyan-400" />
-            Admin Studio
+            {studioUser ? (
+              <>
+                <UserCheck className="h-3.5 w-3.5 text-emerald-400" />
+                <span className="max-w-[110px] truncate">{studioUser.name}</span>
+              </>
+            ) : (
+              <>
+                <Lock className="h-3.5 w-3.5 text-cyan-400" />
+                Uploader / Studio
+              </>
+            )}
           </Link>
+
           <Link
             to="/venues"
             className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-md shadow-cyan-500/20 hover:from-cyan-400 hover:to-indigo-500 transition"
@@ -126,16 +157,32 @@ export const Navbar: React.FC<NavbarProps> = ({ variant = 'dark' }) => {
         </div>
 
         {/* Mobile Menu Toggle */}
-        <button
-          type="button"
-          onClick={() => setMobileOpen((v) => !v)}
-          className={`md:hidden rounded-lg p-2 ${
-            isDark ? 'text-slate-300 hover:bg-white/10' : 'text-slate-600 hover:bg-slate-100'
-          }`}
-          aria-label="Toggle Menu"
-        >
-          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-        </button>
+        <div className="flex items-center gap-1.5 md:hidden">
+          <button
+            type="button"
+            onClick={toggleSeniorMode}
+            className={`rounded-lg px-2 py-1.5 text-xs font-bold ${
+              seniorMode
+                ? 'bg-amber-400 text-slate-950'
+                : isDark
+                  ? 'bg-white/10 text-slate-200'
+                  : 'bg-slate-100 text-slate-700'
+            }`}
+            title="Senior Large-Text Mode"
+          >
+            Aa+
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileOpen((v) => !v)}
+            className={`rounded-lg p-2 ${
+              isDark ? 'text-slate-300 hover:bg-white/10' : 'text-slate-600 hover:bg-slate-100'
+            }`}
+            aria-label="Toggle Menu"
+          >
+            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+        </div>
       </div>
 
       {/* Mobile Drawer */}
@@ -154,6 +201,13 @@ export const Navbar: React.FC<NavbarProps> = ({ variant = 'dark' }) => {
           >
             Explore Live Venues
           </Link>
+          <Link
+            to="/admin/map-editor"
+            onClick={() => setMobileOpen(false)}
+            className="block rounded-lg px-3 py-2 text-sm font-medium opacity-80 hover:opacity-100"
+          >
+            Create & Upload Your Own Map
+          </Link>
           <a
             href="/#how-it-works"
             onClick={() => setMobileOpen(false)}
@@ -161,27 +215,20 @@ export const Navbar: React.FC<NavbarProps> = ({ variant = 'dark' }) => {
           >
             How It Works
           </a>
-          <a
-            href="/#privacy"
-            onClick={() => setMobileOpen(false)}
-            className="block rounded-lg px-3 py-2 text-sm font-medium opacity-80 hover:opacity-100"
-          >
-            Privacy Architecture
-          </a>
           <div className="pt-2 flex gap-2">
             <Link
-              to="/admin"
+              to={studioUser ? '/admin/profile' : '/admin/login?mode=register'}
               onClick={() => setMobileOpen(false)}
               className="flex-1 text-center rounded-xl py-2.5 text-xs font-semibold ring-1 ring-slate-400/30"
             >
-              Admin Studio
+              {studioUser ? `${studioUser.name} (Studio)` : 'Uploader Sign Up / Login'}
             </Link>
             <Link
               to="/venues"
               onClick={() => setMobileOpen(false)}
               className="flex-1 text-center rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 py-2.5 text-xs font-semibold text-white"
             >
-              Open Venues
+              Explore Venues
             </Link>
           </div>
         </div>

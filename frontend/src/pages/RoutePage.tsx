@@ -9,36 +9,50 @@ import React, {
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   Accessibility,
-  AlertTriangle,
   ArrowDown,
   ArrowLeft,
   ArrowRight,
   ArrowUp,
+  Bed,
   Box,
   Camera,
+  Check,
   CheckCircle2,
+  Compass,
   CornerUpLeft,
   CornerUpRight,
   Footprints,
   Flag,
   Languages,
   Layers,
+  ListChecks,
   Loader2,
   Map as MapIcon,
   MapPin,
   MoveUp,
   Pause,
   Play,
+  Plus,
+  Share2,
   ShieldAlert,
   Siren,
+  Sparkles,
+  Users,
   Volume2,
   VolumeX,
+  WifiOff,
   X,
 } from 'lucide-react';
 import { FloorPlan2D } from '../components/FloorPlan2D';
 import { PhotoLocateModal, type ConfirmedSpot } from '../components/PhotoLocateModal';
 import { ErrorState, Skeleton3D } from '../components/ErrorState';
-import { computeRoute, getVenue, getVenueGraph, mediaUrl } from '../lib/api';
+import {
+  computeMultiStopRoute,
+  computeRoute,
+  getVenue,
+  getVenueGraph,
+  mediaUrl,
+} from '../lib/api';
 import {
   formatEta,
   formatLevel,
@@ -56,38 +70,82 @@ import type {
 
 const Venue3D = lazy(() => import('../components/Venue3D'));
 
-type VoiceLang = 'en-IN' | 'hi-IN' | 'ta-IN' | 'te-IN';
+type VoiceLang = 'en-IN' | 'kn-IN' | 'hi-IN' | 'ta-IN' | 'te-IN';
 
 const VOICE_LANGUAGES: { code: VoiceLang; label: string }[] = [
   { code: 'en-IN', label: 'English (IN)' },
+  { code: 'kn-IN', label: 'ಕನ್ನಡ (Kannada)' },
   { code: 'hi-IN', label: 'हिन्दी (Hindi)' },
   { code: 'ta-IN', label: 'தமிழ் (Tamil)' },
   { code: 'te-IN', label: 'తెలుగు (Telugu)' },
 ];
 
 function localizeInstruction(step: Step, lang: VoiceLang): string {
+  const dist = Math.round(step.distance_m);
   if (lang === 'en-IN') {
-    return step.distance_m > 0
-      ? `${step.instruction}. Walk ${Math.round(step.distance_m)} meters.`
+    return dist > 0
+      ? `${step.instruction}. Walk ${dist} meters.`
       : step.instruction;
   }
-  const dist = Math.round(step.distance_m);
+
+  if (lang === 'kn-IN') {
+    if (step.icon === 'start') return `${step.name} ನಿಂದ ಪ್ರಯಾಣ ಪ್ರಾರಂಭಿಸಿ.`;
+    if (step.icon === 'arrive') return `ನೀವು ${step.name} ತಲುಪಿದ್ದೀರಿ.`;
+    if (step.icon === 'lift')
+      return `ಲಿಫ್ಟ್ ಮೂಲಕ ಮಹಡಿ ${step.level} ರಲ್ಲಿರುವ ${step.name} ಕಡೆಗೆ ಹೋಗಿ.`;
+    if (step.icon === 'up')
+      return `ಮೆಟ್ಟಿಲುಗಳ ಮೂಲಕ ಮೇಲಿನ ಮಹಡಿ ${step.level} ಕ್ಕೆ ${step.name} ಕಡೆಗೆ ಹೋಗಿ.`;
+    if (step.icon === 'down')
+      return `ಮೆಟ್ಟಿಲುಗಳ ಮೂಲಕ ಕೆಳಗಿನ ಮಹಡಿ ${step.level} ಕ್ಕೆ ${step.name} ಕಡೆಗೆ ಇಳಿಯಿರಿ.`;
+    if (step.icon === 'left')
+      return `ಎಡಕ್ಕೆ ತಿರುಗಿ ${dist > 0 ? `${dist} ಮೀಟರ್ ` : ''}${step.name} ಕಡೆಗೆ ನಡೆಯಿರಿ.`;
+    if (step.icon === 'right')
+      return `ಬಲಕ್ಕೆ ತಿರುಗಿ ${dist > 0 ? `${dist} ಮೀಟರ್ ` : ''}${step.name} ಕಡೆಗೆ ನಡೆಯಿರಿ.`;
+    return `${step.name} ಕಡೆಗೆ ${dist > 0 ? `${dist} ಮೀಟರ್ ` : ''}ನೇರವಾಗಿ ಮುಂದುವರಿಯಿರಿ.`;
+  }
+
   if (lang === 'hi-IN') {
+    if (step.icon === 'start') return `${step.name} से चलना शुरू करें।`;
     if (step.icon === 'arrive') return `आप ${step.name} पर पहुँच गए हैं।`;
-    if (step.icon === 'lift') return `लिफ्ट लेकर मंजिल ${step.level} पर ${step.name} की ओर जाएँ।`;
-    if (step.icon === 'up' || step.icon === 'down')
-      return `सीढ़ियों से मंजिल ${step.level} पर ${step.name} जाएँ।`;
-    return `${step.name} की ओर ${dist > 0 ? `${dist} मीटर ` : ''}आगे बढ़ें। ${step.instruction}`;
+    if (step.icon === 'lift')
+      return `लिफ्ट लेकर मंजिल ${step.level} पर ${step.name} की ओर जाएँ।`;
+    if (step.icon === 'up')
+      return `सीढ़ियों से ऊपर मंजिल ${step.level} पर ${step.name} जाएँ।`;
+    if (step.icon === 'down')
+      return `सीढ़ियों से नीचे मंजिल ${step.level} पर ${step.name} जाएँ।`;
+    if (step.icon === 'left')
+      return `बाएँ मुड़ें और ${dist > 0 ? `${dist} मीटर ` : ''}${step.name} की ओर चलें।`;
+    if (step.icon === 'right')
+      return `दाएँ मुड़ें और ${dist > 0 ? `${dist} मीटर ` : ''}${step.name} की ओर चलें।`;
+    return `${step.name} की ओर ${dist > 0 ? `${dist} मीटर ` : ''}सीधे आगे बढ़ें।`;
   }
+
   if (lang === 'ta-IN') {
+    if (step.icon === 'start') return `${step.name} இடத்திலிருந்து தொடங்கவும்.`;
     if (step.icon === 'arrive') return `நீங்கள் ${step.name} இடத்தை அடைந்துவிட்டீர்கள்.`;
-    if (step.icon === 'lift') return `லிப்ட் மூலம் தளம் ${step.level} இல் உள்ள ${step.name} நோக்கிச் செல்லவும்.`;
-    return `${step.name} நோக்கி ${dist > 0 ? `${dist} மீட்டர் ` : ''}செல்லவும். ${step.instruction}`;
+    if (step.icon === 'lift')
+      return `லிப்ட் மூலம் தளம் ${step.level} இல் உள்ள ${step.name} நோக்கிச் செல்லவும்.`;
+    if (step.icon === 'up' || step.icon === 'down')
+      return `படிக்கட்டுகள் வழியாக தளம் ${step.level} இல் உள்ள ${step.name} செல்லவும்.`;
+    if (step.icon === 'left')
+      return `இடதுபுறம் திரும்பி ${dist > 0 ? `${dist} மீட்டர் ` : ''}${step.name} நோக்கி நடக்கவும்.`;
+    if (step.icon === 'right')
+      return `வலதுபுறம் திரும்பி ${dist > 0 ? `${dist} மீட்டர் ` : ''}${step.name} நோக்கி நடக்கவும்.`;
+    return `${step.name} நோக்கி ${dist > 0 ? `${dist} மீட்டர் ` : ''}நேராகச் செல்லவும்.`;
   }
+
   // te-IN
+  if (step.icon === 'start') return `${step.name} నుండి ప్రారంభించండి.`;
   if (step.icon === 'arrive') return `మీరు ${step.name} వద్దకు చేరుకున్నారు.`;
-  if (step.icon === 'lift') return `లిఫ్ట్ ద్వారా అంతస్తు ${step.level} లోని ${step.name} వైపు వెళ్ళండి.`;
-  return `${step.name} వైపు ${dist > 0 ? `${dist} మీటర్లు ` : ''}వెళ్ళండి. ${step.instruction}`;
+  if (step.icon === 'lift')
+    return `లిఫ్ట్ ద్వారా అంతస్తు ${step.level} లోని ${step.name} వైపు వెళ్ళండి.`;
+  if (step.icon === 'up' || step.icon === 'down')
+    return `మెట్ల ద్వారా అంతస్తు ${step.level} లోని ${step.name} కి వెళ్ళండి.`;
+  if (step.icon === 'left')
+    return `ఎడమవైపు తిరిగి ${dist > 0 ? `${dist} మీటర్లు ` : ''}${step.name} వైపు నడవండి.`;
+  if (step.icon === 'right')
+    return `కుడివైపు తిరిగి ${dist > 0 ? `${dist} మీటర్లు ` : ''}${step.name} వైపు నడవండి.`;
+  return `${step.name} వైపు ${dist > 0 ? `${dist} మీటర్లు ` : ''}నేరుగా వెళ్ళండి.`;
 }
 
 function renderStepIcon(icon: StepIcon) {
@@ -115,14 +173,30 @@ function renderStepIcon(icon: StepIcon) {
 export const RoutePage: React.FC = () => {
   const { slug = '' } = useParams<{ slug: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { setLocation: setVisitorLoc } = useVisitorLocation(slug);
+  const { location: visitorLoc, setLocation: setVisitorLoc } = useVisitorLocation(slug);
 
   const fromParam = searchParams.get('from') || '';
   const toParam = searchParams.get('to') || '';
+  const stopsParam = searchParams.get('stops') || '';
+  const optimizeParam = searchParams.get('optimize') === '1';
+  const avoidCrowdsParam = searchParams.get('avoidCrowds') === '1';
+  const rawProfile = searchParams.get('profile');
   const profileParam: RouteProfile =
-    searchParams.get('profile') === 'wheelchair' ? 'wheelchair' : 'walk';
+    rawProfile === 'wheelchair'
+      ? 'wheelchair'
+      : rawProfile === 'stretcher'
+        ? 'stretcher'
+        : 'walk';
   const isEmergency = searchParams.get('emergency') === '1';
   const fromEntranceFallback = searchParams.get('fromEntrance') === '1';
+
+  const multiStops = useMemo(() => {
+    if (!stopsParam.trim()) return [];
+    return stopsParam
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }, [stopsParam]);
 
   const [venue, setVenue] = useState<VenueDetail | null>(null);
   const [graph, setGraph] = useState<Graph | null>(null);
@@ -131,6 +205,10 @@ export const RoutePage: React.FC = () => {
   const [route, setRoute] = useState<Route | null>(null);
   const [loadingRoute, setLoadingRoute] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
+
+  // Multi-stop quick add selector
+  const [extraStopId, setExtraStopId] = useState('');
+  const [copiedRouteLink, setCopiedRouteLink] = useState(false);
 
   // Active alternative index (-1 = primary route)
   const [altIndex, setAltIndex] = useState<number>(-1);
@@ -174,9 +252,42 @@ export const RoutePage: React.FC = () => {
     void loadBase();
   }, [loadBase]);
 
-  // Compute Route whenever from / to / profile changes
+  // Compute Route whenever endpoints, stops, profile, or crowd avoidance changes
   const fetchRoute = useCallback(async () => {
-    if (!slug || !fromParam || !toParam) return;
+    if (!slug) return;
+    const headingHint =
+      visitorLoc && visitorLoc.nodeId === (multiStops[0] || fromParam)
+        ? visitorLoc.headingDeg ?? null
+        : null;
+
+    if (multiStops.length >= 2) {
+      setLoadingRoute(true);
+      setRouteError(null);
+      setAltIndex(-1);
+      setActiveStepIdx(0);
+      setScrubProgress(null);
+      setIsPlayingWalker(true);
+      try {
+        const r = await computeMultiStopRoute(slug, multiStops, profileParam, {
+          optimize: optimizeParam,
+          avoidCrowds: avoidCrowdsParam,
+          headingDeg: headingHint,
+        });
+        setRoute(r);
+      } catch (err) {
+        setRoute(null);
+        setRouteError(
+          err instanceof Error
+            ? err.message
+            : 'No accessible multi-stop route found between these stops.',
+        );
+      } finally {
+        setLoadingRoute(false);
+      }
+      return;
+    }
+
+    if (!fromParam || !toParam) return;
     setLoadingRoute(true);
     setRouteError(null);
     setAltIndex(-1);
@@ -185,7 +296,10 @@ export const RoutePage: React.FC = () => {
     setIsPlayingWalker(true);
 
     try {
-      const r = await computeRoute(slug, fromParam, toParam, profileParam);
+      const r = await computeRoute(slug, fromParam, toParam, profileParam, {
+        avoidCrowds: avoidCrowdsParam,
+        headingDeg: headingHint,
+      });
       setRoute(r);
     } catch (err) {
       setRoute(null);
@@ -197,7 +311,16 @@ export const RoutePage: React.FC = () => {
     } finally {
       setLoadingRoute(false);
     }
-  }, [slug, fromParam, toParam, profileParam]);
+  }, [
+    slug,
+    fromParam,
+    toParam,
+    multiStops,
+    optimizeParam,
+    avoidCrowdsParam,
+    profileParam,
+    visitorLoc,
+  ]);
 
   useEffect(() => {
     void fetchRoute();
@@ -223,8 +346,13 @@ export const RoutePage: React.FC = () => {
     [graph],
   );
 
-  const originNode = fromParam ? nodeMap.get(fromParam) ?? null : null;
-  const destNode = toParam ? nodeMap.get(toParam) ?? null : null;
+  const effectiveFromId = route?.from_node || multiStops[0] || fromParam;
+  const effectiveToId =
+    route?.to_node ||
+    (multiStops.length >= 2 ? multiStops[multiStops.length - 1] : toParam);
+
+  const originNode = effectiveFromId ? nodeMap.get(effectiveFromId) ?? null : null;
+  const destNode = effectiveToId ? nodeMap.get(effectiveToId) ?? null : null;
 
   const activePath = useMemo(() => {
     if (!route) return [];
@@ -248,13 +376,74 @@ export const RoutePage: React.FC = () => {
     nextFrom: string,
     nextTo: string,
     nextProfile: RouteProfile,
+    extra?: { avoidCrowds?: boolean; stops?: string[]; optimize?: boolean },
   ) => {
     const next = new URLSearchParams(searchParams);
     next.set('from', nextFrom);
     next.set('to', nextTo);
     next.set('profile', nextProfile);
     next.delete('fromEntrance');
+
+    if (extra?.avoidCrowds !== undefined) {
+      if (extra.avoidCrowds) next.set('avoidCrowds', '1');
+      else next.delete('avoidCrowds');
+    }
+    if (extra?.stops !== undefined) {
+      if (extra.stops.length >= 2) {
+        next.set('stops', extra.stops.join(','));
+        next.set('from', extra.stops[0]);
+        next.set('to', extra.stops[extra.stops.length - 1]);
+      } else {
+        next.delete('stops');
+        next.delete('optimize');
+      }
+    }
+    if (extra?.optimize !== undefined) {
+      if (extra.optimize) next.set('optimize', '1');
+      else next.delete('optimize');
+    }
     setSearchParams(next);
+  };
+
+  const handleAddStopToRoute = (nodeId: string) => {
+    if (!nodeId) return;
+    const baseStops =
+      multiStops.length >= 2
+        ? [...multiStops]
+        : [fromParam, toParam].filter(Boolean);
+    if (baseStops.includes(nodeId) || baseStops.length >= 6) return;
+    const nextStops = [...baseStops, nodeId];
+    setExtraStopId('');
+    updateRouteParams(nextStops[0], nextStops[nextStops.length - 1], profileParam, {
+      stops: nextStops,
+    });
+  };
+
+  const handleRemoveStop = (idxToRemove: number) => {
+    if (multiStops.length <= 2) {
+      updateRouteParams(fromParam, toParam, profileParam, { stops: [] });
+      return;
+    }
+    const nextStops = multiStops.filter((_, i) => i !== idxToRemove);
+    updateRouteParams(nextStops[0], nextStops[nextStops.length - 1], profileParam, {
+      stops: nextStops,
+    });
+  };
+
+  const handleShareRoute = async (viaWhatsApp = false) => {
+    const shareUrl = window.location.href;
+    const text = `Follow this indoor route from ${originNode?.name || 'Start'} to ${destNode?.name || 'Destination'} at ${venue?.name || slug}: ${shareUrl}`;
+    if (viaWhatsApp) {
+      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopiedRouteLink(true);
+      setTimeout(() => setCopiedRouteLink(false), 2500);
+    } catch {
+      // Ignore
+    }
   };
 
   const handleStepClick = (step: Step, idx: number) => {
@@ -291,7 +480,7 @@ export const RoutePage: React.FC = () => {
         localizeInstruction(step, voiceLang),
       );
       utter.lang = voiceLang;
-      utter.rate = 0.98;
+      utter.rate = 0.96;
       utter.onstart = () => {
         setActiveStepIdx(idx);
       };
@@ -310,10 +499,18 @@ export const RoutePage: React.FC = () => {
       buildingName: spot.buildingName,
       level: spot.level,
       floorName: spot.floorName,
+      headingDeg: spot.headingDeg ?? null,
       source: spot.source,
       updatedAt: Date.now(),
     });
-    updateRouteParams(spot.nodeId, toParam, profileParam);
+    if (multiStops.length >= 2) {
+      const updated = [spot.nodeId, ...multiStops.slice(1)];
+      updateRouteParams(updated[0], updated[updated.length - 1], profileParam, {
+        stops: updated,
+      });
+    } else {
+      updateRouteParams(spot.nodeId, toParam, profileParam);
+    }
   };
 
   if (loadingVenue) {
@@ -347,7 +544,7 @@ export const RoutePage: React.FC = () => {
       {/* =================================================================== */}
       <header className="sticky top-0 z-40 border-b border-white/10 bg-[#070B18]/95 text-white backdrop-blur-xl">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-3.5 space-y-3">
-          {/* Top Row: Back + Origin -> Destination + Re-check Location */}
+          {/* Top Row: Back + Origin -> Destination + Re-check + Share + Voice */}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <Link
@@ -365,11 +562,16 @@ export const RoutePage: React.FC = () => {
                       <Siren className="h-3 w-3" /> Emergency
                     </span>
                   )}
-                  <span className="text-cyan-300 truncate max-w-[180px] sm:max-w-[240px]">
+                  {route?.stops && route.stops.length > 2 && (
+                    <span className="inline-flex items-center gap-1 rounded-md bg-indigo-500/30 px-2 py-0.5 text-[11px] text-indigo-200 ring-1 ring-indigo-400/40">
+                      {route.stops.length}-Stop Trip
+                    </span>
+                  )}
+                  <span className="text-cyan-300 truncate max-w-[160px] sm:max-w-[220px]">
                     {originNode?.name || 'Select Start'}
                   </span>
                   <ArrowRight className="h-4 w-4 text-slate-400 shrink-0" />
-                  <span className="text-white truncate max-w-[180px] sm:max-w-[260px]">
+                  <span className="text-white truncate max-w-[160px] sm:max-w-[240px]">
                     {destNode?.name || 'Select Destination'}
                   </span>
                 </div>
@@ -391,7 +593,7 @@ export const RoutePage: React.FC = () => {
               </div>
             </div>
 
-            {/* Right Controls: Re-check My Location + Voice Narration */}
+            {/* Right Controls: Re-check My Location + Share + Voice Narration */}
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
@@ -399,7 +601,32 @@ export const RoutePage: React.FC = () => {
                 className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-500/15 px-3 py-2 text-xs font-bold text-cyan-300 ring-1 ring-cyan-400/35 hover:bg-cyan-500/25 transition"
               >
                 <Camera className="h-3.5 w-3.5" />
-                📷 Re-check my location
+                📷 Re-check spot
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void handleShareRoute(false)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-white/[0.07] px-2.5 py-2 text-xs font-semibold text-slate-200 ring-1 ring-white/10 hover:bg-white/15 transition"
+                title="Copy shareable route link"
+              >
+                {copiedRouteLink ? (
+                  <>
+                    <Check className="h-3.5 w-3.5 text-emerald-400" /> Copied
+                  </>
+                ) : (
+                  <>
+                    <Share2 className="h-3.5 w-3.5 text-cyan-400" /> Share
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => void handleShareRoute(true)}
+                className="hidden sm:inline-flex items-center gap-1 rounded-xl bg-emerald-600/90 px-2.5 py-2 text-xs font-bold text-white hover:bg-emerald-500 transition"
+              >
+                WhatsApp
               </button>
 
               {/* Multilingual Voice Guidance */}
@@ -447,33 +674,65 @@ export const RoutePage: React.FC = () => {
             </div>
           </div>
 
-          {/* Second Row: Mobility Profile Switcher + Alternative Route Pills + Endpoint Selectors */}
+          {/* Second Row: 3 Mobility Profiles + Avoid Crowds Toggle + Alternative Pills */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-white/10">
-            {/* Profile Switcher */}
-            <div className="flex items-center gap-1.5 rounded-xl bg-white/[0.06] p-1 ring-1 ring-white/10">
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Profile Switcher */}
+              <div className="flex flex-wrap items-center gap-1 rounded-xl bg-white/[0.06] p-1 ring-1 ring-white/10">
+                <button
+                  type="button"
+                  onClick={() => updateRouteParams(effectiveFromId, effectiveToId, 'walk')}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
+                    profileParam === 'walk'
+                      ? 'bg-white text-slate-950 shadow-sm'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  <Footprints className="h-3.5 w-3.5 text-cyan-500" />
+                  Walking
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateRouteParams(effectiveFromId, effectiveToId, 'wheelchair')}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
+                    profileParam === 'wheelchair'
+                      ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  <Accessibility className="h-3.5 w-3.5" />
+                  Wheelchair (Lift)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => updateRouteParams(effectiveFromId, effectiveToId, 'stretcher')}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
+                    profileParam === 'stretcher'
+                      ? 'bg-amber-400 text-slate-950 shadow-sm'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  <Bed className="h-3.5 w-3.5" />
+                  Stretcher-Wide
+                </button>
+              </div>
+
+              {/* Avoid Crowded Corridors Toggle */}
               <button
                 type="button"
-                onClick={() => updateRouteParams(fromParam, toParam, 'walk')}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                  profileParam === 'walk'
-                    ? 'bg-white text-slate-950 shadow-sm'
-                    : 'text-slate-300 hover:text-white'
+                onClick={() =>
+                  updateRouteParams(effectiveFromId, effectiveToId, profileParam, {
+                    avoidCrowds: !avoidCrowdsParam,
+                  })
+                }
+                className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold ring-1 transition ${
+                  avoidCrowdsParam
+                    ? 'bg-violet-500/25 text-violet-200 ring-violet-400/50'
+                    : 'bg-white/[0.05] text-slate-300 ring-white/10 hover:text-white'
                 }`}
               >
-                <Footprints className="h-3.5 w-3.5 text-cyan-500" />
-                🚶 Standard Walking
-              </button>
-              <button
-                type="button"
-                onClick={() => updateRouteParams(fromParam, toParam, 'wheelchair')}
-                className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                  profileParam === 'wheelchair'
-                    ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                    : 'text-slate-300 hover:text-white'
-                }`}
-              >
-                <Accessibility className="h-3.5 w-3.5" />
-                ♿ Wheelchair / Stretcher (Lift-only)
+                <Users className="h-3.5 w-3.5 text-violet-400" />
+                {avoidCrowdsParam ? 'Avoiding Crowds ✓' : 'Avoid Crowds'}
               </button>
             </div>
 
@@ -512,15 +771,25 @@ export const RoutePage: React.FC = () => {
       </header>
 
       {/* =================================================================== */}
-      {/* NOTICES / CLOSURE ALERTS / MISSING PARAMS                           */}
+      {/* NOTICES / OFFLINE MODE / CAMERA HEADING / MULTI-STOP PLANNER        */}
       {/* =================================================================== */}
       <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8 pt-4 space-y-3">
+        {route?.offline_fallback && (
+          <div className="flex items-center gap-3 rounded-2xl bg-slate-900 px-4 py-3 text-xs text-cyan-200 ring-1 ring-cyan-400/40">
+            <WifiOff className="h-4 w-4 text-cyan-400 shrink-0" />
+            <div>
+              <strong className="text-white">Offline Basement Mode Active:</strong>{' '}
+              Server unreachable — computing 3D A* path directly on your device from cached venue graph!
+            </div>
+          </div>
+        )}
+
         {fromEntranceFallback && (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-rose-50 px-4 py-3 text-xs text-rose-900 ring-1 ring-rose-200">
             <div className="flex items-center gap-2 font-medium">
               <Siren className="h-4 w-4 text-rose-600 shrink-0" />
               <span>
-                Your location wasn't set yet, so this emergency route starts from{' '}
+                Your location wasn't set yet, so this route starts from{' '}
                 <strong>{originNode?.name || 'Main Entrance'}</strong>. Upload a photo if you are standing elsewhere!
               </span>
             </div>
@@ -534,18 +803,108 @@ export const RoutePage: React.FC = () => {
           </div>
         )}
 
+        {route?.orientation_hint && (
+          <div className="flex items-center gap-3 rounded-2xl bg-indigo-50 px-4 py-3 text-xs text-indigo-950 ring-1 ring-indigo-200">
+            <Compass className="h-4 w-4 text-indigo-600 shrink-0" />
+            <div>
+              <span className="font-bold">Camera Facing Orientation: </span>
+              {route.orientation_hint}
+            </div>
+          </div>
+        )}
+
         {route && (route.closures_avoided > 0 || route.notice) && (
           <div className="flex items-start gap-3 rounded-2xl bg-amber-50 px-4 py-3 text-xs text-amber-950 ring-1 ring-amber-200">
             <ShieldAlert className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
             <div>
-              <span className="font-bold">Live Hazard Bypass Active: </span>
+              <span className="font-bold">Smart Routing Notice: </span>
               {route.notice ||
                 `Automatically avoided ${route.closures_avoided} closed corridor/lift segment${route.closures_avoided > 1 ? 's' : ''}.`}
             </div>
           </div>
         )}
 
-        {(!fromParam || !toParam) && (
+        {/* MULTI-STOP VISIT CHECKLIST BAR */}
+        {route && (
+          <div className="rounded-2xl bg-white p-3.5 ring-1 ring-slate-200/80 shadow-soft flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="inline-flex items-center gap-1 font-extrabold text-slate-800 mr-1">
+                <ListChecks className="h-4 w-4 text-indigo-600" />
+                Visit Stops:
+              </span>
+              {(route.stops && route.stops.length >= 2
+                ? route.stops
+                : [route.from_node, route.to_node]
+              ).map((stId, idx, arr) => {
+                const nd = nodeMap.get(stId);
+                return (
+                  <React.Fragment key={`${stId}-${idx}`}>
+                    <span className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-2.5 py-1 font-semibold text-slate-800 ring-1 ring-slate-200/80">
+                      <span className="text-[10px] font-bold text-indigo-600">
+                        {idx === 0 ? 'Start' : idx === arr.length - 1 ? 'End' : `#${idx}`}
+                      </span>
+                      {nd?.name || stId}
+                      {arr.length > 2 && idx > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveStop(idx)}
+                          className="text-slate-400 hover:text-rose-600 ml-0.5"
+                          title="Remove stop"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      )}
+                    </span>
+                    {idx < arr.length - 1 && (
+                      <ArrowRight className="h-3 w-3 text-slate-400 shrink-0" />
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1">
+                <Plus className="h-3.5 w-3.5 text-slate-400" />
+                <select
+                  value={extraStopId}
+                  onChange={(e) => handleAddStopToRoute(e.target.value)}
+                  className="rounded-xl bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  aria-label="Add another stop to visit checklist"
+                >
+                  <option value="">+ Add stop to checklist...</option>
+                  {placeNodes.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.name} ({formatLevel(n.level)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {multiStops.length >= 3 && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateRouteParams(effectiveFromId, effectiveToId, profileParam, {
+                      stops: multiStops,
+                      optimize: !optimizeParam,
+                    })
+                  }
+                  className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-bold ring-1 transition ${
+                    optimizeParam
+                      ? 'bg-indigo-600 text-white ring-indigo-600'
+                      : 'bg-indigo-50 text-indigo-700 ring-indigo-200 hover:bg-indigo-100'
+                  }`}
+                >
+                  <Sparkles className="h-3 w-3" />
+                  {optimizeParam ? 'Order Optimized ✓' : 'Optimize Stop Order'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {(!fromParam || !toParam) && multiStops.length < 2 && (
           <div className="card p-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="label">Starting Spot</label>
@@ -593,7 +952,13 @@ export const RoutePage: React.FC = () => {
           <div className="card p-12 text-center">
             <Loader2 className="h-8 w-8 animate-spin text-indigo-600 mx-auto" />
             <p className="mt-3 text-sm font-medium text-slate-600">
-              Computing optimal {profileParam === 'wheelchair' ? 'lift-only accessible' : 'multi-floor'} route...
+              Computing optimal{' '}
+              {profileParam === 'stretcher'
+                ? 'stretcher-wide lift'
+                : profileParam === 'wheelchair'
+                  ? 'lift-only accessible'
+                  : 'multi-floor'}{' '}
+              route...
             </p>
           </div>
         ) : routeError ? (
@@ -603,11 +968,11 @@ export const RoutePage: React.FC = () => {
               message={routeError}
               onRetry={() => void fetchRoute()}
             />
-            {profileParam === 'wheelchair' && (
+            {profileParam !== 'walk' && (
               <div className="text-center">
                 <button
                   type="button"
-                  onClick={() => updateRouteParams(fromParam, toParam, 'walk')}
+                  onClick={() => updateRouteParams(effectiveFromId, effectiveToId, 'walk')}
                   className="btn-ghost text-xs"
                 >
                   Switch to Standard Walking Profile
@@ -742,6 +1107,35 @@ export const RoutePage: React.FC = () => {
                   />
                 )}
               </div>
+
+              {/* Leg-by-leg summary for multi-stop trips */}
+              {route.legs && route.legs.length > 1 && (
+                <div className="rounded-2xl bg-white p-3.5 ring-1 ring-slate-200/80 space-y-2">
+                  <div className="text-xs font-extrabold uppercase tracking-wider text-slate-600">
+                    Multi-Stop Leg Breakdown
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {route.legs.map((leg) => (
+                      <div
+                        key={leg.leg_index}
+                        className="rounded-xl bg-slate-50 px-3 py-2 text-xs ring-1 ring-slate-200/70 flex items-center justify-between gap-2"
+                      >
+                        <div className="truncate">
+                          <span className="font-bold text-indigo-600 mr-1">
+                            Leg {leg.leg_index}:
+                          </span>
+                          <span className="font-semibold text-slate-900">
+                            {leg.from_name} → {leg.to_name}
+                          </span>
+                        </div>
+                        <span className="shrink-0 font-mono text-[11px] text-slate-500">
+                          {Math.round(leg.distance_m)}m
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* LEFT ON DESKTOP / BOTTOM ON MOBILE: VISUAL TURN-BY-TURN STEPS */}
@@ -813,6 +1207,11 @@ export const RoutePage: React.FC = () => {
                           <p className="mt-1 text-sm font-bold text-slate-900 leading-snug">
                             {step.instruction}
                           </p>
+                          {voiceLang !== 'en-IN' && (
+                            <p className="mt-1 text-xs font-semibold text-indigo-700 leading-snug">
+                              {localizeInstruction(step, voiceLang)}
+                            </p>
+                          )}
                           <p className="mt-0.5 text-xs text-slate-500">{step.name}</p>
 
                           {/* Reference Photo Thumbnail */}
@@ -861,6 +1260,7 @@ export const RoutePage: React.FC = () => {
         onClose={() => setRecheckOpen(false)}
         venue={venue}
         nodes={graph.nodes}
+        priorNodeId={effectiveFromId || visitorLoc?.nodeId}
         queuedDestination={
           destNode ? { nodeId: destNode.id, name: destNode.name } : null
         }

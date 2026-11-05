@@ -1,20 +1,21 @@
 """
 Hybrid Photo Localizer:
 Combines DINOv2 visual place recognition (nearest-neighbour cosine voting over indexed venue photos)
-with RapidOCR signboard/plaque text matching, producing calibrated node probabilities & full explainable trace.
+with RapidOCR signboard/plaque text matching + optional Bayesian graph-proximity prior,
+producing calibrated node probabilities, OCR bounding boxes, facing heading, & full explainable trace.
 """
 from __future__ import annotations
 
 import re
 import time
 import uuid
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 import numpy as np
 from rapidfuzz import fuzz
 from sqlmodel import Session, select
 
 from ...config import CONFIDENT_THRESHOLD, MEDIA_DIR, MIN_MARGIN, NO_MATCH_SIMILARITY
-from ...models import Building, Floor, LocalizeLog, Node, Photo, Venue
+from ...models import Building, Edge, Floor, LocalizeLog, Node, Photo, Venue
 from .embedder import embedder_service
 from .ocr import ocr_service
 from .privacy import has_face_blur, save_clean_image
@@ -38,7 +39,6 @@ def _ocr_match_score(ocr_lines: List[str], node: Node, node_photo_texts: List[st
 
     best = 0.0
     best_tok: Optional[str] = None
-    # Compare meaningful words from node name + keywords against OCR text
     candidates = [node.name] + [w for w in re.split(r"[,;/]|\s+", node.keywords) if len(w) >= 3]
     stop = {"floor", "block", "wing", "main", "room", "area", "hall", "near", "corridor", "the", "and"}
     for cand in candidates:
@@ -62,11 +62,24 @@ def _ocr_match_score(ocr_lines: List[str], node: Node, node_photo_texts: List[st
     return round(best, 3), best_tok
 
 
+def _two_hop_neighbours(edges: List[Edge], origin_id: str) -> Set[str]:
+    adj: Dict[str, Set[str]] = {}
+    for e in edges:
+        adj.setdefault(e.source, set()).add(e.target)
+        adj.setdefault(e.target, set()).add(e.source)
+    hop1 = adj.get(origin_id, set()) | {origin_id}
+    hop2: Set[str] = set(hop1)
+    for n1 in hop1:
+        hop2 |= adj.get(n1, set())
+    return hop2
+
+
 def localize_photo(
     session: Session,
     venue: Venue,
     raw_bytes: bytes,
     level_hint: Optional[int] = None,
+    prior_node_id: Optional[str] = None,
 ) -> dict:
     trace: list[dict] = []
 
@@ -85,22 +98,25 @@ def localize_photo(
     # Load venue topology & indexed photos
     nodes = session.exec(select(Node).where(Node.venue_id == venue.id)).all()
     node_map: Dict[str, Node] = {n.id: n for n in nodes}
+    edges = session.exec(select(Edge).where(Edge.venue_id == venue.id)).all()
     buildings = {b.id: b.name for b in session.exec(select(Building).where(Building.venue_id == venue.id)).all()}
     floors = {f.id: f.name for f in session.exec(select(Floor).where(Floor.venue_id == venue.id)).all()}
     photos = session.exec(select(Photo).where(Photo.venue_id == venue.id)).all()
+
+    prior_node = node_map.get(prior_node_id) if prior_node_id else None
+    nearby_nodes = _two_hop_neighbours(edges, prior_node.id) if prior_node else set()
 
     # 2. Visual Embedding + Nearest-Neighbour Retrieval
     t1 = time.perf_counter()
     q_vec = embedder_service.embed(img)
     emb_name = embedder_service.name
 
-    photo_Matches: list[tuple[float, Photo]] = []
+    photo_matches: list[tuple[float, Photo]] = []
     node_photo_texts: Dict[str, list[str]] = {n.id: [] for n in nodes}
     for p in photos:
         if p.ocr_text and p.node_id in node_photo_texts:
             node_photo_texts[p.node_id].append(p.ocr_text)
         if not p.embedding or p.embedder != emb_name:
-            # Lazily compute embedding if missing or embedder changed
             p_file = MEDIA_DIR / p.path
             if p_file.exists():
                 from PIL import Image as PILImage
@@ -115,59 +131,67 @@ def localize_photo(
         p_vec = embedder_service.from_bytes(p.embedding)
         if p_vec.shape == q_vec.shape:
             sim = float(np.dot(q_vec, p_vec))
-            photo_Matches.append((sim, p))
+            photo_matches.append((sim, p))
     session.commit()
 
-    photo_Matches.sort(key=lambda item: item[0], reverse=True)
+    photo_matches.sort(key=lambda item: item[0], reverse=True)
     ms_vis = int((time.perf_counter() - t1) * 1000)
     trace.append({
         "step": f"Visual Fingerprint ({emb_name})",
-        "detail": f"Compared {q_vec.size}-d vector against {len(photo_Matches)} reference photos",
+        "detail": f"Compared {q_vec.size}-d vector against {len(photo_matches)} reference photos",
         "ms": max(1, ms_vis),
     })
 
-    # 3. Signboard & Plaque OCR
+    # 3. Signboard & Plaque OCR + Bounding Boxes
     t2 = time.perf_counter()
-    ocr_lines = ocr_service.extract_text(img)
+    ocr_lines, ocr_boxes = ocr_service.extract_boxes(img)
     ms_ocr = int((time.perf_counter() - t2) * 1000)
     trace.append({
         "step": "Signboard OCR",
-        "detail": f"Detected: {', '.join(ocr_lines[:5])}" if ocr_lines else "No signboard text detected; relying on visual geometry",
+        "detail": f"Detected {len(ocr_boxes)} region(s): {', '.join(ocr_lines[:5])}" if ocr_lines else "No signboard text detected; relying on visual geometry",
         "ms": max(1, ms_ocr),
     })
 
-    # 4. Per-node Visual + Text Score Fusion
+    # 4. Per-node Visual + Text + Proximity Prior Score Fusion
     t3 = time.perf_counter()
     per_node_vis: Dict[str, list[tuple[float, Photo]]] = {}
-    for sim, p in photo_Matches[:24]:
+    for sim, p in photo_matches[:24]:
         per_node_vis.setdefault(p.node_id, []).append((sim, p))
 
     scored: list[dict] = []
-    max_raw_sim = photo_Matches[0][0] if photo_Matches else 0.0
+    max_raw_sim = photo_matches[0][0] if photo_matches else 0.0
+
+    # Check if any node has a decisive OCR hit so prior doesn't fight explicit room plaques
+    any_strong_ocr = False
+    pre_ocr: Dict[str, tuple[float, Optional[str]]] = {}
+    for node in nodes:
+        ts, mt = _ocr_match_score(ocr_lines, node, node_photo_texts.get(node.id, []))
+        pre_ocr[node.id] = (ts, mt)
+        if ts >= 0.85:
+            any_strong_ocr = True
 
     for node in nodes:
         hits = per_node_vis.get(node.id, [])
         best_photo_url: Optional[str] = None
+        matched_heading: Optional[float] = None
         if hits:
-            # Weighted average of best hit (75%) and second hit (25%) rewards multi-angle consistency
             s0 = hits[0][0]
             s1 = hits[1][0] if len(hits) > 1 else s0
             raw_vis = 0.75 * s0 + 0.25 * s1
-            # Calibrate cosine similarity (typically 0.30..0.95 for DINOv2) to intuitive 0..1 visual score
             vis_score = float(np.clip((raw_vis - 0.22) / 0.68, 0.0, 1.0))
             best_photo_url = f"/media/{hits[0][1].path}"
+            matched_heading = hits[0][1].heading_deg
         else:
             raw_vis = 0.0
             vis_score = 0.0
-            # Fallback thumbnail if node has any photo
             any_p = next((p for p in photos if p.node_id == node.id), None)
             if any_p:
                 best_photo_url = f"/media/{any_p.path}"
+                matched_heading = any_p.heading_deg
 
-        txt_score, matched_tok = _ocr_match_score(ocr_lines, node, node_photo_texts.get(node.id, []))
+        txt_score, matched_tok = pre_ocr[node.id]
 
         if ocr_lines and txt_score > 0.0:
-            # Combine visual similarity + signboard OCR; strong plaque reading can stand on its own too
             fused = max(0.62 * vis_score + 0.38 * txt_score, 0.88 * txt_score + 0.12 * vis_score)
         else:
             fused = vis_score
@@ -177,6 +201,15 @@ def localize_photo(
                 fused = min(1.0, fused * 1.08)
             else:
                 fused *= 0.82
+
+        prior_used = False
+        if prior_node is not None and not any_strong_ocr and fused > 0.12:
+            if node.id in nearby_nodes:
+                fused = min(1.0, fused * 1.09)
+                prior_used = True
+            elif node.level == prior_node.level:
+                fused = min(1.0, fused * 1.04)
+                prior_used = True
 
         if fused <= 0.05 and raw_vis <= 0.20 and txt_score <= 0.0:
             continue
@@ -188,6 +221,8 @@ def localize_photo(
             reasons.append(f"OCR read '{matched_tok}'")
         if level_hint is not None and node.level == level_hint:
             reasons.append(f"Floor {level_hint} hint")
+        if prior_used:
+            reasons.append("Continuity prior")
         if not reasons:
             reasons.append("Closest architectural match")
 
@@ -203,13 +238,13 @@ def localize_photo(
             "text": round(float(txt_score), 3),
             "raw_sim": raw_vis,
             "matched_photo_url": best_photo_url,
+            "matched_heading_deg": matched_heading,
             "reason": " + ".join(reasons),
         })
 
     scored.sort(key=lambda c: (c["score"], c["text"], c["visual"]), reverse=True)
     top3_raw = scored[:3]
 
-    # Decide status: confident vs uncertain vs no_match
     best_cand = top3_raw[0] if top3_raw else None
     second_score = top3_raw[1]["score"] if len(top3_raw) > 1 else 0.0
 
@@ -224,7 +259,6 @@ def localize_photo(
         and (best_cand["score"] - second_score >= MIN_MARGIN or best_cand["text"] >= 0.85 or best_cand["score"] >= 0.78)
     ):
         status = "confident"
-        # Boost displayed confidence slightly when margin over runner-up is decisive
         margin_bonus = min(0.12, max(0.0, (best_cand["score"] - second_score) * 0.35))
         confidence = round(min(0.99, best_cand["score"] + margin_bonus), 3)
         best_cand["score"] = confidence
@@ -265,6 +299,8 @@ def localize_photo(
         "best": best_clean,
         "candidates": candidates,
         "ocr_text": ocr_lines,
+        "ocr_boxes": ocr_boxes,
+        "faces_blurred": faces,
         "trace": trace,
         "engine": {
             "embedder": emb_name,

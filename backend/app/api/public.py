@@ -3,9 +3,8 @@ from __future__ import annotations
 from collections import Counter
 import hashlib
 import json
-from pathlib import Path
 import shutil
-from typing import Optional
+from typing import List, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
@@ -15,7 +14,11 @@ from sqlmodel import Session, select
 from ..config import MEDIA_DIR
 from ..db import get_session
 from ..models import Building, Closure, Edge, Floor, LocalizeLog, Node, Person, Photo, Venue
-from ..services.routing import compute_venue_route
+from ..services.routing import (
+    compute_multistop_route,
+    compute_nearest_facility_route,
+    compute_venue_route,
+)
 from ..services.search import search_venue
 from ..services.vision.embedder import embedder_service
 from ..services.vision.localizer import localize_photo
@@ -74,6 +77,8 @@ def serialize_venue_summary(session: Session, v: Venue) -> dict:
         "tagline": v.tagline,
         "accent": v.accent,
         "cover_url": cover_url,
+        "owner_id": v.owner_id,
+        "owner_name": v.owner_name or "Navigator Core Team",
         "stats": {
             "buildings": b_cnt,
             "floors": f_cnt,
@@ -123,7 +128,7 @@ def list_venues(q: str = Query(default=""), session: Session = Depends(get_sessi
     q_low = q.strip().lower()
     out = []
     for v in venues:
-        if q_low and q_low not in f"{v.name} {v.city} {v.type} {v.tagline}".lower():
+        if q_low and q_low not in f"{v.name} {v.city} {v.type} {v.tagline} {v.owner_name}".lower():
             continue
         out.append(serialize_venue_summary(session, v))
     return out
@@ -147,7 +152,15 @@ def venue_detail(slug: str, session: Session = Depends(get_session)):
             "y": b.y,
             "w": b.w,
             "d": b.d,
-            "floors": [{"id": fl.id, "level": fl.level, "name": fl.name} for fl in b_floors],
+            "floors": [
+                {
+                    "id": fl.id,
+                    "level": fl.level,
+                    "name": fl.name,
+                    "blueprint_url": f"/media/{fl.blueprint_path}" if getattr(fl, "blueprint_path", None) else None,
+                }
+                for fl in b_floors
+            ],
         })
 
     cat_counts = Counter(n.category for n in nodes if n.is_place and n.category)
@@ -196,6 +209,7 @@ def venue_graph(slug: str, session: Session = Depends(get_session)):
                 "floor_name": floors.get(n.floor_id, f"Floor {n.level}"),
                 "x": n.x,
                 "y": n.y,
+                "keywords": n.keywords,
                 "is_place": n.is_place,
                 "photo_url": best_photo.get(n.id),
                 "photo_count": photo_counts.get(n.id, 0),
@@ -210,6 +224,7 @@ def venue_graph(slug: str, session: Session = Depends(get_session)):
                 "distance": e.distance,
                 "kind": e.kind,
                 "accessible": e.accessible,
+                "stretcher_ok": bool(getattr(e, "stretcher_ok", True)),
                 "closed": e.id in closures,
             }
             for e in edges
@@ -258,6 +273,7 @@ async def venue_localize(
     slug: str,
     file: UploadFile = File(...),
     level: Optional[int] = Form(default=None),
+    prior_node_id: Optional[str] = Form(default=None),
     session: Session = Depends(get_session),
 ):
     v = get_venue_or_404(session, slug)
@@ -265,7 +281,13 @@ async def venue_localize(
     if not raw:
         raise HTTPException(status_code=400, detail="Uploaded image is empty")
     try:
-        return localize_photo(session, v, raw_bytes=raw, level_hint=level)
+        return localize_photo(
+            session,
+            v,
+            raw_bytes=raw,
+            level_hint=level,
+            prior_node_id=prior_node_id,
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Could not process image: {exc}") from exc
 
@@ -330,12 +352,14 @@ class RoutePayload(BaseModel):
     from_node: str
     to_node: str
     profile: str = "walk"
+    avoid_crowds: bool = False
+    heading_deg: Optional[float] = None
 
 
 @router.post("/venues/{slug}/route")
 def venue_route(slug: str, payload: RoutePayload, session: Session = Depends(get_session)):
     v = get_venue_or_404(session, slug)
-    profile = payload.profile if payload.profile in ("walk", "wheelchair") else "walk"
+    profile = payload.profile if payload.profile in ("walk", "wheelchair", "stretcher") else "walk"
     try:
         return compute_venue_route(
             session,
@@ -343,6 +367,60 @@ def venue_route(slug: str, payload: RoutePayload, session: Session = Depends(get
             from_node=payload.from_node,
             to_node=payload.to_node,
             profile=profile,
+            avoid_crowds=payload.avoid_crowds,
+            heading_deg=payload.heading_deg,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class NearestRoutePayload(BaseModel):
+    from_node: str
+    target_kind: str = "exit"
+    profile: str = "walk"
+    avoid_crowds: bool = False
+    heading_deg: Optional[float] = None
+
+
+@router.post("/venues/{slug}/route/nearest")
+def venue_nearest_route(slug: str, payload: NearestRoutePayload, session: Session = Depends(get_session)):
+    v = get_venue_or_404(session, slug)
+    profile = payload.profile if payload.profile in ("walk", "wheelchair", "stretcher") else "walk"
+    try:
+        return compute_nearest_facility_route(
+            session,
+            v,
+            from_node=payload.from_node,
+            target_kind=payload.target_kind,
+            profile=profile,
+            avoid_crowds=payload.avoid_crowds,
+            heading_deg=payload.heading_deg,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class MultiStopRoutePayload(BaseModel):
+    stops: List[str]
+    profile: str = "walk"
+    optimize: bool = False
+    avoid_crowds: bool = False
+    heading_deg: Optional[float] = None
+
+
+@router.post("/venues/{slug}/route/multi")
+def venue_multistop_route(slug: str, payload: MultiStopRoutePayload, session: Session = Depends(get_session)):
+    v = get_venue_or_404(session, slug)
+    profile = payload.profile if payload.profile in ("walk", "wheelchair", "stretcher") else "walk"
+    try:
+        return compute_multistop_route(
+            session,
+            v,
+            stops=payload.stops,
+            profile=profile,
+            optimize=payload.optimize,
+            avoid_crowds=payload.avoid_crowds,
+            heading_deg=payload.heading_deg,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

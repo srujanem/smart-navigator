@@ -1,28 +1,34 @@
 """
 Multi-floor, multi-building A* spatial router with:
 - Admissible 3D Euclidean + floor-transition heuristic (real A*, not Dijkstra)
-- Accessibility profile ('walk' vs 'wheelchair' lift-only)
+- Accessibility profiles: 'walk' | 'wheelchair' (step-free) | 'stretcher' (wide corridors & bed lifts)
+- Crowd-aware routing ('avoid_crowds') using live corridor traversal density
+- Camera heading ('heading_deg') relative orientation hint on Step 1 ("From your photo view, turn right...")
 - Real-time corridor/lift closures + bypassed-hazard detection
-- Yen's k-shortest simple paths for diverse alternative routes
-- Geometric turn angle detection + dataset landmark photos per step
+- Multi-target 1-Tap Nearest Facility / Emergency SOS routing
+- Multi-stop Itinerary Trip Planner with optional waypoint order optimization
 """
 from __future__ import annotations
 
+from collections import Counter
 import math
 from typing import Dict, List, Optional
 import networkx as nx
 from sqlmodel import Session, select
 
 from ..config import WALK_SPEED, WHEELCHAIR_SPEED
-from ..models import Building, Closure, Edge, Node, Photo, RouteLog, Venue
+from ..models import Building, Closure, Edge, LocalizeLog, Node, Photo, RouteLog, Venue
+
+STRETCHER_SPEED = 0.82
 
 
 def _build_nx_graph(
     nodes: List[Node],
     edges: List[Edge],
     closed_edge_ids: set[str],
-    profile: str,
+    profile: str = "walk",
     ignore_closures: bool = False,
+    crowd_by_node: Optional[Dict[str, int]] = None,
 ) -> nx.Graph:
     G = nx.Graph()
     for n in nodes:
@@ -32,10 +38,31 @@ def _build_nx_graph(
             continue
         if profile == "wheelchair" and (not e.accessible or e.kind == "stairs"):
             continue
-        # Slight preference penalty on stairs in walking mode if lift is comparable
+        if profile == "stretcher":
+            stretcher_ok = getattr(e, "stretcher_ok", True)
+            if not e.accessible or not stretcher_ok or e.kind == "stairs":
+                continue
         w = float(e.distance)
+        if crowd_by_node:
+            c_load = crowd_by_node.get(e.source, 0) + crowd_by_node.get(e.target, 0)
+            if c_load > 0:
+                # Penalize congested corridors/lifts smoothly while keeping shortest-path heuristic admissible
+                w *= 1.0 + min(1.5, 0.14 * c_load)
         G.add_edge(e.source, e.target, weight=w, distance=float(e.distance), edge=e)
     return G
+
+
+def _compute_crowd_counts(session: Session, venue_id: str) -> Dict[str, int]:
+    traversal: Counter[str] = Counter()
+    routes = session.exec(select(RouteLog).where(RouteLog.venue_id == venue_id)).all()
+    loc_logs = session.exec(select(LocalizeLog).where(LocalizeLog.venue_id == venue_id)).all()
+    for r in routes[-80:]:
+        for nid in r.path.split():
+            traversal[nid] += 1
+    for l in loc_logs[-40:]:
+        if l.predicted_node:
+            traversal[l.predicted_node] += 2
+    return dict(traversal)
 
 
 def _turn_icon(prev_n: Node, curr_n: Node, next_n: Node) -> tuple[str, str]:
@@ -54,6 +81,31 @@ def _turn_icon(prev_n: Node, curr_n: Node, next_n: Node) -> tuple[str, str]:
     return "left", "Turn left towards"
 
 
+def _relative_heading_hint(heading_deg: float, start_n: Node, next_n: Node) -> Optional[str]:
+    dx = next_n.x - start_n.x
+    dy = next_n.y - start_n.y
+    if math.hypot(dx, dy) < 1e-3:
+        return None
+    # Floorplan azimuth: 0° = North (-y), 90° = East (+x), 180° = South (+y), 270° = West (-x)
+    move_deg = (math.degrees(math.atan2(dx, -dy)) + 360.0) % 360.0
+    rel = (move_deg - (heading_deg % 360.0) + 540.0) % 360.0 - 180.0
+    if -35 <= rel <= 35:
+        return f"From the view in your photo, walk straight ahead (12 o'clock) towards {next_n.name}."
+    if 35 < rel <= 135:
+        return f"From the view in your photo, turn right (3 o'clock) towards {next_n.name}."
+    if -135 <= rel < -35:
+        return f"From the view in your photo, turn left (9 o'clock) towards {next_n.name}."
+    return f"From the view in your photo, turn around (6 o'clock) behind you towards {next_n.name}."
+
+
+def _speed_for_profile(profile: str) -> float:
+    if profile == "stretcher":
+        return STRETCHER_SPEED
+    if profile == "wheelchair":
+        return WHEELCHAIR_SPEED
+    return WALK_SPEED
+
+
 def compute_venue_route(
     session: Session,
     venue: Venue,
@@ -61,7 +113,12 @@ def compute_venue_route(
     to_node: str,
     profile: str = "walk",
     record_log: bool = True,
+    avoid_crowds: bool = False,
+    heading_deg: Optional[float] = None,
 ) -> dict:
+    if profile not in ("walk", "wheelchair", "stretcher"):
+        profile = "walk"
+
     nodes = session.exec(select(Node).where(Node.venue_id == venue.id)).all()
     edges = session.exec(select(Edge).where(Edge.venue_id == venue.id)).all()
     closures = session.exec(select(Closure).where(Closure.venue_id == venue.id)).all()
@@ -74,7 +131,6 @@ def compute_venue_route(
     if to_node not in node_map:
         raise ValueError(f"Unknown destination '{to_node}'")
 
-    # Map each node to its highest-quality photo for visual step cards
     node_photo: Dict[str, str] = {}
     for p in sorted(photos, key=lambda x: x.quality, reverse=True):
         if p.node_id not in node_photo:
@@ -82,12 +138,19 @@ def compute_venue_route(
 
     closed_ids = {c.edge_id for c in closures}
     closure_by_edge = {c.edge_id: c for c in closures}
+    crowd_map = _compute_crowd_counts(session, venue.id) if avoid_crowds else None
 
-    G = _build_nx_graph(nodes, edges, closed_ids, profile=profile, ignore_closures=False)
+    G = _build_nx_graph(
+        nodes,
+        edges,
+        closed_ids,
+        profile=profile,
+        ignore_closures=False,
+        crowd_by_node=crowd_map,
+    )
 
     def heuristic(u: str, v: str) -> float:
         nu, nv = node_map[u], node_map[v]
-        # Scale Euclidean distance conservatively so heuristic stays strictly admissible
         planar = 0.2 * math.hypot(nu.x - nv.x, nu.y - nv.y)
         vertical = 3.5 * abs(nu.level - nv.level)
         return planar + vertical
@@ -115,18 +178,20 @@ def compute_venue_route(
             "alternatives": [],
             "closures_avoided": 0,
             "notice": None,
+            "orientation_hint": None,
         }
 
     try:
         path = nx.astar_path(G, from_node, to_node, heuristic=heuristic, weight="weight")
     except nx.NetworkXNoPath as exc:
+        if profile == "stretcher":
+            raise ValueError("No stretcher-accessible wide corridor & bed-lift route available.") from exc
         if profile == "wheelchair":
             raise ValueError("No step-free (lift/ramp) route available — a lift on this path may be closed for maintenance.") from exc
         raise ValueError("No walkable route available between these locations due to active closures.") from exc
 
-    # Check if closures caused a detour compared to the open graph
     closures_avoided = 0
-    notice: Optional[str] = None
+    notices: list[str] = []
     if closed_ids:
         G_open = _build_nx_graph(nodes, edges, closed_ids, profile=profile, ignore_closures=True)
         try:
@@ -142,24 +207,35 @@ def compute_venue_route(
                         avoided_reasons.append(r)
             if closures_avoided > 0:
                 reason_txt = f" ({'; '.join(avoided_reasons)})" if avoided_reasons else ""
-                notice = f"Automatically rerouted around {closures_avoided} closed passage(s){reason_txt}."
+                notices.append(f"Automatically rerouted around {closures_avoided} closed passage(s){reason_txt}.")
         except nx.NetworkXNoPath:
             pass
 
-    speed = WHEELCHAIR_SPEED if profile == "wheelchair" else WALK_SPEED
+    if avoid_crowds and crowd_map:
+        G_direct = _build_nx_graph(nodes, edges, closed_ids, profile=profile, ignore_closures=False, crowd_by_node=None)
+        try:
+            direct_path = nx.astar_path(G_direct, from_node, to_node, heuristic=heuristic, weight="weight")
+            if direct_path != path:
+                notices.append("Quiet route selected — bypassing high-traffic corridors.")
+        except nx.NetworkXNoPath:
+            pass
+
+    speed = _speed_for_profile(profile)
     total_dist = round(float(sum(G[path[i]][path[i + 1]]["distance"] for i in range(len(path) - 1))), 1)
     eta_s = max(5, int(round(total_dist / speed)))
 
-    steps = _build_steps(path, G, node_map, node_photo, buildings)
+    orientation_hint: Optional[str] = None
+    if heading_deg is not None and len(path) >= 2:
+        orientation_hint = _relative_heading_hint(heading_deg, node_map[path[0]], node_map[path[1]])
+
+    steps = _build_steps(path, G, node_map, node_photo, buildings, orientation_hint=orientation_hint)
     levels = sorted({node_map[nid].level for nid in path})
 
-    # Compute up to 2 genuine alternative routes using Yen's k-shortest simple paths
     alternatives: list[dict] = []
     try:
         for cand_path in nx.shortest_simple_paths(G, from_node, to_node, weight="weight"):
             if cand_path == path:
                 continue
-            # Require meaningful path difference (at least 1 distinct intermediate transit/corridor node)
             shared_ratio = len(set(cand_path) & set(path)) / float(max(len(cand_path), len(path)))
             cand_dist = round(float(sum(G[cand_path[i]][cand_path[i + 1]]["distance"] for i in range(len(cand_path) - 1))), 1)
             if cand_dist > total_dist * 2.4:
@@ -203,7 +279,8 @@ def compute_venue_route(
         "steps": steps,
         "alternatives": alternatives,
         "closures_avoided": closures_avoided,
-        "notice": notice,
+        "notice": " ".join(notices) if notices else None,
+        "orientation_hint": orientation_hint,
     }
 
 
@@ -213,14 +290,18 @@ def _build_steps(
     node_map: Dict[str, Node],
     node_photo: Dict[str, str],
     buildings: Dict[str, str],
+    orientation_hint: Optional[str] = None,
 ) -> list[dict]:
     steps: list[dict] = []
     start = node_map[path[0]]
+    start_instr = f"Start at {start.name} ({buildings.get(start.building_id, '')}, Floor {start.level})."
+    if orientation_hint:
+        start_instr = f"{start_instr} {orientation_hint}"
     steps.append({
         "index": 0,
         "node_id": start.id,
         "name": start.name,
-        "instruction": f"Start at {start.name} ({buildings.get(start.building_id, '')}, Floor {start.level}).",
+        "instruction": start_instr,
         "icon": "start",
         "distance_m": 0.0,
         "level": start.level,
@@ -282,11 +363,178 @@ def find_nearest_matching_nodes(
     closed_ids: set[str],
     from_node: str,
     predicate,
+    profile: str = "walk",
 ) -> list[tuple[float, Node]]:
-    G = _build_nx_graph(nodes, edges, closed_ids, profile="walk")
+    G = _build_nx_graph(nodes, edges, closed_ids, profile=profile)
     if from_node not in G:
         return [(0.0, n) for n in nodes if predicate(n)]
     lengths = nx.single_source_dijkstra_path_length(G, from_node, weight="weight")
     hits = [(float(lengths[n.id]), n) for n in nodes if predicate(n) and n.id in lengths]
     hits.sort(key=lambda t: t[0])
     return hits
+
+
+FACILITY_MATCHERS = {
+    "exit": ("exit", "entrance", "gate", "emergency"),
+    "emergency": ("emergency", "trauma", "casualty", "first aid"),
+    "washroom": ("washroom", "restroom", "toilet", "wc"),
+    "restroom": ("washroom", "restroom", "toilet", "wc"),
+    "lift": ("lift", "elevator"),
+    "pharmacy": ("pharmacy", "chemist", "medicine"),
+    "helpdesk": ("reception", "help", "desk", "enquiry", "billing", "office"),
+}
+
+
+def compute_nearest_facility_route(
+    session: Session,
+    venue: Venue,
+    from_node: str,
+    target_kind: str,
+    profile: str = "walk",
+    avoid_crowds: bool = False,
+    heading_deg: Optional[float] = None,
+) -> dict:
+    nodes = session.exec(select(Node).where(Node.venue_id == venue.id)).all()
+    edges = session.exec(select(Edge).where(Edge.venue_id == venue.id)).all()
+    closed_ids = {c.edge_id for c in session.exec(select(Closure).where(Closure.venue_id == venue.id)).all()}
+
+    terms = FACILITY_MATCHERS.get(target_kind.lower().strip(), (target_kind.lower().strip(),))
+
+    def _matches(n: Node) -> bool:
+        if n.id == from_node and len(nodes) > 1:
+            return False
+        blob = f"{n.kind} {n.category or ''} {n.name} {n.keywords}".lower()
+        return any(t in blob for t in terms)
+
+    hits = find_nearest_matching_nodes(nodes, edges, closed_ids, from_node, _matches, profile=profile)
+    if not hits:
+        # Fallback if emergency_node_id or entrance_node_id matches intent
+        if target_kind in ("emergency", "exit") and venue.emergency_node_id:
+            target_id = venue.emergency_node_id
+        elif target_kind == "exit" and venue.entrance_node_id:
+            target_id = venue.entrance_node_id
+        else:
+            raise ValueError(f"No reachable '{target_kind}' facility found on this venue map.")
+    else:
+        target_id = hits[0][1].id
+
+    return compute_venue_route(
+        session,
+        venue,
+        from_node=from_node,
+        to_node=target_id,
+        profile=profile,
+        record_log=True,
+        avoid_crowds=avoid_crowds,
+        heading_deg=heading_deg,
+    )
+
+
+def compute_multistop_route(
+    session: Session,
+    venue: Venue,
+    stops: List[str],
+    profile: str = "walk",
+    optimize: bool = False,
+    avoid_crowds: bool = False,
+    heading_deg: Optional[float] = None,
+) -> dict:
+    # Deduplicate consecutive identical stops while preserving start
+    cleaned: list[str] = []
+    for s in stops:
+        if s and (not cleaned or cleaned[-1] != s):
+            cleaned.append(s)
+    if len(cleaned) < 2:
+        raise ValueError("At least 2 distinct stops (start + 1 destination) are required.")
+
+    nodes = session.exec(select(Node).where(Node.venue_id == venue.id)).all()
+    edges = session.exec(select(Edge).where(Edge.venue_id == venue.id)).all()
+    closed_ids = {c.edge_id for c in session.exec(select(Closure).where(Closure.venue_id == venue.id)).all()}
+    node_map = {n.id: n for n in nodes}
+
+    for s in cleaned:
+        if s not in node_map:
+            raise ValueError(f"Unknown stop '{s}'")
+
+    ordered = list(cleaned)
+    if optimize and len(ordered) >= 3:
+        # Nearest-neighbour ordering starting from ordered[0]
+        G = _build_nx_graph(nodes, edges, closed_ids, profile=profile)
+        start = ordered[0]
+        remaining = list(dict.fromkeys(ordered[1:]))
+        ordered = [start]
+        curr = start
+        while remaining:
+            lengths = nx.single_source_dijkstra_path_length(G, curr, weight="weight") if curr in G else {}
+            remaining.sort(key=lambda cand: lengths.get(cand, 1e9))
+            nxt = remaining.pop(0)
+            ordered.append(nxt)
+            curr = nxt
+
+    combined_path: list[str] = []
+    combined_steps: list[dict] = []
+    legs: list[dict] = []
+    total_dist = 0.0
+    total_eta = 0
+    closures_avoided = 0
+    notices: list[str] = []
+
+    for idx in range(len(ordered) - 1):
+        a, b = ordered[idx], ordered[idx + 1]
+        leg = compute_venue_route(
+            session,
+            venue,
+            from_node=a,
+            to_node=b,
+            profile=profile,
+            record_log=(idx == 0),
+            avoid_crowds=avoid_crowds,
+            heading_deg=heading_deg if idx == 0 else None,
+        )
+        total_dist += float(leg["distance_m"])
+        total_eta += int(leg["eta_s"])
+        closures_avoided += int(leg["closures_avoided"])
+        if leg.get("notice") and leg["notice"] not in notices:
+            notices.append(leg["notice"])
+
+        if idx == 0:
+            combined_path.extend(leg["path"])
+        else:
+            combined_path.extend(leg["path"][1:])
+
+        for st_i, st in enumerate(leg["steps"]):
+            if idx > 0 and st_i == 0:
+                continue
+            step_copy = dict(st)
+            step_copy["index"] = len(combined_steps)
+            if st_i == len(leg["steps"]) - 1 and idx < len(ordered) - 2:
+                step_copy["instruction"] = f"Stop {idx + 1} reached: {node_map[b].name}. When ready, continue to Stop {idx + 2} ({node_map[ordered[idx + 2]].name})."
+            combined_steps.append(step_copy)
+
+        legs.append({
+            "leg_index": idx,
+            "from_node": a,
+            "from_name": node_map[a].name,
+            "to_node": b,
+            "to_name": node_map[b].name,
+            "distance_m": leg["distance_m"],
+            "eta_s": leg["eta_s"],
+            "path": leg["path"],
+        })
+
+    levels = sorted({node_map[nid].level for nid in combined_path if nid in node_map})
+    return {
+        "from_node": ordered[0],
+        "to_node": ordered[-1],
+        "stops": ordered,
+        "legs": legs,
+        "profile": profile,
+        "distance_m": round(total_dist, 1),
+        "eta_s": total_eta,
+        "path": combined_path,
+        "levels": levels,
+        "steps": combined_steps,
+        "alternatives": [],
+        "closures_avoided": closures_avoided,
+        "notice": " ".join(notices) if notices else None,
+    }

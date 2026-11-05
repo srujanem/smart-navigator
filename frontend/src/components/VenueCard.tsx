@@ -6,6 +6,7 @@ import {
   Camera,
   Layers,
   MapPin,
+  ShieldCheck,
   Users,
 } from 'lucide-react';
 import type { VenueSummary } from '../lib/types';
@@ -69,10 +70,16 @@ export const VenueCard: React.FC<VenueCardProps> = ({ venue, dark = false }) => 
           {venue.city}
         </div>
 
-        <div className="absolute bottom-3 left-4 right-4">
+        <div className="absolute bottom-3 left-4 right-4 flex items-end justify-between gap-2">
           <h3 className="font-display text-lg font-bold text-white leading-snug group-hover:text-cyan-300 transition-colors">
             {venue.name}
           </h3>
+          {venue.owner_name && (
+            <span className="shrink-0 inline-flex items-center gap-1 rounded-md bg-white/10 backdrop-blur-md px-2 py-0.5 text-[10px] font-semibold text-cyan-200 ring-1 ring-white/15">
+              <ShieldCheck className="h-3 w-3 text-emerald-400" />
+              {venue.owner_name}
+            </span>
+          )}
         </div>
       </div>
 

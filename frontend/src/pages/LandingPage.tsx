@@ -226,6 +226,14 @@ export const LandingPage: React.FC = () => {
                 </Link>
 
                 <Link
+                  to="/admin/login?mode=register"
+                  className="inline-flex items-center gap-2 rounded-2xl bg-emerald-500/15 px-5 py-3.5 text-sm font-bold text-emerald-200 ring-1 ring-emerald-400/35 hover:bg-emerald-500/25 transition"
+                >
+                  <ShieldCheck className="h-4 w-4 text-emerald-400" />
+                  Create & Map Your Venue
+                </Link>
+
+                <Link
                   to="/admin"
                   className="inline-flex items-center gap-2 rounded-2xl bg-white/[0.07] px-5 py-3.5 text-sm font-semibold text-white ring-1 ring-white/15 hover:bg-white/[0.12] transition"
                 >

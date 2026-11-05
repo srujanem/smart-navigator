@@ -17,6 +17,8 @@ import { AdminOverviewPage } from './pages/admin/AdminOverviewPage';
 import { AdminDatasetPage } from './pages/admin/AdminDatasetPage';
 import { AdminPeoplePage } from './pages/admin/AdminPeoplePage';
 import { AdminClosuresPage } from './pages/admin/AdminClosuresPage';
+import { AdminMapBuilderPage } from './pages/admin/AdminMapBuilderPage';
+import { AdminProfilePage } from './pages/admin/AdminProfilePage';
 
 const ScrollToTop: React.FC = () => {
   const { pathname } = useLocation();
@@ -40,9 +42,11 @@ const App: React.FC = () => {
         <Route path="/admin/login" element={<AdminLoginPage />} />
         <Route path="/admin" element={<AdminLayout />}>
           <Route index element={<AdminOverviewPage />} />
+          <Route path="map-editor" element={<AdminMapBuilderPage />} />
           <Route path="dataset" element={<AdminDatasetPage />} />
           <Route path="people" element={<AdminPeoplePage />} />
           <Route path="closures" element={<AdminClosuresPage />} />
+          <Route path="profile" element={<AdminProfilePage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

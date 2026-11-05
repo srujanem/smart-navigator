@@ -9,6 +9,8 @@ export interface VenueSummary {
   tagline: string;
   accent: string;
   cover_url: string | null;
+  owner_id?: string | null;
+  owner_name?: string;
   stats: {
     buildings: number;
     floors: number;
@@ -22,6 +24,7 @@ export interface Floor {
   id: string;
   level: number;
   name: string;
+  blueprint_url?: string | null;
 }
 
 export interface Building {
@@ -60,6 +63,7 @@ export interface GNode {
   floor_name: string;
   x: number;
   y: number;
+  keywords?: string;
   is_place: boolean;
   photo_url: string | null;
   photo_count: number;
@@ -74,6 +78,7 @@ export interface GEdge {
   distance: number;
   kind: EdgeKind;
   accessible: boolean;
+  stretcher_ok?: boolean;
   closed: boolean;
 }
 
@@ -117,6 +122,15 @@ export interface SearchResponse {
   results: SearchResult[];
 }
 
+export interface OCRBox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  text: string;
+  confidence: number;
+}
+
 export interface Candidate {
   node_id: string;
   name: string;
@@ -128,6 +142,7 @@ export interface Candidate {
   visual: number;
   text: number;
   matched_photo_url: string | null;
+  matched_heading_deg?: number | null;
   reason: string;
 }
 
@@ -144,6 +159,8 @@ export interface LocalizeResult {
   best: Candidate | null;
   candidates: Candidate[];
   ocr_text: string[];
+  ocr_boxes?: OCRBox[];
+  faces_blurred?: number;
   trace: TraceStep[];
   engine: {
     embedder: string;
@@ -174,7 +191,7 @@ export interface Step {
   photo_url: string | null;
 }
 
-export type RouteProfile = 'walk' | 'wheelchair';
+export type RouteProfile = 'walk' | 'wheelchair' | 'stretcher';
 
 export interface RouteAlternative {
   path: string[];
@@ -183,9 +200,22 @@ export interface RouteAlternative {
   label: string;
 }
 
+export interface RouteLeg {
+  leg_index: number;
+  from_node: string;
+  from_name: string;
+  to_node: string;
+  to_name: string;
+  distance_m: number;
+  eta_s: number;
+  path: string[];
+}
+
 export interface Route {
   from_node: string;
   to_node: string;
+  stops?: string[];
+  legs?: RouteLeg[];
   profile: RouteProfile;
   distance_m: number;
   eta_s: number;
@@ -195,6 +225,8 @@ export interface Route {
   alternatives: RouteAlternative[];
   closures_avoided: number;
   notice: string | null;
+  orientation_hint?: string | null;
+  offline_fallback?: boolean;
 }
 
 export interface SampleQuery {
@@ -213,14 +245,31 @@ export interface HealthStatus {
 }
 
 export interface AdminUser {
+  id?: string;
   name: string;
   email: string;
   role: string;
+  organization?: string;
+  bio?: string;
+  avatar_color?: string;
+  token_version?: number;
+  created_at?: string;
 }
 
 export interface AuthResponse {
   token: string;
   user: AdminUser;
+}
+
+export interface UploaderProfileResponse {
+  user: AdminUser;
+  stats: {
+    venues_created: number;
+    nodes_mapped: number;
+    photos_uploaded: number;
+    avg_photo_quality: number;
+  };
+  venues: VenueSummary[];
 }
 
 export interface AdminOverview {
@@ -265,6 +314,7 @@ export interface DatasetPhoto {
   url: string;
   source: string;
   quality: number;
+  heading_deg?: number | null;
 }
 
 export type CoverageLevel = 'none' | 'low' | 'good';
@@ -297,6 +347,7 @@ export interface UploadPhotosResponse {
     id: string;
     url: string;
     quality: number;
+    heading_deg?: number | null;
   }[];
   rejected: {
     filename: string;
@@ -348,4 +399,47 @@ export interface UpdatePersonPayload {
   status?: PersonStatus;
   status_note?: string;
   target_node_id?: string;
+}
+
+export interface CreateVenuePayload {
+  name: string;
+  slug?: string;
+  type: VenueType;
+  city: string;
+  tagline: string;
+  description?: string;
+  accent?: string;
+  initial_building_name?: string;
+  initial_floor_name?: string;
+}
+
+export interface CreateNodePayload {
+  building_id: string;
+  floor_id: string;
+  name: string;
+  kind: string;
+  category?: string | null;
+  x: number;
+  y: number;
+  keywords?: string;
+  is_place?: boolean;
+}
+
+export interface UpdateNodePayload {
+  name?: string;
+  kind?: string;
+  category?: string | null;
+  x?: number;
+  y?: number;
+  keywords?: string;
+  is_place?: boolean;
+}
+
+export interface CreateEdgePayload {
+  source: string;
+  target: string;
+  kind: EdgeKind;
+  distance?: number;
+  accessible?: boolean;
+  stretcher_ok?: boolean;
 }

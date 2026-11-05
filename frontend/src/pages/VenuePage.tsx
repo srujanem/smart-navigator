@@ -6,16 +6,19 @@ import React, {
   useMemo,
   useState,
 } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
   Box,
   Camera,
+  Check,
   CheckCircle2,
   Compass,
+  DoorOpen,
   Layers,
+  ListChecks,
   Loader2,
   Lock,
   Map as MapIcon,
@@ -23,7 +26,10 @@ import {
   Mic,
   MicOff,
   Navigation,
+  Plus,
   Search,
+  Share2,
+  ShieldCheck,
   Siren,
   Sparkles,
   Upload,
@@ -36,6 +42,7 @@ import { PhotoLocateModal, type ConfirmedSpot } from '../components/PhotoLocateM
 import { StatusChip, VenueTypeBadge } from '../components/StatusChip';
 import { ErrorState, Skeleton3D } from '../components/ErrorState';
 import {
+  computeNearestRoute,
   getVenue,
   getVenueGraph,
   getVenuePeople,
@@ -85,8 +92,11 @@ function getSpeechRecognitionCtor(): (new () => SpeechRecognitionInstance) | nul
 
 export const VenuePage: React.FC = () => {
   const { slug = '' } = useParams<{ slug: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
   const { location: visitorLoc, setLocation: setVisitorLoc } = useVisitorLocation(slug);
+
+  const meetNodeParam = searchParams.get('meet') || '';
 
   const [venue, setVenue] = useState<VenueDetail | null>(null);
   const [graph, setGraph] = useState<Graph | null>(null);
@@ -103,6 +113,14 @@ export const VenuePage: React.FC = () => {
     name: string;
   } | null>(null);
   const [manualSelectValue, setManualSelectValue] = useState('');
+  const [copiedSpotLink, setCopiedSpotLink] = useState(false);
+
+  // Nearest SOS / Facility Routing State
+  const [nearestLoadingKind, setNearestLoadingKind] = useState<string | null>(null);
+  const [nearestNotice, setNearestNotice] = useState<string | null>(null);
+
+  // Multi-Stop Visit Checklist State
+  const [tripStops, setTripStops] = useState<GNode[]>([]);
 
   // Smart Search State
   const [searchQuery, setSearchQuery] = useState('');
@@ -194,9 +212,15 @@ export const VenuePage: React.FC = () => {
     return (
       graph.nodes.find((n) => n.kind.toLowerCase().includes('entrance')) ??
       placeNodes[0] ??
+      graph.nodes[0] ??
       null
     );
   }, [venue, graph, placeNodes]);
+
+  const meetNode = useMemo(
+    () => (meetNodeParam && graph ? graph.nodes.find((n) => n.id === meetNodeParam) ?? null : null),
+    [graph, meetNodeParam],
+  );
 
   const filteredPlaces = useMemo(() => {
     if (activeCategory === 'all') return placeNodes;
@@ -240,22 +264,54 @@ export const VenuePage: React.FC = () => {
 
   const handleNavigateToDestination = (destNodeId: string, destName: string) => {
     if (visitorLoc?.nodeId) {
-      if (visitorLoc.nodeId === destNodeId) {
-        // Still allow opening RoutePage or notify
-      }
       navigate(
         `/v/${slug}/route?from=${encodeURIComponent(visitorLoc.nodeId)}&to=${encodeURIComponent(destNodeId)}`,
       );
       return;
     }
-    // Prompt photo localization with destination queued!
     setQueuedDest({ nodeId: destNodeId, name: destName });
     setDroppedFile(null);
     setLocateOpen(true);
   };
 
+  const handleNearestFacility = async (targetKind: string, label: string) => {
+    if (!slug) return;
+    const originId = visitorLoc?.nodeId ?? entranceNode?.id;
+    if (!originId) {
+      setLocateOpen(true);
+      return;
+    }
+    setNearestLoadingKind(targetKind);
+    setNearestNotice(null);
+    try {
+      const r = await computeNearestRoute(slug, originId, targetKind, 'walk', {
+        headingDeg: visitorLoc?.headingDeg ?? null,
+      });
+      const fallbackFlag = visitorLoc?.nodeId ? '' : '&fromEntrance=1';
+      const emergencyFlag =
+        targetKind === 'emergency' || targetKind === 'exit' ? '&emergency=1' : '';
+      navigate(
+        `/v/${slug}/route?from=${encodeURIComponent(r.from_node)}&to=${encodeURIComponent(
+          r.to_node,
+        )}${emergencyFlag}${fallbackFlag}`,
+      );
+    } catch (err) {
+      setNearestNotice(
+        err instanceof Error
+          ? err.message
+          : `No mapped ${label.toLowerCase()} node found in this venue yet.`,
+      );
+      setTimeout(() => setNearestNotice(null), 4000);
+    } finally {
+      setNearestLoadingKind(null);
+    }
+  };
+
   const handleEmergencyRoute = () => {
-    if (!venue?.emergency_node_id) return;
+    if (!venue?.emergency_node_id) {
+      void handleNearestFacility('emergency', 'Emergency');
+      return;
+    }
     const fromId = visitorLoc?.nodeId ?? entranceNode?.id;
     if (!fromId) return;
     const fallbackFlag = visitorLoc?.nodeId ? '' : '&fromEntrance=1';
@@ -273,6 +329,7 @@ export const VenuePage: React.FC = () => {
       buildingName: spot.buildingName,
       level: spot.level,
       floorName: spot.floorName,
+      headingDeg: spot.headingDeg ?? null,
       source: spot.source,
       updatedAt: Date.now(),
     });
@@ -283,6 +340,50 @@ export const VenuePage: React.FC = () => {
         `/v/${slug}/route?from=${encodeURIComponent(spot.nodeId)}&to=${encodeURIComponent(destId)}`,
       );
     }
+  };
+
+  const handleShareMySpot = async (viaWhatsApp = false) => {
+    if (!visitorLoc || !venue) return;
+    const meetUrl = `${window.location.origin}/v/${encodeURIComponent(slug)}?meet=${encodeURIComponent(visitorLoc.nodeId)}`;
+    const text = `Meet me at ${visitorLoc.name} (${visitorLoc.buildingName}, ${formatLevel(visitorLoc.level, visitorLoc.floorName)}) inside ${venue.name}: ${meetUrl}`;
+    if (viaWhatsApp) {
+      window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(meetUrl);
+      setCopiedSpotLink(true);
+      setTimeout(() => setCopiedSpotLink(false), 2500);
+    } catch {
+      // Ignore
+    }
+  };
+
+  const toggleTripStop = (node: GNode) => {
+    setTripStops((prev) => {
+      if (prev.some((p) => p.id === node.id)) {
+        return prev.filter((p) => p.id !== node.id);
+      }
+      if (prev.length >= 5) return prev;
+      return [...prev, node];
+    });
+  };
+
+  const launchMultiStopTrip = (optimizeOrder: boolean) => {
+    if (tripStops.length === 0) return;
+    const originId = visitorLoc?.nodeId ?? entranceNode?.id;
+    if (!originId) {
+      setLocateOpen(true);
+      return;
+    }
+    const allStopIds = [originId, ...tripStops.map((s) => s.id).filter((id) => id !== originId)];
+    if (allStopIds.length < 2) return;
+    const optQuery = optimizeOrder ? '&optimize=1' : '';
+    navigate(
+      `/v/${slug}/route?from=${encodeURIComponent(allStopIds[0])}&to=${encodeURIComponent(
+        allStopIds[allStopIds.length - 1],
+      )}&stops=${encodeURIComponent(allStopIds.join(','))}${optQuery}`,
+    );
   };
 
   if (loading) {
@@ -323,8 +424,20 @@ export const VenuePage: React.FC = () => {
         ? 'Faculty & Lab Coordinators'
         : 'Directory & Staff On-Duty';
 
+  const quickNearestChips = [
+    { kind: 'exit', label: 'Nearest Exit', emoji: '🚨', danger: true },
+    ...(venue.type === 'hospital'
+      ? [{ kind: 'emergency', label: 'Emergency Ward', emoji: '🏥', danger: true }]
+      : []),
+    { kind: 'washroom', label: 'Nearest Washroom', emoji: '🚻', danger: false },
+    { kind: 'lift', label: 'Nearest Lift', emoji: '🛗', danger: false },
+    venue.type === 'hospital'
+      ? { kind: 'pharmacy', label: 'Pharmacy', emoji: '💊', danger: false }
+      : { kind: 'helpdesk', label: 'Help Desk / Reception', emoji: '🛎️', danger: false },
+  ];
+
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 pb-16">
+    <div className="min-h-screen bg-slate-50 text-slate-900 pb-24">
       {/* =================================================================== */}
       {/* STICKY TOP VENUE HUB BAR                                            */}
       {/* =================================================================== */}
@@ -347,6 +460,12 @@ export const VenuePage: React.FC = () => {
                 <div className="hidden sm:block shrink-0">
                   <VenueTypeBadge type={venue.type} dark />
                 </div>
+                {venue.owner_name && (
+                  <span className="hidden lg:inline-flex items-center gap-1 rounded-md bg-white/[0.07] px-2 py-0.5 text-[10px] font-semibold text-cyan-300 ring-1 ring-white/10">
+                    <ShieldCheck className="h-3 w-3 text-emerald-400" />
+                    Mapped by {venue.owner_name}
+                  </span>
+                )}
               </div>
               <p className="text-[11px] text-slate-400 truncate">
                 {venue.city} · {venue.stats.buildings} Buildings · {venue.stats.places} Places
@@ -354,7 +473,7 @@ export const VenuePage: React.FC = () => {
             </div>
           </div>
 
-          {/* Right: Current Location Pill + Quick Links + Hospital Emergency CTA */}
+          {/* Right: Current Location Pill + Quick Links + Emergency CTA */}
           <div className="flex flex-wrap items-center gap-2">
             {/* Visitor Current Location Pill */}
             <button
@@ -397,11 +516,11 @@ export const VenuePage: React.FC = () => {
             </Link>
 
             <Link
-              to={`/admin?venue=${encodeURIComponent(slug)}`}
+              to={`/admin/map-editor?venue=${encodeURIComponent(slug)}`}
               className="hidden md:inline-flex items-center gap-1.5 rounded-xl bg-white/[0.07] px-3 py-1.5 text-xs font-semibold text-slate-300 ring-1 ring-white/10 hover:bg-white/15 hover:text-white transition"
             >
               <Lock className="h-3.5 w-3.5 text-indigo-400" />
-              Admin Studio
+              Map Studio
             </Link>
 
             {venue.emergency_node_id && (
@@ -419,10 +538,57 @@ export const VenuePage: React.FC = () => {
       </header>
 
       {/* =================================================================== */}
+      {/* "MEET ME HERE" DEEP-LINK HANDOFF BANNER (WHEN ?meet=<nodeId>)       */}
+      {/* =================================================================== */}
+      {meetNode && (
+        <div className="bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-700 text-white border-b border-white/15">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/15 ring-1 ring-white/25">
+                <Share2 className="h-4 w-4 text-white" />
+              </div>
+              <div className="text-xs sm:text-sm">
+                <span className="font-bold uppercase tracking-wider text-emerald-100 mr-2">
+                  Meet Me Here Invite:
+                </span>
+                Someone shared their indoor spot at{' '}
+                <strong className="underline decoration-white/60">
+                  {meetNode.name}
+                </strong>{' '}
+                ({meetNode.building_name} · {formatLevel(meetNode.level, meetNode.floor_name)}).
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => handleNavigateToDestination(meetNode.id, meetNode.name)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-white px-3.5 py-2 text-xs font-extrabold text-slate-950 shadow-md hover:bg-emerald-50 transition"
+              >
+                <Navigation className="h-3.5 w-3.5 text-emerald-600" />
+                {visitorLoc ? 'Route to Meet Them' : 'Upload My Photo & Route'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = new URLSearchParams(searchParams);
+                  next.delete('meet');
+                  setSearchParams(next);
+                }}
+                className="rounded-lg p-1.5 text-white/80 hover:bg-white/15 hover:text-white"
+                aria-label="Dismiss meet invite"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
       {/* HERO ACTION ROW: WHERE AM I PHOTO CARD + SMART SEARCH               */}
       {/* =================================================================== */}
-      <div className="bg-gradient-to-b from-[#070B18] via-[#0B1329] to-slate-50 pt-7 pb-10">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 space-y-6">
+      <div className="bg-gradient-to-b from-[#070B18] via-[#0B1329] to-slate-50 pt-7 pb-8">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 space-y-5">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
             {/* Prominent "Where am I? Upload Photo" Hero Card */}
             <div
@@ -463,25 +629,51 @@ export const VenuePage: React.FC = () => {
                 </p>
 
                 {visitorLoc && (
-                  <div className="flex items-center justify-between rounded-2xl bg-emerald-500/15 px-3.5 py-2.5 ring-1 ring-emerald-400/30 text-xs">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
-                      <div className="truncate">
-                        <span className="text-emerald-200">Current start: </span>
-                        <strong className="text-white">{visitorLoc.name}</strong>
-                        <span className="text-emerald-300/80 ml-1">
-                          ({formatLevel(visitorLoc.level, visitorLoc.floorName)})
-                        </span>
+                  <div className="rounded-2xl bg-emerald-500/15 px-3.5 py-2.5 ring-1 ring-emerald-400/30 text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+                        <div className="truncate">
+                          <span className="text-emerald-200">Current start: </span>
+                          <strong className="text-white">{visitorLoc.name}</strong>
+                          <span className="text-emerald-300/80 ml-1">
+                            ({formatLevel(visitorLoc.level, visitorLoc.floorName)})
+                          </span>
+                        </div>
                       </div>
+                      <button
+                        type="button"
+                        onClick={() => setVisitorLoc(null)}
+                        className="text-emerald-300 hover:text-white ml-2"
+                        title="Clear start location"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setVisitorLoc(null)}
-                      className="text-emerald-300 hover:text-white ml-2"
-                      title="Clear start location"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
+                    <div className="flex items-center gap-2 pt-0.5">
+                      <button
+                        type="button"
+                        onClick={() => void handleShareMySpot(false)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-white/20 transition"
+                      >
+                        {copiedSpotLink ? (
+                          <>
+                            <Check className="h-3 w-3 text-emerald-300" /> Meet Link Copied!
+                          </>
+                        ) : (
+                          <>
+                            <Share2 className="h-3 w-3 text-cyan-300" /> Share My Spot
+                          </>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleShareMySpot(true)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-600/90 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-emerald-500 transition"
+                      >
+                        WhatsApp
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -515,6 +707,7 @@ export const VenuePage: React.FC = () => {
                           buildingName: found.building_name,
                           level: found.level,
                           floorName: found.floor_name,
+                          headingDeg: null,
                           source: 'manual',
                           updatedAt: Date.now(),
                         });
@@ -543,6 +736,7 @@ export const VenuePage: React.FC = () => {
                           buildingName: entranceNode.building_name,
                           level: entranceNode.level,
                           floorName: entranceNode.floor_name,
+                          headingDeg: null,
                           source: 'manual',
                           updatedAt: Date.now(),
                         })
@@ -712,6 +906,45 @@ export const VenuePage: React.FC = () => {
               )}
             </div>
           </div>
+
+          {/* 1-TAP NEAREST FACILITY & EMERGENCY SOS ROUTING BAR */}
+          <div className="rounded-2xl bg-white/95 p-3.5 shadow-soft ring-1 ring-slate-900/[0.07] flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-slate-700">
+              <DoorOpen className="h-4 w-4 text-rose-600" />
+              1-Tap Nearest Essential & SOS:
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {quickNearestChips.map((chip) => {
+                const isBusy = nearestLoadingKind === chip.kind;
+                return (
+                  <button
+                    key={chip.kind}
+                    type="button"
+                    disabled={nearestLoadingKind !== null}
+                    onClick={() => void handleNearestFacility(chip.kind, chip.label)}
+                    className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition ${
+                      chip.danger
+                        ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-200 hover:bg-rose-600 hover:text-white'
+                        : 'bg-slate-100 text-slate-800 ring-1 ring-slate-200/80 hover:bg-indigo-600 hover:text-white'
+                    }`}
+                  >
+                    {isBusy ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <span>{chip.emoji}</span>
+                    )}
+                    {chip.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {nearestNotice && (
+            <div className="rounded-xl bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-900 ring-1 ring-amber-200">
+              {nearestNotice}
+            </div>
+          )}
         </div>
       </div>
 
@@ -885,6 +1118,7 @@ export const VenuePage: React.FC = () => {
                           buildingName: inspectedNode.building_name,
                           level: inspectedNode.level,
                           floorName: inspectedNode.floor_name,
+                          headingDeg: null,
                           source: 'manual',
                           updatedAt: Date.now(),
                         });
@@ -994,7 +1228,7 @@ export const VenuePage: React.FC = () => {
           </section>
         )}
 
-        {/* PLACES DIRECTORY WITH CATEGORY FILTER CHIPS */}
+        {/* PLACES DIRECTORY WITH CATEGORY FILTER CHIPS + MULTI-STOP TRIP CHECKLIST */}
         <section className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
@@ -1003,7 +1237,7 @@ export const VenuePage: React.FC = () => {
                 Departments, Rooms & Facilities
               </h2>
               <p className="text-xs sm:text-sm text-slate-500">
-                Filter by category and launch 1-tap turn-by-turn visual routing
+                Route directly or tap <strong>+ Trip</strong> to chain multiple stops into a single optimized visit checklist
               </p>
             </div>
           </div>
@@ -1041,6 +1275,7 @@ export const VenuePage: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {filteredPlaces.map((place) => {
               const isCurrentLoc = visitorLoc?.nodeId === place.id;
+              const inTrip = tripStops.some((s) => s.id === place.id);
               return (
                 <div
                   key={place.id}
@@ -1089,7 +1324,20 @@ export const VenuePage: React.FC = () => {
                       className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-600 transition"
                     >
                       <Navigation className="h-3.5 w-3.5" />
-                      Route here
+                      Route
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleTripStop(place)}
+                      title="Add/Remove from Multi-Stop Visit Checklist"
+                      className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-2 text-xs font-bold ring-1 transition ${
+                        inTrip
+                          ? 'bg-emerald-600 text-white ring-emerald-600'
+                          : 'bg-slate-50 text-slate-700 ring-slate-200 hover:bg-indigo-50 hover:text-indigo-700'
+                      }`}
+                    >
+                      {inTrip ? <Check className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
+                      Trip
                     </button>
                   </div>
                 </div>
@@ -1098,6 +1346,67 @@ export const VenuePage: React.FC = () => {
           </div>
         </section>
       </main>
+
+      {/* FLOATING MULTI-STOP VISIT CHECKLIST DRAWER */}
+      {tripStops.length > 0 && (
+        <div className="fixed bottom-4 inset-x-4 z-40 mx-auto max-w-4xl rounded-2xl bg-[#070B18]/95 p-4 text-white shadow-2xl ring-1 ring-cyan-400/40 backdrop-blur-xl">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="space-y-1 min-w-0">
+              <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-cyan-300">
+                <ListChecks className="h-4 w-4" />
+                Multi-Stop Visit Checklist ({tripStops.length} stop{tripStops.length > 1 ? 's' : ''})
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="rounded-md bg-emerald-500/20 px-2 py-0.5 text-emerald-300 font-semibold">
+                  Start: {visitorLoc?.name || entranceNode?.name || 'Pick Spot'}
+                </span>
+                {tripStops.map((st, idx) => (
+                  <span
+                    key={st.id}
+                    className="inline-flex items-center gap-1 rounded-md bg-white/10 px-2 py-0.5 text-white"
+                  >
+                    {idx + 1}. {st.name}
+                    <button
+                      type="button"
+                      onClick={() => toggleTripStop(st)}
+                      className="text-slate-400 hover:text-rose-300"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setTripStops([])}
+                className="rounded-xl bg-white/10 px-3 py-2 text-xs font-semibold text-slate-300 hover:bg-white/15"
+              >
+                Clear
+              </button>
+              {tripStops.length >= 2 && (
+                <button
+                  type="button"
+                  onClick={() => launchMultiStopTrip(true)}
+                  className="rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-indigo-500 transition"
+                >
+                  Optimize & Route
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => launchMultiStopTrip(false)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-cyan-400 to-sky-500 px-4 py-2 text-xs font-extrabold text-slate-950 shadow-md hover:from-cyan-300 transition"
+              >
+                Launch Trip
+                <ArrowRight className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Photo Localization Modal */}
       <PhotoLocateModal
@@ -1110,6 +1419,7 @@ export const VenuePage: React.FC = () => {
         venue={venue}
         nodes={graph.nodes}
         initialFile={droppedFile}
+        priorNodeId={visitorLoc?.nodeId}
         queuedDestination={queuedDest}
         onConfirmedLocation={handleSpotConfirmed}
       />
