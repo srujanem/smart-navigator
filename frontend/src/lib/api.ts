@@ -241,14 +241,52 @@ export function searchVenue(
   );
 }
 
-export function localizePhoto(
+async function compressImageForUpload(
+  file: File,
+  maxSide = 1024,
+  quality = 0.88,
+): Promise<File> {
+  if (typeof window === 'undefined' || typeof createImageBitmap !== 'function') {
+    return file;
+  }
+  if (file.size <= 450_000 && file.type === 'image/jpeg') {
+    return file;
+  }
+  try {
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height, 1));
+    const w = Math.max(1, Math.round(bmp.width * scale));
+    const h = Math.max(1, Math.round(bmp.height * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      bmp.close();
+      return file;
+    }
+    ctx.drawImage(bmp, 0, 0, w, h);
+    bmp.close();
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, 'image/jpeg', quality),
+    );
+    if (!blob) return file;
+    const cleanName = file.name.replace(/\.[^.]+$/, '') + '.jpg';
+    return new File([blob], cleanName, { type: 'image/jpeg' });
+  } catch {
+    return file;
+  }
+}
+
+export async function localizePhoto(
   slug: string,
   file: File,
   level?: number | null,
   priorNodeId?: string | null,
 ): Promise<LocalizeResult> {
+  const optimizedFile = await compressImageForUpload(file, 1024, 0.88);
   const fd = new FormData();
-  fd.append('file', file);
+  fd.append('file', optimizedFile);
   if (level !== undefined && level !== null) {
     fd.append('level', String(level));
   }

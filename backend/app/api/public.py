@@ -61,7 +61,8 @@ def get_venue_or_404(session: Session, slug: str) -> Venue:
 
 def serialize_venue_summary(session: Session, v: Venue) -> dict:
     b_cnt = len(session.exec(select(Building).where(Building.venue_id == v.id)).all())
-    f_cnt = len(session.exec(select(Floor).where(Floor.venue_id == v.id)).all())
+    floors = session.exec(select(Floor).where(Floor.venue_id == v.id)).all()
+    f_cnt = len({fl.level for fl in floors}) if floors else 0
     nodes = session.exec(select(Node).where(Node.venue_id == v.id)).all()
     p_cnt = sum(1 for n in nodes if n.is_place)
     people_cnt = len(session.exec(select(Person).where(Person.venue_id == v.id)).all())
@@ -124,7 +125,8 @@ def health(session: Session = Depends(get_session)):
 
 @router.get("/venues")
 def list_venues(q: str = Query(default=""), session: Session = Depends(get_session)):
-    venues = session.exec(select(Venue)).all()
+    venues = list(session.exec(select(Venue)).all())
+    venues.sort(key=lambda v: (0 if v.owner_id else 1, -int(v.created_at.timestamp()) if getattr(v, "created_at", None) else 0))
     q_low = q.strip().lower()
     out = []
     for v in venues:
