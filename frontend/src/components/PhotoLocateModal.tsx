@@ -846,7 +846,11 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                               }}
                               className="pointer-events-none absolute rounded border-2 border-cyan-400 bg-cyan-400/15 shadow-[0_0_12px_rgba(34,211,238,0.65)]"
                             >
-                              <span className="absolute -top-4 left-0 whitespace-nowrap rounded bg-cyan-400 px-1 py-0.2 text-[9px] font-extrabold text-slate-950">
+                              <span
+                                className={`absolute left-0 whitespace-nowrap max-w-[140px] truncate rounded bg-cyan-400 px-1 py-0.2 text-[9px] font-extrabold text-slate-950 z-10 ${
+                                  b.y < 0.08 ? 'top-1' : '-top-4'
+                                }`}
+                              >
                                 {b.text}
                               </span>
                             </div>
@@ -910,7 +914,11 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                               }}
                               className="pointer-events-none absolute rounded border-2 border-cyan-400 bg-cyan-400/15 shadow-[0_0_12px_rgba(34,211,238,0.65)]"
                             >
-                              <span className="absolute -top-4 left-0 whitespace-nowrap rounded bg-cyan-400 px-1 py-0.2 text-[9px] font-extrabold text-slate-950">
+                              <span
+                                className={`absolute left-0 whitespace-nowrap max-w-[140px] truncate rounded bg-cyan-400 px-1 py-0.2 text-[9px] font-extrabold text-slate-950 z-10 ${
+                                  b.y < 0.08 ? 'top-1' : '-top-4'
+                                }`}
+                              >
                                 {b.text}
                               </span>
                             </div>
@@ -1144,18 +1152,19 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                <div className="flex sm:grid overflow-x-auto sm:overflow-x-visible no-scrollbar sm:grid-cols-3 gap-3.5 snap-x snap-mandatory pb-1">
                   {result.candidates.map((cand, i) => (
                     <div
                       key={cand.node_id}
-                      className="flex flex-col justify-between overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200 hover:ring-2 hover:ring-cyan-500 transition shadow-sm"
+                      className="min-w-[82%] sm:min-w-0 snap-center shrink-0 sm:shrink flex flex-col justify-between overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200 hover:ring-2 hover:ring-cyan-500 transition shadow-sm"
                     >
                       <div>
-                        <div className="relative h-32 w-full bg-slate-900">
+                        <div className="relative h-36 w-full bg-slate-900">
                           {cand.matched_photo_url ? (
                             <img
                               src={mediaUrl(cand.matched_photo_url)}
                               alt={cand.name}
+                              loading="lazy"
                               className="h-full w-full object-cover"
                             />
                           ) : (
@@ -1163,16 +1172,16 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                               No preview photo
                             </div>
                           )}
-                          <span className="absolute left-2 top-2 rounded-md bg-slate-950/80 px-2 py-0.5 text-[11px] font-bold text-cyan-300">
-                            #{i + 1} · {Math.round(cand.score * 100)}%
+                          <span className="absolute left-2 top-2 z-10 rounded-md bg-slate-950/85 px-2 py-0.5 text-[11px] font-bold text-cyan-300 ring-1 ring-white/10">
+                            #{i + 1} · {Math.round(cand.score * 100)}% Match
                           </span>
                         </div>
                         <div className="p-3.5 space-y-1.5">
-                          <div className="text-[11px] font-semibold text-indigo-600">
+                          <div className="text-[11px] font-semibold text-indigo-600 truncate">
                             {cand.building_name} ·{' '}
                             {formatLevel(cand.level, cand.floor_name)}
                           </div>
-                          <div className="font-display text-sm font-bold text-slate-900">
+                          <div className="font-display text-sm font-bold text-slate-900 truncate">
                             {cand.name}
                           </div>
                           <p className="text-[11px] text-slate-500 line-clamp-2">
@@ -1186,7 +1195,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                           type="button"
                           disabled={confirmingNodeId !== null}
                           onClick={() => void handleConfirmCandidate(cand)}
-                          className="w-full btn-indigo py-2 text-xs"
+                          className="w-full btn-indigo py-2.5 text-xs font-bold"
                         >
                           {confirmingNodeId === cand.node_id ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />

@@ -193,9 +193,16 @@ def venue_graph(slug: str, session: Session = Depends(get_session)):
 
     photo_counts = Counter(p.node_id for p in photos)
     best_photo: dict[str, str] = {}
+    best_media: dict[str, dict] = {}
     for p in sorted(photos, key=lambda x: x.quality, reverse=True):
         if p.node_id not in best_photo:
-            best_photo[p.node_id] = f"/media/{p.path}"
+            thumb = p.thumbnail_path if (p.media_type == "video" and p.thumbnail_path) else p.path
+            best_photo[p.node_id] = f"/media/{thumb}"
+            best_media[p.node_id] = {
+                "media_type": p.media_type or "photo",
+                "video_url": f"/media/{p.path}" if p.media_type == "video" else None,
+                "duration_s": p.duration_s,
+            }
 
     return {
         "nodes": [
@@ -215,6 +222,9 @@ def venue_graph(slug: str, session: Session = Depends(get_session)):
                 "is_place": n.is_place,
                 "photo_url": best_photo.get(n.id),
                 "photo_count": photo_counts.get(n.id, 0),
+                "media_type": best_media.get(n.id, {}).get("media_type", "photo"),
+                "video_url": best_media.get(n.id, {}).get("video_url"),
+                "duration_s": best_media.get(n.id, {}).get("duration_s"),
             }
             for n in nodes
         ],
@@ -323,15 +333,13 @@ def confirm_localization(
     if payload.contribute and src_file.exists():
         from PIL import Image
 
-        dest_rel = f"venues/{v.slug}/photos/{uuid.uuid4().hex[:12]}.jpg"
+        dest_rel = f"venues/{v.slug}/photos/{uuid.uuid4().hex[:12]}.webp"
         dest_file = MEDIA_DIR / dest_rel
         dest_file.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(src_file, dest_file)
-        with Image.open(dest_file) as im:
-            rgb = im.convert("RGB")
-            q_score = compute_sharpness_quality(rgb)
-            vec = embedder_service.embed(rgb)
-            toks = ocr_service.extract_text(rgb)
+        img, _ = save_clean_image(src_file.read_bytes(), dest_file, max_side=1600)
+        q_score = compute_sharpness_quality(img)
+        vec = embedder_service.embed(img)
+        toks = ocr_service.extract_text(img)
         if q_score >= 0.14:
             p_row = Photo(
                 venue_id=v.id,

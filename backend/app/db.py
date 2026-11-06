@@ -19,6 +19,9 @@ _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
     "photo": [
         ("heading_deg", "REAL DEFAULT NULL"),
         ("uploaded_by_id", "TEXT DEFAULT NULL"),
+        ("media_type", "TEXT DEFAULT 'photo'"),
+        ("thumbnail_path", "TEXT DEFAULT NULL"),
+        ("duration_s", "REAL DEFAULT NULL"),
     ],
     "user": [
         ("organization", "TEXT DEFAULT ''"),

@@ -110,6 +110,9 @@ class Photo(SQLModel, table=True):
     ocr_text: str = ""
     heading_deg: Optional[float] = None        # optional 0..360 camera orientation on floorplan
     uploaded_by_id: Optional[str] = None
+    media_type: str = "photo"                  # photo | video
+    thumbnail_path: Optional[str] = None       # preview image for videos (WebP)
+    duration_s: Optional[float] = None
     created_at: datetime = Field(default_factory=_now)
 
 

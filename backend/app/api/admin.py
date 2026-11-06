@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timezone
+import io
 import math
 import re
 import shutil
@@ -1126,18 +1127,115 @@ async def admin_upload_photos(
     accepted = []
     rejected = []
     clean_heading = (float(heading_deg) % 360.0) if heading_deg is not None else None
+    max_video_bytes = 25 * 1024 * 1024  # 25 MB max video limit
 
     for f in files:
-        fname = f.filename or "photo.jpg"
+        fname = f.filename or "photo.webp"
         raw = await f.read()
         if not raw:
             rejected.append({"filename": fname, "reason": "Empty file"})
             continue
 
-        rel_path = f"venues/{v.slug}/photos/{uuid.uuid4().hex[:12]}.jpg"
+        ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+        is_video = ext in ("mp4", "webm", "mov", "mkv", "avi") or (f.content_type or "").startswith("video/")
+
+        if is_video:
+            if len(raw) > max_video_bytes:
+                rejected.append({
+                    "filename": fname,
+                    "reason": f"Video exceeds 25 MB limit ({round(len(raw) / (1024*1024), 1)} MB). Trim to 3-15 seconds.",
+                })
+                continue
+
+            uid = uuid.uuid4().hex[:12]
+            v_ext = "webm" if ext == "webm" else "mp4"
+            rel_video_path = f"venues/{v.slug}/videos/{uid}.{v_ext}"
+            rel_thumb_path = f"venues/{v.slug}/videos/{uid}_thumb.webp"
+            dest_video = MEDIA_DIR / rel_video_path
+            dest_thumb = MEDIA_DIR / rel_thumb_path
+            dest_video.parent.mkdir(parents=True, exist_ok=True)
+
+            try:
+                dest_video.write_bytes(raw)
+                duration_s = 0.0
+                thumb_img = None
+
+                # Extract keyframe thumbnail using OpenCV
+                try:
+                    import cv2
+                    cap = cv2.VideoCapture(str(dest_video))
+                    if cap.isOpened():
+                        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                        total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+                        duration_s = round(total_frames / fps, 1) if fps > 0 else 0.0
+
+                        # Seek to ~1 second or 25% of video for a representative keyframe
+                        target_frame = int(min(fps, max(0, total_frames * 0.25)))
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                        ret, frame = cap.read()
+                        if not ret:
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                            ret, frame = cap.read()
+
+                        if ret and frame is not None:
+                            # Encode frame to JPEG buffer for save_clean_image pipeline
+                            _, buf = cv2.imencode(".jpg", frame)
+                            thumb_img, _ = save_clean_image(buf.tobytes(), dest_thumb, max_side=1600)
+                        cap.release()
+                except Exception:  # noqa: BLE001
+                    pass
+
+                # If OpenCV couldn't extract keyframe, create a fallback placeholder thumbnail
+                if thumb_img is None:
+                    from PIL import Image, ImageDraw
+                    fallback = Image.new("RGB", (640, 360), color=(15, 23, 42))
+                    d = ImageDraw.Draw(fallback)
+                    d.text((40, 160), f"Walkthrough Video · {node.name}", fill=(56, 189, 248))
+                    buf = io.BytesIO()
+                    fallback.save(buf, format="WEBP", quality=85)
+                    dest_thumb.write_bytes(buf.getvalue())
+                    thumb_img = fallback
+
+                vec = embedder_service.embed(thumb_img)
+                ocr_toks = ocr_service.extract_text(thumb_img)
+
+                p_row = Photo(
+                    venue_id=v.id,
+                    node_id=node.id,
+                    path=rel_video_path,
+                    source="uploader" if user.role == "uploader" else "admin",
+                    quality=1.0,
+                    embedding=embedder_service.to_bytes(vec),
+                    embedder=embedder_service.name,
+                    ocr_text=" ".join(ocr_toks),
+                    heading_deg=clean_heading,
+                    uploaded_by_id=user.id,
+                    media_type="video",
+                    thumbnail_path=rel_thumb_path,
+                    duration_s=duration_s,
+                )
+                session.add(p_row)
+                session.flush()
+                accepted.append({
+                    "id": p_row.id,
+                    "url": f"/media/{rel_video_path}",
+                    "thumbnail_url": f"/media/{rel_thumb_path}",
+                    "media_type": "video",
+                    "duration_s": duration_s,
+                    "quality": 1.0,
+                    "heading_deg": clean_heading,
+                })
+            except Exception as exc:  # noqa: BLE001
+                dest_video.unlink(missing_ok=True)
+                dest_thumb.unlink(missing_ok=True)
+                rejected.append({"filename": fname, "reason": f"Video processing error ({exc})"})
+            continue
+
+        # Standard photo processing (WebP 1600px, high-DPI quality 90)
+        rel_path = f"venues/{v.slug}/photos/{uuid.uuid4().hex[:12]}.webp"
         dest_path = MEDIA_DIR / rel_path
         try:
-            img, _ = save_clean_image(raw, dest_path, max_side=1024)
+            img, _ = save_clean_image(raw, dest_path, max_side=1600)
             vec = embedder_service.embed(img)
             ok, q_score, reason = validate_dataset_photo(img, vec, existing_vecs)
             if not ok:
@@ -1157,6 +1255,9 @@ async def admin_upload_photos(
                 ocr_text=" ".join(ocr_toks),
                 heading_deg=clean_heading,
                 uploaded_by_id=user.id,
+                media_type="photo",
+                thumbnail_path=None,
+                duration_s=None,
             )
             session.add(p_row)
             session.flush()
@@ -1164,6 +1265,7 @@ async def admin_upload_photos(
             accepted.append({
                 "id": p_row.id,
                 "url": f"/media/{rel_path}",
+                "media_type": "photo",
                 "quality": q_score,
                 "heading_deg": clean_heading,
             })

@@ -1,8 +1,19 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { ContactShadows, Float, Html, Line, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
-import { Image as ImageIcon, Moon, Navigation, Orbit, Sun } from 'lucide-react';
+import {
+  ChevronLeft,
+  ChevronRight,
+  Film,
+  Image as ImageIcon,
+  Moon,
+  Navigation,
+  Orbit,
+  Play,
+  Sun,
+  X,
+} from 'lucide-react';
 import type { Building, GEdge, GNode, Graph, VenueDetail } from '../lib/types';
 import { mediaUrl } from '../lib/api';
 import { formatLevel } from '../lib/locationStore';
@@ -696,21 +707,12 @@ const SceneContent: React.FC<
             : 0.46
           : 0.24;
 
-        const showPhotoBillboard =
-          Boolean(node.photo_url) &&
-          (isSelected ||
-            isHovered ||
-            isStart ||
-            isEnd ||
-            (showPhotoCards && node.is_place && (inRoute || selectedLevel !== 'all')));
-
         const showLabel =
-          !showPhotoBillboard &&
-          (isHovered ||
-            isSelected ||
-            isStart ||
-            isEnd ||
-            (followWalker && inRoute && node.is_place));
+          isHovered ||
+          isSelected ||
+          isStart ||
+          isEnd ||
+          (followWalker && inRoute && node.is_place);
 
         return (
           <group key={node.id} position={[wx, wy + 0.28, wz]}>
@@ -737,46 +739,21 @@ const SceneContent: React.FC<
               />
             </mesh>
 
-            {/* 3D Floating Real-Photo Billboard */}
-            {showPhotoBillboard && node.photo_url && (
-              <Html
-                position={[0, isEnd ? 3.8 : 2.2, 0]}
-                center
-                style={{ pointerEvents: 'none' }}
-              >
-                <div className="w-36 overflow-hidden rounded-xl bg-slate-950/90 text-white shadow-2xl ring-2 ring-cyan-400/70 backdrop-blur-md">
-                  <div className="relative h-16 w-full overflow-hidden bg-slate-900">
-                    <img
-                      src={mediaUrl(node.photo_url)}
-                      alt={node.name}
-                      className="h-full w-full object-cover hdr-photo"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent" />
-                    <span className="absolute bottom-1 left-1.5 text-[9px] font-bold text-cyan-300">
-                      {formatLevel(node.level)}
-                    </span>
-                  </div>
-                  <div className="px-2 py-1 text-[10px] font-bold truncate">
-                    {isStart ? '📍 ' : isEnd ? '🏁 ' : ''}
-                    {node.name}
-                  </div>
-                </div>
-              </Html>
-            )}
-
             {showLabel && (
               <Html
-                position={[0, isEnd ? 3.2 : isStart ? 1.7 : 1.15, 0]}
+                position={[0, isEnd ? 2.4 : isStart ? 1.8 : 1.2, 0]}
                 center
                 style={{ pointerEvents: 'none' }}
               >
                 <div
                   className={`whitespace-nowrap rounded-lg px-2.5 py-1 text-[11px] font-semibold shadow-lg backdrop-blur-md ring-1 ${
                     isStart
-                      ? 'bg-sky-500/90 text-white ring-sky-300'
+                      ? 'bg-sky-500/95 text-white ring-sky-300'
                       : isEnd
                         ? 'bg-rose-500/95 text-white ring-rose-300'
-                        : 'bg-slate-900/90 text-white ring-white/20'
+                        : isSelected
+                          ? 'bg-purple-600/95 text-white ring-purple-300'
+                          : 'bg-slate-900/90 text-white ring-white/20'
                   }`}
                 >
                   <span>
@@ -818,8 +795,52 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
   const hasRoute = (props.routePath?.length ?? 0) >= 2;
   const [followWalker, setFollowWalker] = useState(false);
   const [daylight, setDaylight] = useState(false);
-  const [showPhotoCards, setShowPhotoCards] = useState(true);
   const [mobileTouchOrbit, setMobileTouchOrbit] = useState(true);
+  const [inspectedNode, setInspectedNode] = useState<GNode | null>(null);
+
+  // Sync selectedNodeId prop with inspected node
+  useEffect(() => {
+    if (props.selectedNodeId) {
+      const match = props.graph.nodes.find((n) => n.id === props.selectedNodeId);
+      if (match) setInspectedNode(match);
+    }
+  }, [props.selectedNodeId, props.graph.nodes]);
+
+  // Route place nodes for sequential landmark carousel
+  const routePlaces = useMemo(() => {
+    if (!props.routePath || props.routePath.length === 0) return [];
+    const placeMap = new Map<string, GNode>();
+    for (const nid of props.routePath) {
+      const n = props.graph.nodes.find((node) => node.id === nid);
+      if (n && (n.is_place || n.photo_url)) {
+        placeMap.set(n.id, n);
+      }
+    }
+    return Array.from(placeMap.values());
+  }, [props.routePath, props.graph.nodes]);
+
+  const routePlaceIndex = useMemo(() => {
+    if (!inspectedNode) return -1;
+    return routePlaces.findIndex((p) => p.id === inspectedNode.id);
+  }, [inspectedNode, routePlaces]);
+
+  const handlePrevPlace = () => {
+    if (routePlaces.length === 0) return;
+    const curIdx = routePlaceIndex >= 0 ? routePlaceIndex : 0;
+    const prevIdx = (curIdx - 1 + routePlaces.length) % routePlaces.length;
+    const nextNode = routePlaces[prevIdx];
+    setInspectedNode(nextNode);
+    props.onSelectNode?.(nextNode);
+  };
+
+  const handleNextPlace = () => {
+    if (routePlaces.length === 0) return;
+    const curIdx = routePlaceIndex >= 0 ? routePlaceIndex : 0;
+    const nextIdx = (curIdx + 1) % routePlaces.length;
+    const nextNode = routePlaces[nextIdx];
+    setInspectedNode(nextNode);
+    props.onSelectNode?.(nextNode);
+  };
 
   return (
     <div
@@ -858,7 +879,10 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
           {...props}
           followWalker={hasRoute && followWalker}
           daylight={daylight}
-          showPhotoCards={showPhotoCards}
+          onSelectNode={(node) => {
+            setInspectedNode(node);
+            props.onSelectNode?.(node);
+          }}
         />
         {!(hasRoute && followWalker) && (
           <OrbitControls
@@ -904,22 +928,8 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
         </div>
       )}
 
-      {/* Top Right Lighting & 3D Photo Billboard Controls */}
+      {/* Top Right Controls */}
       <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5">
-        <button
-          type="button"
-          onClick={() => setShowPhotoCards((v) => !v)}
-          className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-[11px] font-bold ring-1 backdrop-blur-md transition ${
-            showPhotoCards
-              ? 'bg-cyan-500/90 text-slate-950 ring-cyan-300 shadow-sm'
-              : 'bg-slate-950/75 text-slate-200 ring-white/15 hover:bg-slate-900'
-          }`}
-          title="Toggle 3D floating room photo frames"
-        >
-          <ImageIcon className="h-3.5 w-3.5" />
-          3D Photos
-        </button>
-
         <button
           type="button"
           onClick={() => setMobileTouchOrbit((v) => !v)}
@@ -952,24 +962,114 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
         </button>
       </div>
 
-      {/* Subtle 3D Legend Overlay */}
-      <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-950/80 px-3 py-1.5 text-[11px] text-slate-200 ring-1 ring-white/10 backdrop-blur-md">
-        <span className="inline-flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-sky-400" /> Places
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-cyan-400" /> Moving Lift
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-amber-400" /> 3D Stairs
-        </span>
-        <span className="inline-flex items-center gap-1">
-          <span className="h-2 w-2 rounded-full bg-rose-500" /> Destination
-        </span>
-        <span className="hidden sm:inline text-slate-400 ml-1">
-          · Drag to orbit · Hover/click pins for real photos
-        </span>
-      </div>
+      {/* FIXED ANCHOR INSPECTOR PANEL & LANDMARK CAROUSEL (Never overlaps 3D scene) */}
+      {inspectedNode && (
+        <div className="absolute bottom-3 right-3 sm:bottom-4 sm:right-4 z-20 w-[calc(100%-1.5rem)] sm:w-80 rounded-2xl bg-slate-950/92 p-3 text-white ring-1 ring-white/20 shadow-2xl backdrop-blur-xl transition-all">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="h-2 w-2 rounded-full bg-cyan-400 shrink-0 animate-pulse" />
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-cyan-300 truncate">
+                {inspectedNode.building_name} · {formatLevel(inspectedNode.level, inspectedNode.floor_name)}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setInspectedNode(null)}
+              className="rounded-lg p-1 text-slate-400 hover:text-white hover:bg-white/10"
+              title="Close panel"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          {/* Media View (Video or High-DPI Photo) */}
+          <div className="relative h-40 w-full overflow-hidden rounded-xl bg-slate-900 ring-1 ring-white/10">
+            {inspectedNode.video_url ? (
+              <video
+                src={mediaUrl(inspectedNode.video_url)}
+                poster={inspectedNode.photo_url ? mediaUrl(inspectedNode.photo_url) : undefined}
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="h-full w-full object-cover"
+              />
+            ) : inspectedNode.photo_url ? (
+              <img
+                src={mediaUrl(inspectedNode.photo_url)}
+                alt={inspectedNode.name}
+                loading="lazy"
+                className="h-full w-full object-cover hdr-photo"
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center text-xs text-slate-400">
+                No preview photo for this spot
+              </div>
+            )}
+            <span className="absolute bottom-2 left-2 rounded-md bg-slate-950/80 px-2 py-0.5 text-[10px] font-bold text-cyan-300">
+              {inspectedNode.kind}
+            </span>
+          </div>
+
+          <div className="mt-2.5 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <h4 className="font-display text-sm font-bold truncate">
+                {inspectedNode.id === props.startNodeId ? '📍 ' : inspectedNode.id === props.endNodeId ? '🏁 ' : ''}
+                {inspectedNode.name}
+              </h4>
+              <p className="text-[11px] text-slate-400 truncate">
+                {inspectedNode.category || inspectedNode.kind}
+              </p>
+            </div>
+
+            {/* Landmark Carousel Buttons */}
+            {routePlaces.length > 1 && (
+              <div className="flex items-center gap-1 shrink-0 bg-white/10 rounded-xl p-0.5">
+                <button
+                  type="button"
+                  onClick={handlePrevPlace}
+                  className="rounded-lg p-1 text-white hover:bg-white/20 transition"
+                  title="Previous route landmark"
+                >
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                </button>
+                <span className="text-[10px] font-mono font-bold px-1 text-cyan-300">
+                  {routePlaceIndex >= 0 ? `${routePlaceIndex + 1}/${routePlaces.length}` : `1/${routePlaces.length}`}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleNextPlace}
+                  className="rounded-lg p-1 text-white hover:bg-white/20 transition"
+                  title="Next route landmark"
+                >
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Subtle 3D Legend Overlay (only when panel is not open or on desktop) */}
+      {!inspectedNode && (
+        <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-950/80 px-3 py-1.5 text-[11px] text-slate-200 ring-1 ring-white/10 backdrop-blur-md">
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full bg-sky-400" /> Places
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full bg-cyan-400" /> Moving Lift
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full bg-amber-400" /> 3D Stairs
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full bg-rose-500" /> Destination
+          </span>
+          <span className="hidden sm:inline text-slate-400 ml-1">
+            · Tap any pin to open inspect card
+          </span>
+        </div>
+      )}
     </div>
   );
 };

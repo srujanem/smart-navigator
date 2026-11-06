@@ -572,7 +572,7 @@
     {
       "source": "hostel_mess",
       "target": "corridor_0_e",
-      "distance": 8,
+      "distance": 12,
       "type": "door"
     },
     {
@@ -580,12 +580,6 @@
       "target": "corridor_0_e",
       "distance": 8,
       "type": "door"
-    },
-    {
-      "source": "entrance_main",
-      "target": "corridor_0_mid",
-      "distance": 10,
-      "type": "walkable"
     },
     {
       "source": "corridor_1_w",

@@ -70,15 +70,15 @@ def _turn_icon(prev_n: Node, curr_n: Node, next_n: Node) -> tuple[str, str]:
     v2x, v2y = next_n.x - curr_n.x, next_n.y - curr_n.y
     m1, m2 = math.hypot(v1x, v1y), math.hypot(v2x, v2y)
     if m1 < 1e-3 or m2 < 1e-3:
-        return "straight", "Continue towards"
+        return "straight", "Go straight"
     # Screen/plan coords have +y downwards; cross > 0 => clockwise (right turn)
     cross = (v1x * v2y - v1y * v2x) / (m1 * m2)
     dot = (v1x * v2x + v1y * v2y) / (m1 * m2)
     if dot > 0.78 or abs(cross) < 0.35:
-        return "straight", "Continue straight towards"
+        return "straight", "Go straight"
     if cross > 0:
-        return "right", "Turn right towards"
-    return "left", "Turn left towards"
+        return "right", "Turn right"
+    return "left", "Turn left"
 
 
 def _relative_heading_hint(heading_deg: float, start_n: Node, next_n: Node) -> Optional[str]:
@@ -134,7 +134,8 @@ def compute_venue_route(
     node_photo: Dict[str, str] = {}
     for p in sorted(photos, key=lambda x: x.quality, reverse=True):
         if p.node_id not in node_photo:
-            node_photo[p.node_id] = f"/media/{p.path}"
+            thumb = p.thumbnail_path if (getattr(p, "media_type", "photo") == "video" and p.thumbnail_path) else p.path
+            node_photo[p.node_id] = f"/media/{thumb}"
 
     closed_ids = {c.edge_id for c in closures}
     closure_by_edge = {c.edge_id: c for c in closures}
@@ -319,29 +320,37 @@ def _build_steps(
         if curr_n.level != next_n.level:
             if e_obj.kind == "lift":
                 icon = "lift"
-                instr = f"Take {curr_n.name} to Floor {next_n.level} ({next_n.name})."
+                instr = f"Take elevator to Floor {next_n.level} ({next_n.name})."
             else:
                 icon = "up" if next_n.level > curr_n.level else "down"
                 direction_word = "up" if next_n.level > curr_n.level else "down"
-                instr = f"Walk {direction_word} the stairs to Floor {next_n.level} ({next_n.name})."
+                instr = f"Take stairs {direction_word} to Floor {next_n.level} ({next_n.name})."
         elif curr_n.building_id != next_n.building_id or e_obj.kind == "outdoor":
             icon = "straight"
-            instr = f"Follow the covered walkway {dist}m into {buildings.get(next_n.building_id, next_n.name)} ({next_n.name})."
+            instr = f"Walk {dist}m via covered walkway into {buildings.get(next_n.building_id, next_n.name)} ({next_n.name})."
         elif is_last:
             if i >= 1:
                 turn_ic, turn_phrase = _turn_icon(node_map[path[i - 1]], curr_n, next_n)
                 icon = "arrive" if turn_ic == "straight" else turn_ic
-                instr = f"{turn_phrase} {next_n.name} ({dist}m) — your destination."
+                instr = f"{turn_phrase} {dist}m to arrive at {next_n.name} (Destination)."
             else:
                 icon = "arrive"
-                instr = f"Walk {dist}m directly to {next_n.name} — your destination."
+                instr = f"Walk {dist}m straight to arrive at {next_n.name} (Destination)."
         else:
             if i >= 1:
                 icon, phrase = _turn_icon(node_map[path[i - 1]], curr_n, next_n)
-                instr = f"{phrase} {next_n.name} ({dist}m)."
+                instr = f"{phrase} and walk {dist}m towards {next_n.name}."
             else:
                 icon = "straight"
-                instr = f"Head out towards {next_n.name} ({dist}m)."
+                instr = f"Go straight {dist}m towards {next_n.name}."
+
+        # Find photo for node, or fall back to neighboring place photo if node is an un-photographed corridor junction
+        step_photo = node_photo.get(next_n.id)
+        if not step_photo and next_n.id in G:
+            for nb in G.neighbors(next_n.id):
+                if nb in node_photo:
+                    step_photo = node_photo[nb]
+                    break
 
         steps.append({
             "index": i + 1,
@@ -351,7 +360,7 @@ def _build_steps(
             "icon": icon,
             "distance_m": dist,
             "level": next_n.level,
-            "photo_url": node_photo.get(next_n.id),
+            "photo_url": step_photo,
         })
 
     return steps

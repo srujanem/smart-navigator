@@ -394,10 +394,10 @@ def _seed_campus(session: Session) -> None:
     session.flush()
 
     b_defs = {
-        "Academic Block A": ("hc_block_a", 40, 80, 540, 230),
-        "Central Library": ("hc_library", 40, 320, 140, 90),
-        "Campus Canteen": ("hc_canteen", 460, 320, 140, 90),
-        "Hostel Block": ("hc_hostel", 520, 80, 160, 280),
+        "Academic Block A": ("hc_block_a", 8, 16, 120, 52),
+        "Central Library": ("hc_library", 8, 70, 26, 20),
+        "Campus Canteen": ("hc_canteen", 104, 70, 26, 20),
+        "Hostel Block": ("hc_hostel", 112, 16, 36, 62),
     }
     for b_name, (bid, bx, by, bw, bd) in b_defs.items():
         session.add(Building(id=bid, venue_id=venue.id, name=b_name, x=bx, y=by, w=bw, d=bd))

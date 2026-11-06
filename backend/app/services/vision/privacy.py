@@ -35,13 +35,19 @@ def has_face_blur() -> bool:
     return _get_face_detector() is not None
 
 
-def preprocess_and_anonymize(raw_bytes: bytes, max_side: int = 1024) -> Tuple[Image.Image, bytes, int]:
+def preprocess_and_anonymize(
+    raw_bytes: bytes,
+    max_side: int = 1600,
+    output_format: str = "WEBP",
+    quality: int = 90,
+) -> Tuple[Image.Image, bytes, int]:
     """
     1. Fix phone camera orientation via EXIF transpose.
     2. Strip all EXIF / GPS metadata by creating a clean RGB image.
-    3. Resize to max_side while preserving aspect ratio.
+    3. Resize to max_side (default 1600px for razor-sharp high-DPI retina display) while preserving aspect ratio.
     4. Detect & blur human faces using YuNet neural face detector for patient/visitor privacy.
-    Returns (clean_pil_image, jpeg_bytes, faces_blurred_count).
+    5. Encode to high-efficiency WebP (or JPEG fallback) with optimized compression.
+    Returns (clean_pil_image, encoded_bytes, faces_blurred_count).
     """
     src = Image.open(io.BytesIO(raw_bytes))
     src = ImageOps.exif_transpose(src).convert("RGB")
@@ -74,13 +80,26 @@ def preprocess_and_anonymize(raw_bytes: bytes, max_side: int = 1024) -> Tuple[Im
         except Exception:  # noqa: BLE001
             pass
 
+    fmt = output_format.upper()
     buf = io.BytesIO()
-    clean.save(buf, format="JPEG", quality=88, optimize=True)
+    if fmt == "WEBP":
+        clean.save(buf, format="WEBP", quality=quality, method=5)
+    else:
+        clean.save(buf, format="JPEG", quality=quality, optimize=True)
     return clean, buf.getvalue(), faces_blurred
 
 
-def save_clean_image(raw_bytes: bytes, dest_path: Path, max_side: int = 1024) -> Tuple[Image.Image, int]:
+def save_clean_image(
+    raw_bytes: bytes,
+    dest_path: Path,
+    max_side: int = 1600,
+    output_format: str = "WEBP",
+) -> Tuple[Image.Image, int]:
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    img, jpg_bytes, faces = preprocess_and_anonymize(raw_bytes, max_side=max_side)
-    dest_path.write_bytes(jpg_bytes)
+    img, encoded_bytes, faces = preprocess_and_anonymize(
+        raw_bytes,
+        max_side=max_side,
+        output_format=output_format,
+    )
+    dest_path.write_bytes(encoded_bytes)
     return img, faces

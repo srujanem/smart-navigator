@@ -546,6 +546,7 @@ export const RoutePage: React.FC = () => {
   }
 
   const activeStep = route?.steps[activeStepIdx] ?? null;
+  const activeStepNode = activeStep ? nodeMap.get(activeStep.node_id) : null;
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
@@ -1060,10 +1061,21 @@ export const RoutePage: React.FC = () => {
                     )}
 
                     <div className="relative h-52 sm:h-60 w-full overflow-hidden">
-                      {activeStep.photo_url ? (
+                      {activeStepNode?.video_url ? (
+                        <video
+                          src={mediaUrl(activeStepNode.video_url)}
+                          poster={activeStep.photo_url ? mediaUrl(activeStep.photo_url) : undefined}
+                          autoPlay
+                          loop
+                          muted
+                          playsInline
+                          className="h-full w-full object-cover transition-all duration-500"
+                        />
+                      ) : activeStep.photo_url ? (
                         <img
                           src={mediaUrl(activeStep.photo_url)}
                           alt={activeStep.name}
+                          loading="lazy"
                           className="h-full w-full object-cover hdr-photo transition-all duration-500"
                         />
                       ) : (

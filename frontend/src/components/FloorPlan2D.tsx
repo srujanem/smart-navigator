@@ -344,16 +344,21 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
           });
         }}
         onMouseMove={(e) => {
-          const wpt = clientToSvgPoint(e.clientX, e.clientY);
-          if (wpt) setCursorWorld(wpt);
+          if (isEditing) {
+            const wpt = clientToSvgPoint(e.clientX, e.clientY);
+            if (wpt) setCursorWorld(wpt);
+          }
 
-          if (draggingNode && wpt) {
-            setDraggingNode({
-              ...draggingNode,
-              x: wpt.x,
-              y: wpt.y,
-              moved: true,
-            });
+          if (draggingNode) {
+            const wpt = clientToSvgPoint(e.clientX, e.clientY);
+            if (wpt) {
+              setDraggingNode({
+                ...draggingNode,
+                x: wpt.x,
+                y: wpt.y,
+                moved: true,
+              });
+            }
             return;
           }
 

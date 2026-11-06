@@ -67,6 +67,9 @@ export interface GNode {
   is_place: boolean;
   photo_url: string | null;
   photo_count: number;
+  media_type?: 'photo' | 'video';
+  video_url?: string | null;
+  duration_s?: number | null;
 }
 
 export type EdgeKind = 'walk' | 'door' | 'stairs' | 'lift' | 'outdoor';
