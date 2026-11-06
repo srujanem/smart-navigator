@@ -220,6 +220,7 @@ export const RoutePage: React.FC = () => {
   // Active alternative index (-1 = primary route)
   const [altIndex, setAltIndex] = useState<number>(-1);
   const [activeStepIdx, setActiveStepIdx] = useState<number>(0);
+  const [mobileViewMode, setMobileViewMode] = useState<'all' | 'street' | 'map' | 'steps'>('all');
 
   // Twin & Walker State
   const [twinMode, setTwinMode] = useState<'3d' | '2d'>('3d');
@@ -685,13 +686,13 @@ export const RoutePage: React.FC = () => {
 
           {/* Second Row: 3 Mobility Profiles + Avoid Crowds Toggle + Alternative Pills */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-white/10">
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar w-full sm:w-auto py-0.5">
               {/* Profile Switcher */}
-              <div className="flex flex-wrap items-center gap-1 rounded-xl bg-white/[0.06] p-1 ring-1 ring-white/10">
+              <div className="flex shrink-0 items-center gap-1 rounded-xl bg-white/[0.06] p-1 ring-1 ring-white/10">
                 <button
                   type="button"
                   onClick={() => updateRouteParams(effectiveFromId, effectiveToId, 'walk')}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold whitespace-nowrap transition ${
                     profileParam === 'walk'
                       ? 'bg-white text-slate-950 shadow-sm'
                       : 'text-slate-300 hover:text-white'
@@ -703,7 +704,7 @@ export const RoutePage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => updateRouteParams(effectiveFromId, effectiveToId, 'wheelchair')}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold whitespace-nowrap transition ${
                     profileParam === 'wheelchair'
                       ? 'bg-emerald-500 text-slate-950 shadow-sm'
                       : 'text-slate-300 hover:text-white'
@@ -715,7 +716,7 @@ export const RoutePage: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => updateRouteParams(effectiveFromId, effectiveToId, 'stretcher')}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold transition ${
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold whitespace-nowrap transition ${
                     profileParam === 'stretcher'
                       ? 'bg-amber-400 text-slate-950 shadow-sm'
                       : 'text-slate-300 hover:text-white'
@@ -734,7 +735,7 @@ export const RoutePage: React.FC = () => {
                     avoidCrowds: !avoidCrowdsParam,
                   })
                 }
-                className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold ring-1 transition ${
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold ring-1 whitespace-nowrap transition ${
                   avoidCrowdsParam
                     ? 'bg-violet-500/25 text-violet-200 ring-violet-400/50'
                     : 'bg-white/[0.05] text-slate-300 ring-white/10 hover:text-white'
@@ -956,7 +957,7 @@ export const RoutePage: React.FC = () => {
       {/* =================================================================== */}
       {/* SPLIT NAVIGATION WORKSPACE: STEPS LIST + 3D/2D INTERACTIVE TWIN     */}
       {/* =================================================================== */}
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 sm:px-6 lg:px-8 py-4">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 sm:px-6 lg:px-8 py-4 pb-36 sm:pb-8">
         {loadingRoute ? (
           <div className="card p-12 text-center">
             <Loader2 className="h-8 w-8 animate-spin text-indigo-600 mx-auto" />
@@ -990,37 +991,89 @@ export const RoutePage: React.FC = () => {
             )}
           </div>
         ) : route ? (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-            {/* RIGHT ON DESKTOP / TOP ON MOBILE: CINEMA STREET-VIEW + 3D/2D TWIN */}
-            <div className="lg:col-span-7 lg:order-2 lg:sticky lg:top-32 space-y-3">
-              {/* CINEMA "STREET-VIEW" ACTIVE LANDMARK PHOTO STAGE */}
-              {activeStep && showStreetStage && (
-                <div className="relative overflow-hidden rounded-3xl bg-[#050914] ring-1 ring-slate-900/15 shadow-2xl">
-                  {/* Ambient Color-Matched Backlight Glow */}
-                  {activeStep.photo_url && (
-                    <img
-                      src={mediaUrl(activeStep.photo_url)}
-                      alt=""
-                      aria-hidden="true"
-                      className="pointer-events-none absolute -inset-4 h-[calc(100%+2rem)] w-[calc(100%+2rem)] object-cover blur-2xl opacity-45 scale-110"
-                    />
-                  )}
+          <div>
+            {/* Mobile View Switcher Tabs (Only on small screens) */}
+            <div className="lg:hidden flex items-center justify-between rounded-2xl bg-white p-1 ring-1 ring-slate-200/90 shadow-soft mb-3">
+              <button
+                type="button"
+                onClick={() => setMobileViewMode('all')}
+                className={`flex-1 py-2 text-xs font-bold rounded-xl transition ${
+                  mobileViewMode === 'all'
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Overview
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileViewMode('street');
+                  setShowStreetStage(true);
+                }}
+                className={`flex-1 py-2 text-xs font-bold rounded-xl transition ${
+                  mobileViewMode === 'street'
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                📷 Street View
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileViewMode('map')}
+                className={`flex-1 py-2 text-xs font-bold rounded-xl transition ${
+                  mobileViewMode === 'map'
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                🗺️ {twinMode === '3d' ? '3D' : '2D'} Map
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileViewMode('steps')}
+                className={`flex-1 py-2 text-xs font-bold rounded-xl transition ${
+                  mobileViewMode === 'steps'
+                    ? 'bg-slate-900 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                📋 Steps
+              </button>
+            </div>
 
-                  <div className="relative h-52 sm:h-60 w-full overflow-hidden">
-                    {activeStep.photo_url ? (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+              {/* RIGHT ON DESKTOP / TOP ON MOBILE: CINEMA STREET-VIEW + 3D/2D TWIN */}
+              <div className={`lg:col-span-7 lg:order-2 lg:sticky lg:top-32 space-y-3 ${mobileViewMode === 'steps' ? 'hidden lg:block' : ''}`}>
+                {/* CINEMA "STREET-VIEW" ACTIVE LANDMARK PHOTO STAGE */}
+                {activeStep && showStreetStage && mobileViewMode !== 'map' && (
+                  <div className="relative overflow-hidden rounded-3xl bg-[#050914] ring-1 ring-slate-900/15 shadow-2xl">
+                    {/* Ambient Color-Matched Backlight Glow */}
+                    {activeStep.photo_url && (
                       <img
                         src={mediaUrl(activeStep.photo_url)}
-                        alt={activeStep.name}
-                        className="h-full w-full object-cover hdr-photo transition-all duration-500"
-                      />
-                    ) : (
-                      <IsometricVenueArt
-                        accent={venue.accent || '#0ea5e9'}
-                        buildings={venue.buildings.length}
-                        floors={Math.max(2, route.levels.length)}
-                        compact
+                        alt=""
+                        aria-hidden="true"
+                        className="pointer-events-none absolute -inset-4 h-[calc(100%+2rem)] w-[calc(100%+2rem)] object-cover blur-2xl opacity-45 scale-110"
                       />
                     )}
+
+                    <div className="relative h-52 sm:h-60 w-full overflow-hidden">
+                      {activeStep.photo_url ? (
+                        <img
+                          src={mediaUrl(activeStep.photo_url)}
+                          alt={activeStep.name}
+                          className="h-full w-full object-cover hdr-photo transition-all duration-500"
+                        />
+                      ) : (
+                        <IsometricVenueArt
+                          accent={venue.accent || '#0ea5e9'}
+                          buildings={venue.buildings.length}
+                          floors={Math.max(2, route.levels.length)}
+                          compact
+                        />
+                      )}
 
                     {/* Cinema Vignette */}
                     <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#050914] via-[#050914]/25 to-slate-950/45" />
@@ -1248,7 +1301,7 @@ export const RoutePage: React.FC = () => {
               </div>
 
               {/* Map Canvas */}
-              <div className="h-[390px] sm:h-[490px] w-full">
+              <div className={`h-[390px] sm:h-[490px] w-full ${mobileViewMode === 'street' ? 'hidden lg:block' : ''}`}>
                 {twinMode === '3d' ? (
                   <Suspense fallback={<Skeleton3D />}>
                     <Venue3D
@@ -1321,7 +1374,7 @@ export const RoutePage: React.FC = () => {
             </div>
 
             {/* LEFT ON DESKTOP / BOTTOM ON MOBILE: VISUAL TURN-BY-TURN STEPS */}
-            <div className="lg:col-span-5 lg:order-1 space-y-3">
+            <div className={`lg:col-span-5 lg:order-1 space-y-3 ${mobileViewMode === 'street' || mobileViewMode === 'map' ? 'hidden lg:block' : ''}`}>
               <div className="flex items-center justify-between px-1">
                 <h2 className="font-display text-base font-extrabold text-slate-900">
                   Visual Turn-by-Turn Steps ({route.steps.length})
@@ -1439,7 +1492,63 @@ export const RoutePage: React.FC = () => {
               </div>
             </div>
           </div>
-        ) : null}
+        </div>
+      ) : null}
+
+        {/* Mobile Sticky Thumb Navigation Dock */}
+        {route && activeStep && (
+          <aside
+            aria-label="Mobile Navigation Controls"
+            className="lg:hidden fixed bottom-0 inset-x-0 z-40 border-t border-white/15 bg-[#070B18]/95 px-4 pt-2.5 pb-3.5 backdrop-blur-xl text-white shadow-[0_-10px_35px_rgba(0,0,0,0.6)] safe-bottom"
+          >
+            <div className="mx-auto max-w-md space-y-2.5">
+              {/* Active Step Mini Bar */}
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/15 text-cyan-300">
+                  {renderStepIcon(activeStep.icon)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-extrabold text-white truncate">
+                    {activeStep.instruction}
+                  </div>
+                  <div className="text-[11px] text-cyan-200/80 truncate">
+                    {activeStep.name} · Step {activeStepIdx + 1} of {route.steps.length}
+                    {activeStep.distance_m > 0 ? ` · ${Math.round(activeStep.distance_m)}m` : ''}
+                  </div>
+                </div>
+              </div>
+
+              {/* Big Thumb Buttons */}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={activeStepIdx <= 0}
+                  onClick={() => {
+                    const prev = Math.max(0, activeStepIdx - 1);
+                    handleStepClick(route.steps[prev], prev);
+                  }}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-white/10 py-3 text-xs font-bold text-white ring-1 ring-white/15 disabled:opacity-30 active:scale-95 transition"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Prev
+                </button>
+
+                <button
+                  type="button"
+                  disabled={activeStepIdx >= route.steps.length - 1}
+                  onClick={() => {
+                    const nxt = Math.min(route.steps.length - 1, activeStepIdx + 1);
+                    handleStepClick(route.steps[nxt], nxt);
+                  }}
+                  className="flex-[1.6] inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-cyan-400 to-indigo-600 py-3 text-xs font-extrabold text-slate-950 shadow-lg shadow-cyan-500/30 active:scale-95 transition disabled:opacity-35"
+                >
+                  <span>Next Step</span>
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          </aside>
+        )}
       </main>
 
       {/* Re-check My Location Modal */}

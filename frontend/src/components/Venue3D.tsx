@@ -819,6 +819,7 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
   const [followWalker, setFollowWalker] = useState(false);
   const [daylight, setDaylight] = useState(false);
   const [showPhotoCards, setShowPhotoCards] = useState(true);
+  const [mobileTouchOrbit, setMobileTouchOrbit] = useState(true);
 
   return (
     <div
@@ -862,11 +863,13 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
         {!(hasRoute && followWalker) && (
           <OrbitControls
             makeDefault
+            enabled={mobileTouchOrbit}
             enableDamping
             dampingFactor={0.07}
             minDistance={12}
             maxDistance={125}
             maxPolarAngle={Math.PI / 2.04}
+            touches={{ ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }}
           />
         )}
       </Canvas>
@@ -915,6 +918,19 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
         >
           <ImageIcon className="h-3.5 w-3.5" />
           3D Photos
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMobileTouchOrbit((v) => !v)}
+          className={`sm:hidden inline-flex items-center gap-1 rounded-xl px-2 py-1.5 text-[10px] font-bold ring-1 backdrop-blur-md transition ${
+            mobileTouchOrbit
+              ? 'bg-cyan-500/90 text-slate-950 ring-cyan-300'
+              : 'bg-slate-900/90 text-amber-300 ring-amber-400/40'
+          }`}
+          title="Toggle 3D Orbit vs Page Scroll on Mobile"
+        >
+          {mobileTouchOrbit ? '🕹️ Orbit' : '📜 Scroll'}
         </button>
 
         <button

@@ -914,7 +914,7 @@ export const VenuePage: React.FC = () => {
               <DoorOpen className="h-4 w-4 text-rose-600" />
               1-Tap Nearest Essential & SOS:
             </div>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar w-full sm:w-auto py-0.5">
               {quickNearestChips.map((chip) => {
                 const isBusy = nearestLoadingKind === chip.kind;
                 return (
@@ -1061,9 +1061,9 @@ export const VenuePage: React.FC = () => {
               />
             )}
 
-            {/* Selected Node Inspector Overlay Card */}
+            {/* Selected Node Inspector Overlay Card (Mobile Bottom Sheet / Desktop Top-Right Floating) */}
             {inspectedNode && (
-              <div className="absolute right-3 top-3 z-20 w-72 sm:w-80 overflow-hidden rounded-2xl bg-white/95 shadow-2xl ring-1 ring-slate-900/10 backdrop-blur-xl">
+              <div className="absolute inset-x-3 bottom-3 sm:bottom-auto sm:top-3 sm:right-3 sm:left-auto sm:w-80 z-20 overflow-hidden rounded-2xl bg-white/95 shadow-2xl ring-1 ring-slate-900/10 backdrop-blur-xl transition-all">
                 <div className="relative h-36 w-full bg-slate-900 overflow-hidden">
                   {inspectedNode.photo_url ? (
                     <img

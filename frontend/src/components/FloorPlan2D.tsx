@@ -63,6 +63,13 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
   const [cursorWorld, setCursorWorld] = useState<{ x: number; y: number } | null>(
     null,
   );
+  const touchRef = useRef<{
+    startX: number;
+    startY: number;
+    initPan: { x: number; y: number };
+    initDist?: number;
+    initZoom?: number;
+  } | null>(null);
 
   const isEditing = editorMode !== 'view';
 
@@ -285,6 +292,49 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
               ? 'cursor-pointer'
               : 'cursor-grab active:cursor-grabbing'
         }`}
+        onTouchStart={(e) => {
+          if (e.touches.length === 1) {
+            const t = e.touches[0];
+            touchRef.current = {
+              startX: t.clientX,
+              startY: t.clientY,
+              initPan: { ...pan },
+            };
+          } else if (e.touches.length === 2) {
+            const t1 = e.touches[0];
+            const t2 = e.touches[1];
+            const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+            touchRef.current = {
+              startX: (t1.clientX + t2.clientX) / 2,
+              startY: (t1.clientY + t2.clientY) / 2,
+              initPan: { ...pan },
+              initDist: dist,
+              initZoom: zoom,
+            };
+          }
+        }}
+        onTouchMove={(e) => {
+          if (!touchRef.current) return;
+          if (e.touches.length === 1 && touchRef.current.initDist === undefined) {
+            const t = e.touches[0];
+            const dx = t.clientX - touchRef.current.startX;
+            const dy = t.clientY - touchRef.current.startY;
+            setPan({
+              x: touchRef.current.initPan.x + dx,
+              y: touchRef.current.initPan.y + dy,
+            });
+          } else if (e.touches.length === 2 && touchRef.current.initDist && touchRef.current.initZoom) {
+            const t1 = e.touches[0];
+            const t2 = e.touches[1];
+            const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+            const scale = dist / touchRef.current.initDist;
+            const nextZoom = Math.max(0.6, Math.min(4.0, touchRef.current.initZoom * scale));
+            setZoom(nextZoom);
+          }
+        }}
+        onTouchEnd={() => {
+          touchRef.current = null;
+        }}
         onMouseDown={(e) => {
           if (draggingNode) return;
           setDraggingPan({

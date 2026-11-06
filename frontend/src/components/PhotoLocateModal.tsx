@@ -80,7 +80,8 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
   queuedDestination = null,
   onConfirmedLocation,
 }) => {
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
   const [stage, setStage] = useState<ModalStage>('idle');
   const [levelHint, setLevelHint] = useState<string>('all');
   const [samples, setSamples] = useState<SampleQuery[]>([]);
@@ -337,13 +338,13 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 overflow-y-auto bg-slate-950/75 backdrop-blur-md">
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-5 overflow-y-auto bg-slate-950/75 backdrop-blur-md">
         <motion.div
           initial={{ opacity: 0, scale: 0.96, y: 10 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.96, y: 10 }}
           transition={{ duration: 0.2 }}
-          className="relative my-auto w-full max-w-3xl overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-slate-900/10 max-h-[92vh] flex flex-col"
+          className="relative w-full max-w-3xl overflow-hidden rounded-t-3xl sm:rounded-3xl bg-white shadow-2xl ring-1 ring-slate-900/10 h-[96dvh] sm:h-auto sm:max-h-[92vh] flex flex-col mt-auto sm:my-auto"
         >
           {/* Modal Top Header */}
           <div className="flex items-center justify-between border-b border-slate-100 bg-[#070B18] px-5 py-4 text-white">
@@ -443,7 +444,63 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                   </div>
                 </div>
 
-                {/* Drag-and-drop / File Picker Zone */}
+                {/* Hidden File Inputs: Camera & Gallery */}
+                <input
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void runLocalization(file);
+                    e.target.value = '';
+                  }}
+                />
+                <input
+                  ref={galleryInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) void runLocalization(file);
+                    e.target.value = '';
+                  }}
+                />
+
+                {/* Primary Mobile Action Buttons: Camera Snap vs Gallery */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="flex items-center justify-center gap-3 rounded-2xl bg-gradient-to-r from-cyan-500 via-sky-500 to-indigo-600 px-5 py-4 text-sm font-extrabold text-white shadow-lg shadow-cyan-500/25 hover:from-cyan-400 hover:to-indigo-500 active:scale-[0.98] transition"
+                  >
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/20">
+                      <Camera className="h-5 w-5 text-white" />
+                    </div>
+                    <div className="text-left">
+                      <div className="leading-tight">Snap Live Photo</div>
+                      <div className="text-[11px] font-normal text-cyan-100">Opens phone camera directly</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => galleryInputRef.current?.click()}
+                    className="flex items-center justify-center gap-3 rounded-2xl bg-slate-100 hover:bg-slate-200/80 px-5 py-4 text-sm font-extrabold text-slate-800 ring-1 ring-slate-200 active:scale-[0.98] transition"
+                  >
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
+                      <Upload className="h-5 w-5" />
+                    </div>
+                    <div className="text-left">
+                      <div className="leading-tight">Choose from Gallery</div>
+                      <div className="text-[11px] font-normal text-slate-500">Pick saved photos or files</div>
+                    </div>
+                  </button>
+                </div>
+
+                {/* Drag-and-drop / Desktop Zone */}
                 <div
                   onDragOver={(e) => {
                     e.preventDefault();
@@ -458,38 +515,19 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                       void runLocalization(file);
                     }
                   }}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`cursor-pointer rounded-2xl border-2 border-dashed p-7 text-center transition-all ${
+                  onClick={() => galleryInputRef.current?.click()}
+                  className={`cursor-pointer rounded-2xl border-2 border-dashed p-6 text-center transition-all ${
                     dragActive
                       ? 'border-cyan-500 bg-cyan-50/70 scale-[1.01]'
                       : 'border-slate-300 bg-slate-50/70 hover:border-cyan-500 hover:bg-cyan-50/30'
                   }`}
                 >
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) void runLocalization(file);
-                      e.target.value = '';
-                    }}
-                  />
-                  <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-500 to-indigo-600 text-white shadow-lg shadow-cyan-500/20">
-                    <Upload className="h-6 w-6" />
-                  </div>
-                  <p className="font-display text-base font-bold text-slate-900">
-                    Take a Still Photo or Drop an Image Here
+                  <p className="font-display text-sm font-bold text-slate-900">
+                    Or Drop an Image Here
                   </p>
                   <p className="mt-1 text-xs text-slate-500 max-w-md mx-auto">
                     Faces are blurred automatically via YuNet and EXIF GPS metadata is stripped on upload. No live video feed required.
                   </p>
-                  <div className="mt-4 inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white hover:bg-slate-800">
-                    <Camera className="h-3.5 w-3.5 text-cyan-400" />
-                    Choose Photo / Camera Still
-                  </div>
                 </div>
 
                 {/* One-Click Visitor Sample Queries (Only displayed if venue has real sample queries) */}
@@ -762,7 +800,17 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                 {/* Cinema HDR Comparison Stage: Side-by-Side OR Interactive Split-Wipe */}
                 {compareMode === 'wipe' && result.best.matched_photo_url ? (
                   <div className="space-y-2">
-                    <div className="relative h-60 w-full overflow-hidden rounded-2xl bg-slate-950 ring-2 ring-emerald-500/60 shadow-xl select-none">
+                    <div
+                      onTouchMove={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const touch = e.touches[0];
+                        if (touch && rect.width > 0) {
+                          const pct = Math.max(5, Math.min(95, Math.round(((touch.clientX - rect.left) / rect.width) * 100)));
+                          setWipePercent(pct);
+                        }
+                      }}
+                      className="relative h-60 w-full overflow-hidden rounded-2xl bg-slate-950 ring-2 ring-emerald-500/60 shadow-xl select-none"
+                    >
                       {/* Base Layer: Matched Venue Reference Photo */}
                       <img
                         src={mediaUrl(result.best.matched_photo_url)}
