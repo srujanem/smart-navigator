@@ -88,7 +88,7 @@ export function clearAdminSession(): void {
 
 export const API_BASE = (
   (import.meta as any).env?.VITE_API_URL ||
-  'https://win-petite-compete-jaguar.trycloudflare.com'
+  'https://photograph-bones-soccer-encryption.trycloudflare.com'
 ).replace(/\/$/, '');
 
 export function mediaUrl(url: string | null | undefined): string {
