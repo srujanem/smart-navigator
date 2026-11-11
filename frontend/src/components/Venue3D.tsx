@@ -160,7 +160,15 @@ const AnimatedLiftCab: React.FC<{
   );
 };
 
-const ROUTE_FLOW_CONES = 10;
+const ROUTE_FLOW_CONES = 8;
+
+// Static pre-allocated scratch vectors to eliminate garbage collection freezes in useFrame
+const _scratchTop = new THREE.Vector3(0, 66, 0.01);
+const _scratchOrigin = new THREE.Vector3(0, 0, 0);
+const _scratchHoriz = new THREE.Vector3();
+const _scratchDesiredCam = new THREE.Vector3();
+const _scratchDesiredTarget = new THREE.Vector3();
+const _scratchTargetLook = new THREE.Vector3();
 
 const WalkerAndBeacons: React.FC<{
   routePoints: [number, number, number][];
@@ -202,9 +210,8 @@ const WalkerAndBeacons: React.FC<{
     const t = state.clock.getElapsedTime();
 
     if (cameraMode === 'top_down') {
-      const desiredTop = new THREE.Vector3(0, 66, 0.01);
-      state.camera.position.lerp(desiredTop, Math.min(1, delta * 3.5));
-      smoothLook.current.lerp(new THREE.Vector3(0, 0, 0), Math.min(1, delta * 4.5));
+      state.camera.position.lerp(_scratchTop, Math.min(1, delta * 3.5));
+      smoothLook.current.lerp(_scratchOrigin, Math.min(1, delta * 4.5));
       state.camera.lookAt(smoothLook.current);
     }
 
@@ -215,57 +222,58 @@ const WalkerAndBeacons: React.FC<{
         internalProgress.current = u;
       } else {
         if (isPlayingWalker) {
-          internalProgress.current = (internalProgress.current + delta * 0.14) % 1;
+          internalProgress.current = (internalProgress.current + delta * 0.12) % 1;
         }
         u = internalProgress.current;
       }
       const pt = curve.getPointAt(u);
       walkerRef.current.position.copy(pt);
       walkerAuraRef.current.position.copy(pt);
-      walkerAuraRef.current.scale.setScalar(1 + Math.sin(t * 6) * 0.25);
+      walkerAuraRef.current.scale.setScalar(1 + Math.sin(t * 6) * 0.22);
 
-      // Animate marching 3D laser flow cones along the route curve
+      // Animate marching 3D laser flow cones along the route curve with zero object allocations
       for (let i = 0; i < ROUTE_FLOW_CONES; i++) {
         const coneMesh = flowConeRefs.current[i];
         if (!coneMesh) continue;
-        const coneU = (i / ROUTE_FLOW_CONES + t * 0.16) % 1;
+        const coneU = (i / ROUTE_FLOW_CONES + t * 0.14) % 1;
         const conePt = curve.getPointAt(coneU);
         const coneTan = curve.getTangentAt(Math.min(0.995, coneU));
         coneMesh.position.set(conePt.x, conePt.y + 0.15, conePt.z);
-        const targetLook = conePt.clone().add(coneTan);
-        coneMesh.lookAt(targetLook);
+        _scratchTargetLook.copy(conePt).add(coneTan);
+        coneMesh.lookAt(_scratchTargetLook);
         coneMesh.rotateX(Math.PI / 2);
       }
 
       if (cameraMode === 'chase' || cameraMode === 'first_person') {
         const tangent = curve.getTangentAt(Math.min(0.995, u));
-        const horiz = new THREE.Vector3(tangent.x, 0, tangent.z);
-        if (horiz.lengthSq() < 0.01) {
-          horiz.set(0.6, 0, 0.8);
+        _scratchHoriz.set(tangent.x, 0, tangent.z);
+        if (_scratchHoriz.lengthSq() < 0.01) {
+          _scratchHoriz.set(0.6, 0, 0.8);
         }
-        horiz.normalize();
+        _scratchHoriz.normalize();
 
         if (cameraMode === 'first_person') {
-          const desiredCam = pt
-            .clone()
-            .sub(horiz.clone().multiplyScalar(2.4))
-            .add(new THREE.Vector3(0, 2.2, 0));
-          const desiredTarget = pt
-            .clone()
-            .add(horiz.clone().multiplyScalar(8.5))
-            .add(new THREE.Vector3(0, 1.3, 0));
-          state.camera.position.lerp(desiredCam, Math.min(1, delta * 4.5));
-          smoothLook.current.lerp(desiredTarget, Math.min(1, delta * 5.2));
+          _scratchDesiredCam
+            .copy(pt)
+            .sub(_scratchHoriz.clone().multiplyScalar(2.2))
+            .add({ x: 0, y: 2.1, z: 0 } as THREE.Vector3);
+          _scratchDesiredTarget
+            .copy(pt)
+            .add(_scratchHoriz.clone().multiplyScalar(8.0))
+            .add({ x: 0, y: 1.2, z: 0 } as THREE.Vector3);
+
+          state.camera.position.lerp(_scratchDesiredCam, Math.min(1, delta * 4.2));
+          smoothLook.current.lerp(_scratchDesiredTarget, Math.min(1, delta * 5.0));
           state.camera.lookAt(smoothLook.current);
         } else {
-          const desiredCam = pt
-            .clone()
-            .sub(horiz.clone().multiplyScalar(11.5))
-            .add(new THREE.Vector3(0, 6.8, 0));
-          const desiredTarget = pt.clone().add(horiz.clone().multiplyScalar(3.5));
+          _scratchDesiredCam
+            .copy(pt)
+            .sub(_scratchHoriz.clone().multiplyScalar(11.0))
+            .add({ x: 0, y: 6.5, z: 0 } as THREE.Vector3);
+          _scratchDesiredTarget.copy(pt).add(_scratchHoriz.clone().multiplyScalar(3.5));
 
-          state.camera.position.lerp(desiredCam, Math.min(1, delta * 3.8));
-          smoothLook.current.lerp(desiredTarget, Math.min(1, delta * 4.5));
+          state.camera.position.lerp(_scratchDesiredCam, Math.min(1, delta * 3.8));
+          smoothLook.current.lerp(_scratchDesiredTarget, Math.min(1, delta * 4.5));
           state.camera.lookAt(smoothLook.current);
         }
       }
@@ -595,41 +603,39 @@ const SceneContent: React.FC<
                 fl.level,
               );
               const border = rectBorder(sw, sd);
-              const isTopFloor = fl.level === topLvl;
               const wallH = selectedLevel === 'all' ? 4.2 : 3.2;
 
               return (
                 <group key={`${b.id}-${fl.id}`} position={[cx, wy, cz]}>
-                  {/* Floor Slab */}
+                  {/* Floor Slab - High-performance Standard Material */}
                   <mesh receiveShadow>
                     <boxGeometry args={[sw, 0.32, sd]} />
-                    <meshPhysicalMaterial
+                    <meshStandardMaterial
                       color={
                         daylight
                           ? isFocused
                             ? '#f1f5f9'
                             : '#e2e8f0'
                           : isFocused
-                            ? '#10224a'
-                            : '#0b1329'
+                            ? '#111c38'
+                            : '#090e1c'
                       }
                       transparent
-                      opacity={isFocused ? (daylight ? 0.88 : 0.64) : 0.14}
-                      roughness={0.2}
-                      metalness={0.18}
-                      clearcoat={0.5}
+                      opacity={isFocused ? (daylight ? 0.92 : 0.75) : 0.16}
+                      roughness={0.4}
+                      metalness={0.1}
                     />
                   </mesh>
 
-                  {/* Translucent Architectural Glass Curtain Wall */}
+                  {/* Translucent Glass Curtain Wall */}
                   {isFocused && (
                     <mesh position={[0, wallH / 2 + 0.16, 0]}>
                       <boxGeometry args={[sw - 0.14, wallH, sd - 0.14]} />
-                      <meshPhysicalMaterial
+                      <meshStandardMaterial
                         color={daylight ? '#bae6fd' : '#1e3a8a'}
                         transparent
-                        opacity={daylight ? 0.14 : 0.08}
-                        roughness={0.1}
+                        opacity={daylight ? 0.11 : 0.06}
+                        roughness={0.2}
                         depthWrite={false}
                       />
                     </mesh>
@@ -645,22 +651,10 @@ const SceneContent: React.FC<
                           : '#38bdf8'
                         : '#475569'
                     }
-                    lineWidth={isFocused ? 1.7 : 0.8}
+                    lineWidth={isFocused ? 1.5 : 0.75}
                     transparent
-                    opacity={isFocused ? 0.72 : 0.22}
+                    opacity={isFocused ? 0.7 : 0.2}
                   />
-
-                  {isTopFloor && (selectedLevel === 'all' || isFocused) && (
-                    <Html
-                      position={[-sw / 2 + 1.4, wallH + 0.9, -sd / 2 + 1.4]}
-                      center={false}
-                      style={{ pointerEvents: 'none' }}
-                    >
-                      <div className="whitespace-nowrap rounded-lg bg-slate-950/85 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wider text-cyan-300 ring-1 ring-cyan-500/35 shadow-md backdrop-blur-md">
-                        {b.name}
-                      </div>
-                    </Html>
-                  )}
                 </group>
               );
             })}
@@ -830,15 +824,8 @@ const SceneContent: React.FC<
             : 0.46
           : 0.24;
 
-        const showLabel =
-          isHovered ||
-          isSelected ||
-          isStart ||
-          isEnd ||
-          isRadarMatch ||
-          ((cameraMode === 'chase' || cameraMode === 'first_person') &&
-            inRoute &&
-            node.is_place);
+        // Only show interactive HTML label on direct hover or when selected, preventing overlapping tag clutter
+        const showLabel = isHovered || isSelected;
 
         const roomBoxW =
           node.kind.toLowerCase().includes('ward') ||
@@ -856,7 +843,7 @@ const SceneContent: React.FC<
 
         return (
           <group key={node.id} position={[wx, wy + 0.28, wz]}>
-            {/* 3D Volumetric Architectural Room Enclosure */}
+            {/* 3D Volumetric Architectural Room Enclosure - Optimized Standard Material */}
             {showRoomVolumes && node.is_place && levelMatch && (
               <group position={[0, roomBoxH / 2 - 0.08, 0]}>
                 <mesh
@@ -866,14 +853,13 @@ const SceneContent: React.FC<
                   }}
                 >
                   <boxGeometry args={[roomBoxW, roomBoxH, roomBoxD]} />
-                  <meshPhysicalMaterial
+                  <meshStandardMaterial
                     color={color}
                     transparent
                     opacity={
-                      isSelected || isStart || isEnd || inRoute ? 0.28 : 0.14
+                      isSelected || isStart || isEnd || inRoute ? 0.25 : 0.12
                     }
-                    roughness={0.18}
-                    metalness={0.1}
+                    roughness={0.4}
                     depthWrite={false}
                   />
                 </mesh>
@@ -881,9 +867,9 @@ const SceneContent: React.FC<
                   points={rectBorder(roomBoxW, roomBoxD)}
                   position={[0, roomBoxH / 2, 0]}
                   color={color}
-                  lineWidth={isSelected || inRoute ? 2.1 : 1.1}
+                  lineWidth={isSelected || inRoute ? 1.6 : 0.8}
                   transparent
-                  opacity={isSelected || inRoute ? 0.92 : 0.55}
+                  opacity={isSelected || inRoute ? 0.85 : 0.45}
                 />
               </group>
             )}
@@ -940,31 +926,21 @@ const SceneContent: React.FC<
 
             {showLabel && (
               <Html
-                position={[
-                  0,
-                  isEnd
-                    ? 2.6
-                    : isStart
-                      ? 2.1
-                      : showRoomVolumes && node.is_place
-                        ? 2.35
-                        : 1.25,
-                  0,
-                ]}
+                position={[0, 2.2, 0]}
                 center
                 style={{ pointerEvents: 'none' }}
               >
                 <div
-                  className={`whitespace-nowrap rounded-lg px-2.5 py-1 text-[11px] font-semibold shadow-lg backdrop-blur-md ring-1 ${
+                  className={`whitespace-nowrap rounded-lg px-2.5 py-1 text-[11px] font-bold shadow-xl ring-1 ${
                     isStart
-                      ? 'bg-sky-500/95 text-white ring-sky-300'
+                      ? 'bg-sky-500 text-white ring-sky-300'
                       : isEnd
-                        ? 'bg-rose-500/95 text-white ring-rose-300'
+                        ? 'bg-rose-500 text-white ring-rose-300'
                         : isSelected
-                          ? 'bg-purple-600/95 text-white ring-purple-300'
+                          ? 'bg-purple-600 text-white ring-purple-300'
                           : isRadarMatch
-                            ? 'bg-emerald-600/95 text-white ring-emerald-300'
-                            : 'bg-slate-900/90 text-white ring-white/20'
+                            ? 'bg-emerald-600 text-white ring-emerald-300'
+                            : 'bg-slate-950 text-white ring-white/20'
                   }`}
                 >
                   <span>
@@ -997,12 +973,15 @@ const SceneContent: React.FC<
         cameraMode={cameraMode}
       />
 
+      {/* Cached floor shadow (frames=1 eliminates multi-pass GPU re-render on every frame) */}
       <ContactShadows
         position={[0, baseFloorY - 2.15, 0]}
-        opacity={daylight ? 0.32 : 0.48}
+        opacity={daylight ? 0.22 : 0.35}
         scale={90}
-        blur={2.5}
-        far={28}
+        blur={1.6}
+        far={16}
+        resolution={256}
+        frames={1}
       />
     </group>
   );
@@ -1075,20 +1054,26 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
 
   return (
     <div
-      className={`relative h-full w-full select-none rounded-2xl overflow-hidden transition-colors duration-500 ${
+      className={`relative h-full w-full select-none rounded-2xl overflow-hidden transition-colors duration-300 ${
         daylight
-          ? 'bg-gradient-to-b from-sky-100 via-slate-100 to-slate-200 spatial-grid-light ring-1 ring-slate-300'
-          : 'bg-[#070B18] spatial-grid-dark'
+          ? 'bg-gradient-to-b from-sky-100 via-slate-100 to-slate-200 ring-1 ring-slate-300'
+          : 'bg-[#060A16]'
       }`}
     >
       <Canvas
         camera={{ position: [34, 30, 38], fov: 41 }}
-        dpr={[1, 2]}
-        gl={{ antialias: true }}
+        dpr={[1, 1.25]}
+        performance={{ min: 0.6 }}
+        gl={{
+          antialias: true,
+          powerPreference: 'high-performance',
+          stencil: false,
+          depth: true,
+        }}
       >
         <color
           attach="background"
-          args={[daylight ? '#eef4fb' : '#070B18']}
+          args={[daylight ? '#eef4fb' : '#060A16']}
         />
         <ambientLight intensity={daylight ? 1.35 : 0.95} />
         <directionalLight
@@ -1098,12 +1083,12 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
         />
         <pointLight
           position={[-25, 20, -20]}
-          intensity={daylight ? 0.5 : 1.0}
+          intensity={daylight ? 0.45 : 0.85}
           color="#6366f1"
         />
         <pointLight
           position={[20, 15, 20]}
-          intensity={daylight ? 0.5 : 0.95}
+          intensity={daylight ? 0.45 : 0.85}
           color="#38bdf8"
         />
         <SceneContent
@@ -1132,19 +1117,19 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
         )}
       </Canvas>
 
-      {/* Top Left 4-Mode 3D Camera Bar */}
-      <div className="absolute top-3 left-3 z-10 flex flex-wrap items-center gap-1 rounded-xl bg-slate-950/85 p-1 text-[11px] ring-1 ring-white/15 backdrop-blur-md">
+      {/* Top Left: 4-Mode Camera Ribbon */}
+      <div className="absolute top-2.5 left-2.5 z-10 flex items-center gap-1 rounded-xl bg-slate-950/90 p-1 text-xs ring-1 ring-white/10 shadow-lg">
         <button
           type="button"
           onClick={() => setCameraMode('orbit')}
-          className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 font-bold transition ${
+          className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
             cameraMode === 'orbit'
               ? 'bg-cyan-500 text-slate-950 shadow-sm'
               : 'text-slate-300 hover:bg-white/10'
           }`}
         >
           <Orbit className="h-3.5 w-3.5" />
-          Orbit 3D
+          <span>Orbit</span>
         </button>
 
         {hasRoute && (
@@ -1152,26 +1137,26 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
             <button
               type="button"
               onClick={() => setCameraMode('chase')}
-              className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 font-bold transition ${
+              className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
                 cameraMode === 'chase'
                   ? 'bg-emerald-400 text-slate-950 shadow-sm'
                   : 'text-slate-300 hover:bg-white/10'
               }`}
             >
               <Navigation className="h-3.5 w-3.5" />
-              Chase POV
+              <span>Chase</span>
             </button>
             <button
               type="button"
               onClick={() => setCameraMode('first_person')}
-              className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 font-bold transition ${
+              className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
                 cameraMode === 'first_person'
                   ? 'bg-purple-400 text-slate-950 shadow-sm'
                   : 'text-slate-300 hover:bg-white/10'
               }`}
             >
               <Eye className="h-3.5 w-3.5" />
-              1st-Person Walk
+              <span>Walk</span>
             </button>
           </>
         )}
@@ -1181,7 +1166,7 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
           onClick={() =>
             setCameraMode((m) => (m === 'top_down' ? 'orbit' : 'top_down'))
           }
-          className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 font-bold transition ${
+          className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-bold transition ${
             cameraMode === 'top_down'
               ? 'bg-amber-400 text-slate-950 shadow-sm'
               : 'text-slate-300 hover:bg-white/10'
@@ -1189,103 +1174,97 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
           title="Top-down architectural drone view"
         >
           <Compass className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">Drone Top</span>
+          <span>Top</span>
         </button>
       </div>
 
-      {/* Top Right 3D Architectural Controls (Explode Stack, 3D Rooms, Daylight, Mobile Orbit) */}
-      <div className="absolute top-3 right-3 z-10 flex flex-wrap items-center justify-end gap-1.5">
+      {/* Top Right: Architectural Tools in One Tidy Row */}
+      <div className="absolute top-2.5 right-2.5 z-10 flex items-center gap-1 rounded-xl bg-slate-950/90 p-1 text-xs ring-1 ring-white/10 shadow-lg">
         {props.selectedLevel === 'all' && (
           <button
             type="button"
             onClick={cycleExplodeFactor}
-            className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-[11px] font-bold ring-1 backdrop-blur-md transition ${
+            className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${
               explodeFactor > 1
-                ? 'bg-indigo-500/90 text-white ring-indigo-300 shadow-md'
-                : 'bg-slate-950/80 text-slate-200 ring-white/15 hover:bg-slate-900'
+                ? 'bg-indigo-500 text-white shadow-sm'
+                : 'text-slate-300 hover:bg-white/10'
             }`}
-            title="Explode vertical spacing between floors for X-Ray inspection"
+            title="Explode floor spacing"
           >
             <Layers className="h-3.5 w-3.5 text-cyan-300" />
-            <span>Explode {explodeFactor}×</span>
+            <span>{explodeFactor}×</span>
           </button>
         )}
 
         <button
           type="button"
           onClick={() => setShowRoomVolumes((v) => !v)}
-          className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-[11px] font-bold ring-1 backdrop-blur-md transition ${
+          className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${
             showRoomVolumes
-              ? 'bg-cyan-500/90 text-slate-950 ring-cyan-300'
-              : 'bg-slate-950/80 text-slate-300 ring-white/15 hover:bg-slate-900'
+              ? 'bg-cyan-500/90 text-slate-950 shadow-sm'
+              : 'text-slate-300 hover:bg-white/10'
           }`}
-          title="Toggle 3D Volumetric Room Enclosures"
+          title="Toggle 3D Rooms"
         >
           <Box className="h-3.5 w-3.5" />
-          <span className="hidden sm:inline">3D Rooms</span>
+          <span className="hidden sm:inline">Rooms</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setRadarFilter((cur) =>
+              cur === 'none'
+                ? 'emergency'
+                : cur === 'emergency'
+                  ? 'lift'
+                  : cur === 'lift'
+                    ? 'washroom'
+                    : 'none',
+            );
+          }}
+          className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${
+            radarFilter !== 'none'
+              ? 'bg-emerald-500 text-slate-950 shadow-sm'
+              : 'text-slate-300 hover:bg-white/10'
+          }`}
+          title="Cycle 3D Radar Highlights: Off → Exits → Lifts → WC"
+        >
+          <Radar className="h-3.5 w-3.5" />
+          <span>
+            {radarFilter === 'none'
+              ? 'Radar'
+              : radarFilter === 'emergency'
+                ? '🚨 Exit'
+                : radarFilter === 'lift'
+                  ? '🛗 Lift'
+                  : '🚻 WC'}
+          </span>
         </button>
 
         <button
           type="button"
           onClick={() => setMobileTouchOrbit((v) => !v)}
-          className={`sm:hidden inline-flex items-center gap-1 rounded-xl px-2 py-1.5 text-[10px] font-bold ring-1 backdrop-blur-md transition ${
-            mobileTouchOrbit
-              ? 'bg-cyan-500/90 text-slate-950 ring-cyan-300'
-              : 'bg-slate-900/90 text-amber-300 ring-amber-400/40'
+          className={`sm:hidden inline-flex items-center rounded-lg p-1 text-xs font-bold transition ${
+            mobileTouchOrbit ? 'text-cyan-400' : 'text-slate-400'
           }`}
           title="Toggle 3D Orbit vs Page Scroll on Mobile"
         >
-          {mobileTouchOrbit ? '🕹️ Orbit' : '📜 Scroll'}
+          {mobileTouchOrbit ? '🕹️' : '📜'}
         </button>
 
         <button
           type="button"
           onClick={() => setDaylight((v) => !v)}
-          className="inline-flex items-center gap-1 rounded-xl bg-slate-950/80 px-2.5 py-1.5 text-[11px] font-bold text-white ring-1 ring-white/15 backdrop-blur-md hover:bg-slate-900 transition"
+          className="rounded-lg p-1 text-slate-300 hover:bg-white/10 transition"
+          title="Toggle Daylight / Night mode"
         >
           {daylight ? (
-            <>
-              <Moon className="h-3.5 w-3.5 text-cyan-400" />
-              <span className="hidden sm:inline">Night</span>
-            </>
+            <Moon className="h-3.5 w-3.5 text-cyan-400" />
           ) : (
-            <>
-              <Sun className="h-3.5 w-3.5 text-amber-300" />
-              <span className="hidden sm:inline">Daylight</span>
-            </>
+            <Sun className="h-3.5 w-3.5 text-amber-300" />
           )}
         </button>
-      </div>
-
-      {/* 3D Facility Radar Highlight Bar (Emergency/Exits, Lifts/Stairs, Washrooms) */}
-      <div className="absolute top-14 left-3 z-10 flex items-center gap-1 rounded-xl bg-slate-950/80 p-1 text-[10px] ring-1 ring-white/10 backdrop-blur-md">
-        <span className="inline-flex items-center gap-1 px-1.5 text-slate-400 font-bold">
-          <Radar className="h-3 w-3 text-cyan-400" />
-          <span className="hidden sm:inline">3D Radar:</span>
-        </span>
-        {(
-          [
-            { id: 'none', label: 'Off' },
-            { id: 'emergency', label: '🚨 Exits/ER' },
-            { id: 'lift', label: '🛗 Lifts/Stairs' },
-            { id: 'washroom', label: '🚻 WC' },
-          ] as { id: Radar3DFilter; label: string }[]
-        ).map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() =>
-              setRadarFilter((cur) => (cur === item.id ? 'none' : item.id))
-            }
-            className={`rounded-lg px-2 py-0.5 font-bold transition ${
-              radarFilter === item.id
-                ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                : 'text-slate-300 hover:bg-white/10'
-            }`}
-          >
-            {item.label}
-          </button>
-        ))}
       </div>
 
       {/* FIXED ANCHOR INSPECTOR PANEL & LANDMARK CAROUSEL (Never overlaps 3D scene) */}

@@ -1045,348 +1045,521 @@ export const RoutePage: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-              {/* RIGHT ON DESKTOP / TOP ON MOBILE: CINEMA STREET-VIEW + 3D/2D TWIN */}
-              <div className={`lg:col-span-7 lg:order-2 lg:sticky lg:top-32 space-y-3 ${mobileViewMode === 'steps' ? 'hidden lg:block' : ''}`}>
-                {/* CINEMA "STREET-VIEW" ACTIVE LANDMARK PHOTO STAGE */}
-                {activeStep && showStreetStage && mobileViewMode !== 'map' && (
-                  <div className="relative overflow-hidden rounded-3xl bg-[#050914] ring-1 ring-slate-900/15 shadow-2xl">
-                    {/* Ambient Color-Matched Backlight Glow */}
-                    {activeStep.photo_url && (
-                      <img
-                        src={mediaUrl(activeStep.photo_url)}
-                        alt=""
-                        aria-hidden="true"
-                        className="pointer-events-none absolute -inset-4 h-[calc(100%+2rem)] w-[calc(100%+2rem)] object-cover blur-2xl opacity-45 scale-110"
-                      />
-                    )}
-
-                    <div className="relative h-52 sm:h-60 w-full overflow-hidden">
-                      {activeStepNode?.video_url ? (
-                        <video
-                          src={mediaUrl(activeStepNode.video_url)}
-                          poster={activeStep.photo_url ? mediaUrl(activeStep.photo_url) : undefined}
-                          autoPlay
-                          loop
-                          muted
-                          playsInline
-                          className="h-full w-full object-cover transition-all duration-500"
-                        />
-                      ) : activeStep.photo_url ? (
-                        <img
-                          src={mediaUrl(activeStep.photo_url)}
-                          alt={activeStep.name}
-                          loading="lazy"
-                          className="h-full w-full object-cover hdr-photo transition-all duration-500"
-                        />
+              {/* RIGHT ON DESKTOP / TOP ON MOBILE: HERO 3D/2D TWIN & STREET-VIEW WORKSPACE */}
+              <div
+                className={`lg:col-span-7 lg:order-2 lg:sticky lg:top-24 space-y-3 ${
+                  mobileViewMode === 'steps' ? 'hidden lg:block' : ''
+                }`}
+              >
+                {/* Unified Workspace Header Ribbon */}
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-white p-2 ring-1 ring-slate-200/80 shadow-soft">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isPlayingWalker) {
+                          setIsPlayingWalker(false);
+                        } else {
+                          setScrubProgress(null);
+                          setIsPlayingWalker(true);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition"
+                    >
+                      {isPlayingWalker ? (
+                        <>
+                          <Pause className="h-3.5 w-3.5 text-cyan-400" /> Pause
+                        </>
                       ) : (
-                        <IsometricVenueArt
-                          accent={venue.accent || '#0ea5e9'}
-                          buildings={venue.buildings.length}
-                          floors={Math.max(2, route.levels.length)}
-                          compact
-                        />
+                        <>
+                          <Play className="h-3.5 w-3.5 text-emerald-400" /> Play
+                        </>
                       )}
+                    </button>
 
-                    {/* Cinema Vignette */}
-                    <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#050914] via-[#050914]/25 to-slate-950/45" />
-
-                    {/* 3D Perspective AR-Style Directional Chevrons Overlaid on Corridor Floor */}
-                    <div className="pointer-events-none absolute inset-x-0 bottom-14 flex items-center justify-center">
-                      {activeStep.icon === 'arrive' ? (
-                        <div className="flex flex-col items-center gap-1 rounded-2xl bg-emerald-500/25 px-4 py-2 ring-2 ring-emerald-400/80 backdrop-blur-md shadow-[0_0_30px_rgba(16,185,129,0.55)]">
-                          <Flag className="h-6 w-6 text-emerald-300" />
-                          <span className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-200">
-                            Destination Reached
-                          </span>
-                        </div>
-                      ) : activeStep.icon === 'lift' ||
-                        activeStep.icon === 'up' ||
-                        activeStep.icon === 'down' ? (
-                        <div className="flex items-center gap-2 rounded-2xl bg-amber-500/25 px-4 py-2 ring-2 ring-amber-400/80 backdrop-blur-md shadow-[0_0_28px_rgba(245,158,11,0.45)]">
-                          {activeStep.icon === 'down' ? (
-                            <ArrowDown className="h-5 w-5 text-amber-300 animate-bounce" />
-                          ) : (
-                            <ArrowUp className="h-5 w-5 text-amber-300 animate-bounce" />
-                          )}
-                          <span className="text-xs font-extrabold uppercase tracking-wider text-amber-100">
-                            {activeStep.icon === 'lift'
-                              ? `Take Lift · ${formatLevel(activeStep.level)}`
-                              : `Take Stairs · ${formatLevel(activeStep.level)}`}
-                          </span>
-                        </div>
-                      ) : (
-                        <div
-                          style={{
-                            transform: `perspective(420px) rotateX(54deg) rotateZ(${
-                              activeStep.icon === 'left'
-                                ? '-38deg'
-                                : activeStep.icon === 'right'
-                                  ? '38deg'
-                                  : '0deg'
-                            })`,
-                          }}
-                          className="flex flex-col items-center -space-y-3 drop-shadow-[0_0_16px_rgba(34,211,238,0.95)]"
-                        >
-                          <ChevronUp className="h-9 w-9 text-cyan-300 stroke-[3] street-chevron-3" />
-                          <ChevronUp className="h-10 w-10 text-cyan-300 stroke-[3] street-chevron-2" />
-                          <ChevronUp className="h-11 w-11 text-white stroke-[3.2] street-chevron-1" />
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Top HUD Badges */}
-                    <div className="absolute left-3.5 top-3.5 flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-950/80 px-3 py-1 text-[11px] font-extrabold text-cyan-300 ring-1 ring-cyan-400/40 backdrop-blur-md">
-                        <Eye className="h-3 w-3" />
-                        STREET-VIEW · STEP {activeStepIdx + 1}/{route.steps.length}
-                      </span>
-                      <span className="rounded-full bg-slate-950/70 px-2.5 py-1 text-[11px] font-semibold text-white ring-1 ring-white/15 backdrop-blur-md">
-                        {formatLevel(activeStep.level)}
-                      </span>
-                    </div>
-
-                    <div className="absolute right-3.5 top-3.5 flex items-center gap-1.5">
-                      {activeStep.photo_url && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setLightboxZoom(1);
-                            setLightboxUrl({
-                              url: mediaUrl(activeStep.photo_url)!,
-                              caption: `${activeStep.name} (${formatLevel(activeStep.level)})`,
-                            });
-                          }}
-                          className="inline-flex items-center gap-1 rounded-xl bg-slate-950/75 px-2.5 py-1.5 text-[11px] font-bold text-white ring-1 ring-white/20 backdrop-blur-md hover:bg-slate-900 transition"
-                        >
-                          <Maximize2 className="h-3 w-3 text-cyan-300" />
-                          HD Zoom
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => setShowStreetStage(false)}
-                        className="rounded-xl bg-slate-950/75 px-2.5 py-1.5 text-[11px] font-semibold text-slate-300 ring-1 ring-white/15 backdrop-blur-md hover:text-white transition"
-                        title="Minimize Street-View stage"
+                    {twinMode === '3d' && (
+                      <select
+                        value={String(selectedLevel)}
+                        onChange={(e) =>
+                          setSelectedLevel(
+                            e.target.value === 'all'
+                              ? 'all'
+                              : Number(e.target.value),
+                          )
+                        }
+                        className="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700 focus:outline-none ring-1 ring-slate-200/60"
+                        aria-label="Filter 3D floor"
                       >
-                        Hide
-                      </button>
-                    </div>
-
-                    {/* Bottom Glass Step Controller */}
-                    <div className="absolute inset-x-3 bottom-3 flex items-center justify-between gap-3 rounded-2xl bg-slate-950/80 px-3.5 py-2.5 text-white ring-1 ring-white/15 backdrop-blur-xl">
-                      <div className="min-w-0">
-                        <div className="text-xs sm:text-sm font-extrabold leading-snug truncate">
-                          {activeStep.instruction}
-                        </div>
-                        <div className="text-[11px] text-cyan-200/90 truncate">
-                          {activeStep.name}
-                          {activeStep.distance_m > 0
-                            ? ` · Walk ${Math.round(activeStep.distance_m)} m`
-                            : ''}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          disabled={activeStepIdx <= 0}
-                          onClick={() => {
-                            const prev = Math.max(0, activeStepIdx - 1);
-                            handleStepClick(route.steps[prev], prev);
-                          }}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-white/10 text-white ring-1 ring-white/15 hover:bg-white/20 disabled:opacity-35 transition"
-                          aria-label="Previous step"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          disabled={activeStepIdx >= route.steps.length - 1}
-                          onClick={() => {
-                            const nxt = Math.min(
-                              route.steps.length - 1,
-                              activeStepIdx + 1,
-                            );
-                            handleStepClick(route.steps[nxt], nxt);
-                          }}
-                          className="inline-flex items-center gap-1 rounded-xl bg-cyan-500 px-3 py-1.5 text-xs font-extrabold text-slate-950 hover:bg-cyan-400 disabled:opacity-35 transition"
-                        >
-                          Next
-                          <ChevronRight className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* Twin Controls Bar */}
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-white p-2.5 ring-1 ring-slate-200/80 shadow-soft">
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (isPlayingWalker) {
-                        setIsPlayingWalker(false);
-                      } else {
-                        setScrubProgress(null);
-                        setIsPlayingWalker(true);
-                      }
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition"
-                  >
-                    {isPlayingWalker ? (
-                      <>
-                        <Pause className="h-3.5 w-3.5 text-cyan-400" /> Pause Walker
-                      </>
-                    ) : (
-                      <>
-                        <Play className="h-3.5 w-3.5 text-emerald-400" /> Animate Route
-                      </>
+                        <option value="all">All Floors</option>
+                        {route.levels.map((lvl) => (
+                          <option key={lvl} value={String(lvl)}>
+                            {formatLevel(lvl)}
+                          </option>
+                        ))}
+                      </select>
                     )}
-                  </button>
+                  </div>
 
-                  {!showStreetStage && (
+                  {/* 3-Way Mode Switcher: 3D Twin | 2D Plan | Cinema Street-View */}
+                  <div className="flex items-center rounded-xl bg-slate-100 p-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTwinMode('3d');
+                        setShowStreetStage(false);
+                      }}
+                      className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                        twinMode === '3d' && !showStreetStage
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <Box className="h-3.5 w-3.5 text-indigo-600" />
+                      3D Twin
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTwinMode('2d');
+                        setShowStreetStage(false);
+                        if (selectedLevel === 'all') {
+                          setSelectedLevel(
+                            activeStep?.level ?? route.levels[0] ?? 0,
+                          );
+                        }
+                      }}
+                      className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                        twinMode === '2d' && !showStreetStage
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      <MapIcon className="h-3.5 w-3.5 text-cyan-600" />
+                      2D Plan
+                    </button>
                     <button
                       type="button"
                       onClick={() => setShowStreetStage(true)}
-                      className="inline-flex items-center gap-1 rounded-xl bg-cyan-50 px-2.5 py-1.5 text-xs font-bold text-cyan-800 ring-1 ring-cyan-200 hover:bg-cyan-100 transition"
+                      className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
+                        showStreetStage
+                          ? 'bg-white text-slate-900 shadow-sm'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
                     >
-                      <Eye className="h-3.5 w-3.5 text-cyan-600" />
-                      Show Street-View
+                      <Eye className="h-3.5 w-3.5 text-emerald-600" />
+                      Street View
                     </button>
-                  )}
+                  </div>
+                </div>
 
-                  {twinMode === '3d' && (
-                    <select
-                      value={String(selectedLevel)}
-                      onChange={(e) =>
-                        setSelectedLevel(
-                          e.target.value === 'all' ? 'all' : Number(e.target.value),
-                        )
-                      }
-                      className="rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-700 focus:outline-none"
-                      aria-label="Filter 3D floor"
-                    >
-                      <option value="all">All Floors</option>
-                      {route.levels.map((lvl) => (
-                        <option key={lvl} value={String(lvl)}>
-                          {formatLevel(lvl)}
-                        </option>
+                {/* FULL-BLEED WORKSPACE STAGE (Never squished, never cut off) */}
+                <div className="relative h-[480px] sm:h-[540px] lg:h-[calc(100vh-14rem)] min-h-[460px] max-h-[660px] w-full overflow-hidden rounded-3xl bg-[#060A16] ring-1 ring-slate-900/15 shadow-2xl">
+                  {showStreetStage ? (
+                    /* CINEMA STREET-VIEW FULL STAGE */
+                    <div className="relative h-full w-full overflow-hidden flex flex-col justify-between">
+                      {/* Media Image / Video */}
+                      <div className="absolute inset-0">
+                        {activeStepNode?.video_url ? (
+                          <video
+                            src={mediaUrl(activeStepNode.video_url)}
+                            poster={
+                              activeStep?.photo_url
+                                ? mediaUrl(activeStep.photo_url)
+                                : undefined
+                            }
+                            autoPlay
+                            loop
+                            muted
+                            playsInline
+                            className="h-full w-full object-cover"
+                          />
+                        ) : activeStep?.photo_url ? (
+                          <img
+                            src={mediaUrl(activeStep.photo_url)}
+                            alt={activeStep.name}
+                            loading="lazy"
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <IsometricVenueArt
+                            accent={venue.accent || '#0ea5e9'}
+                            buildings={venue.buildings.length}
+                            floors={Math.max(2, route.levels.length)}
+                            compact
+                          />
+                        )}
+                        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-slate-950/60" />
+                      </div>
+
+                      {/* Top Bar inside Street View */}
+                      <div className="relative z-10 flex items-center justify-between p-3.5">
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-950/85 px-3 py-1 text-xs font-bold text-cyan-300 ring-1 ring-cyan-400/40">
+                            <Eye className="h-3.5 w-3.5" />
+                            STEP {activeStepIdx + 1} OF {route.steps.length}
+                          </span>
+                          <span className="rounded-full bg-slate-950/80 px-2.5 py-1 text-xs font-semibold text-white ring-1 ring-white/15">
+                            {formatLevel(activeStep?.level ?? 0)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {activeStep?.photo_url && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setLightboxZoom(1);
+                                setLightboxUrl({
+                                  url: mediaUrl(activeStep.photo_url)!,
+                                  caption: `${activeStep.name} (${formatLevel(activeStep.level)})`,
+                                });
+                              }}
+                              className="inline-flex items-center gap-1 rounded-xl bg-slate-950/80 px-2.5 py-1.5 text-xs font-bold text-white ring-1 ring-white/20 hover:bg-slate-900 transition"
+                            >
+                              <Maximize2 className="h-3.5 w-3.5 text-cyan-300" />
+                              HD Zoom
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setShowStreetStage(false)}
+                            className="rounded-xl bg-slate-950/80 px-2.5 py-1.5 text-xs font-semibold text-slate-300 ring-1 ring-white/15 hover:text-white transition"
+                          >
+                            Close ✕
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* AR Turn Chevrons */}
+                      <div className="pointer-events-none relative z-10 flex items-center justify-center mb-6">
+                        {activeStep?.icon === 'arrive' ? (
+                          <div className="flex flex-col items-center gap-1 rounded-2xl bg-emerald-500/30 px-5 py-2.5 ring-2 ring-emerald-400 shadow-lg">
+                            <Flag className="h-7 w-7 text-emerald-300" />
+                            <span className="text-xs font-extrabold uppercase tracking-widest text-emerald-100">
+                              Destination Reached
+                            </span>
+                          </div>
+                        ) : activeStep?.icon === 'lift' ||
+                          activeStep?.icon === 'up' ||
+                          activeStep?.icon === 'down' ? (
+                          <div className="flex items-center gap-2.5 rounded-2xl bg-amber-500/30 px-5 py-2.5 ring-2 ring-amber-400 shadow-lg">
+                            {activeStep?.icon === 'down' ? (
+                              <ArrowDown className="h-6 w-6 text-amber-300 animate-bounce" />
+                            ) : (
+                              <ArrowUp className="h-6 w-6 text-amber-300 animate-bounce" />
+                            )}
+                            <span className="text-xs font-extrabold uppercase tracking-wider text-amber-100">
+                              {activeStep?.icon === 'lift'
+                                ? `Take Lift · ${formatLevel(activeStep.level)}`
+                                : `Take Stairs · ${formatLevel(activeStep.level)}`}
+                            </span>
+                          </div>
+                        ) : (
+                          <div
+                            style={{
+                              transform: `perspective(420px) rotateX(54deg) rotateZ(${
+                                activeStep?.icon === 'left'
+                                  ? '-38deg'
+                                  : activeStep?.icon === 'right'
+                                    ? '38deg'
+                                    : '0deg'
+                              })`,
+                            }}
+                            className="flex flex-col items-center -space-y-3"
+                          >
+                            <ChevronUp className="h-10 w-10 text-cyan-300 stroke-[3]" />
+                            <ChevronUp className="h-11 w-11 text-cyan-300 stroke-[3]" />
+                            <ChevronUp className="h-12 w-12 text-white stroke-[3.2]" />
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Bottom Instruction & Navigation */}
+                      <div className="relative z-10 m-3 flex items-center justify-between gap-3 rounded-2xl bg-slate-950/85 p-3 text-white ring-1 ring-white/15">
+                        <div className="min-w-0">
+                          <div className="text-sm font-extrabold truncate">
+                            {activeStep?.instruction}
+                          </div>
+                          <div className="text-xs text-cyan-300 truncate">
+                            {activeStep?.name}
+                            {activeStep && activeStep.distance_m > 0
+                              ? ` · Walk ${Math.round(activeStep.distance_m)} m`
+                              : ''}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            disabled={activeStepIdx <= 0}
+                            onClick={() => {
+                              const prev = Math.max(0, activeStepIdx - 1);
+                              handleStepClick(route.steps[prev], prev);
+                            }}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-white/10 text-white hover:bg-white/20 disabled:opacity-30 transition"
+                            aria-label="Previous step"
+                          >
+                            <ChevronLeft className="h-4 w-4" />
+                          </button>
+                          <button
+                            type="button"
+                            disabled={activeStepIdx >= route.steps.length - 1}
+                            onClick={() => {
+                              const nxt = Math.min(
+                                route.steps.length - 1,
+                                activeStepIdx + 1,
+                              );
+                              handleStepClick(route.steps[nxt], nxt);
+                            }}
+                            className="inline-flex items-center gap-1 rounded-xl bg-cyan-500 px-3 py-1.5 text-xs font-extrabold text-slate-950 hover:bg-cyan-400 disabled:opacity-30 transition"
+                          >
+                            Next
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : twinMode === '3d' ? (
+                    /* 3D INTERACTIVE TWIN (Full Frame + Floating PiP Card) */
+                    <div className="relative h-full w-full">
+                      <Suspense fallback={<Skeleton3D />}>
+                        <Venue3D
+                          venue={venue}
+                          graph={graph}
+                          selectedLevel={selectedLevel}
+                          selectedNodeId={activeStep?.node_id}
+                          startNodeId={route.from_node}
+                          endNodeId={route.to_node}
+                          routePath={activePath}
+                          walkerProgress={scrubProgress}
+                          isPlayingWalker={isPlayingWalker}
+                          onSelectNode={(n) => {
+                            const idx = route.steps.findIndex(
+                              (s) => s.node_id === n.id,
+                            );
+                            if (idx >= 0) handleStepClick(route.steps[idx], idx);
+                          }}
+                        />
+                      </Suspense>
+
+                      {/* Floating Step Picture-in-Picture Landmark Card */}
+                      {activeStep && (
+                        <div className="absolute bottom-3 left-3 z-10 w-[calc(100%-1.5rem)] sm:w-auto max-w-sm rounded-2xl bg-slate-950/90 p-2 text-white ring-1 ring-white/15 shadow-2xl flex items-center gap-2.5">
+                          {activeStep.photo_url ? (
+                            <img
+                              src={mediaUrl(activeStep.photo_url)}
+                              alt=""
+                              onClick={() => {
+                                setLightboxZoom(1);
+                                setLightboxUrl({
+                                  url: mediaUrl(activeStep.photo_url)!,
+                                  caption: `${activeStep.name} (${formatLevel(activeStep.level)})`,
+                                });
+                              }}
+                              className="h-12 w-14 rounded-xl object-cover ring-1 ring-white/20 shrink-0 cursor-pointer hover:opacity-90 transition"
+                              title="Click for HD zoom"
+                            />
+                          ) : (
+                            <div className="flex h-12 w-14 items-center justify-center rounded-xl bg-slate-800 text-sm text-cyan-400 shrink-0">
+                              📍
+                            </div>
+                          )}
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1 text-[10px] font-bold text-cyan-300">
+                              <span>
+                                Step {activeStepIdx + 1}/{route.steps.length}
+                              </span>
+                              <span>·</span>
+                              <span>{formatLevel(activeStep.level)}</span>
+                            </div>
+                            <div className="text-xs font-bold truncate">
+                              {activeStep.instruction}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              disabled={activeStepIdx <= 0}
+                              onClick={() => {
+                                const prev = Math.max(0, activeStepIdx - 1);
+                                handleStepClick(route.steps[prev], prev);
+                              }}
+                              className="rounded-lg p-1 text-slate-300 hover:text-white hover:bg-white/10 disabled:opacity-25"
+                              title="Previous step"
+                            >
+                              <ChevronLeft className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={activeStepIdx >= route.steps.length - 1}
+                              onClick={() => {
+                                const nxt = Math.min(
+                                  route.steps.length - 1,
+                                  activeStepIdx + 1,
+                                );
+                                handleStepClick(route.steps[nxt], nxt);
+                              }}
+                              className="rounded-lg p-1 text-slate-300 hover:text-white hover:bg-white/10 disabled:opacity-25"
+                              title="Next step"
+                            >
+                              <ChevronRight className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setShowStreetStage(true)}
+                              className="rounded-lg bg-cyan-500/20 px-2 py-1 text-[10px] font-extrabold text-cyan-300 ring-1 ring-cyan-400/40 hover:bg-cyan-500/30 transition ml-0.5"
+                              title="Open full Cinema Street-View"
+                            >
+                              Photo ↗
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    /* 2D ARCHITECTURAL FLOOR PLAN (Full Frame + Floating PiP Card) */
+                    <div className="relative h-full w-full">
+                      <FloorPlan2D
+                        venue={venue}
+                        graph={graph}
+                        selectedLevel={
+                          typeof selectedLevel === 'number'
+                            ? selectedLevel
+                            : activeStep?.level ?? route.levels[0] ?? 0
+                        }
+                        onChangeLevel={(lvl) => setSelectedLevel(lvl)}
+                        selectedNodeId={activeStep?.node_id}
+                        startNodeId={route.from_node}
+                        endNodeId={route.to_node}
+                        routePath={activePath}
+                        walkerNodeId={activeStep?.node_id}
+                        onSelectNode={(n) => {
+                          const idx = route.steps.findIndex(
+                            (s) => s.node_id === n.id,
+                          );
+                          if (idx >= 0) handleStepClick(route.steps[idx], idx);
+                        }}
+                      />
+
+                      {/* Floating Step Picture-in-Picture Landmark Card */}
+                      {activeStep && (
+                        <div className="absolute bottom-3 left-3 z-10 w-[calc(100%-1.5rem)] sm:w-auto max-w-sm rounded-2xl bg-slate-950/90 p-2 text-white ring-1 ring-white/15 shadow-2xl flex items-center gap-2.5">
+                          {activeStep.photo_url ? (
+                            <img
+                              src={mediaUrl(activeStep.photo_url)}
+                              alt=""
+                              onClick={() => {
+                                setLightboxZoom(1);
+                                setLightboxUrl({
+                                  url: mediaUrl(activeStep.photo_url)!,
+                                  caption: `${activeStep.name} (${formatLevel(activeStep.level)})`,
+                                });
+                              }}
+                              className="h-12 w-14 rounded-xl object-cover ring-1 ring-white/20 shrink-0 cursor-pointer hover:opacity-90 transition"
+                              title="Click for HD zoom"
+                            />
+                          ) : (
+                            <div className="flex h-12 w-14 items-center justify-center rounded-xl bg-slate-800 text-sm text-cyan-400 shrink-0">
+                              📍
+                            </div>
+                          )}
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1 text-[10px] font-bold text-cyan-300">
+                              <span>
+                                Step {activeStepIdx + 1}/{route.steps.length}
+                              </span>
+                              <span>·</span>
+                              <span>{formatLevel(activeStep.level)}</span>
+                            </div>
+                            <div className="text-xs font-bold truncate">
+                              {activeStep.instruction}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              disabled={activeStepIdx <= 0}
+                              onClick={() => {
+                                const prev = Math.max(0, activeStepIdx - 1);
+                                handleStepClick(route.steps[prev], prev);
+                              }}
+                              className="rounded-lg p-1 text-slate-300 hover:text-white hover:bg-white/10 disabled:opacity-25"
+                              title="Previous step"
+                            >
+                              <ChevronLeft className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={activeStepIdx >= route.steps.length - 1}
+                              onClick={() => {
+                                const nxt = Math.min(
+                                  route.steps.length - 1,
+                                  activeStepIdx + 1,
+                                );
+                                handleStepClick(route.steps[nxt], nxt);
+                              }}
+                              className="rounded-lg p-1 text-slate-300 hover:text-white hover:bg-white/10 disabled:opacity-25"
+                              title="Next step"
+                            >
+                              <ChevronRight className="h-4 w-4" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setShowStreetStage(true)}
+                              className="rounded-lg bg-cyan-500/20 px-2 py-1 text-[10px] font-extrabold text-cyan-300 ring-1 ring-cyan-400/40 hover:bg-cyan-500/30 transition ml-0.5"
+                              title="Open full Cinema Street-View"
+                            >
+                              Photo ↗
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Leg-by-leg summary for multi-stop trips */}
+                {route.legs && route.legs.length > 1 && (
+                  <div className="rounded-2xl bg-white p-3.5 ring-1 ring-slate-200/80 space-y-2">
+                    <div className="text-xs font-extrabold uppercase tracking-wider text-slate-600">
+                      Multi-Stop Leg Breakdown
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {route.legs.map((leg) => (
+                        <div
+                          key={leg.leg_index}
+                          className="rounded-xl bg-slate-50 px-3 py-2 text-xs ring-1 ring-slate-200/70 flex items-center justify-between gap-2"
+                        >
+                          <div className="truncate">
+                            <span className="font-bold text-indigo-600 mr-1">
+                              Leg {leg.leg_index}:
+                            </span>
+                            <span className="font-semibold text-slate-900">
+                              {leg.from_name} → {leg.to_name}
+                            </span>
+                          </div>
+                          <span className="shrink-0 font-mono text-[11px] text-slate-500">
+                            {Math.round(leg.distance_m)}m
+                          </span>
+                        </div>
                       ))}
-                    </select>
-                  )}
-                </div>
-
-                {/* 3D / 2D Switcher */}
-                <div className="flex items-center rounded-xl bg-slate-100 p-1">
-                  <button
-                    type="button"
-                    onClick={() => setTwinMode('3d')}
-                    className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
-                      twinMode === '3d'
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-600'
-                    }`}
-                  >
-                    <Box className="h-3.5 w-3.5 text-indigo-600" />
-                    3D Route
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTwinMode('2d');
-                      if (selectedLevel === 'all') {
-                        setSelectedLevel(activeStep?.level ?? route.levels[0] ?? 0);
-                      }
-                    }}
-                    className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-bold transition ${
-                      twinMode === '2d'
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-600'
-                    }`}
-                  >
-                    <MapIcon className="h-3.5 w-3.5 text-cyan-600" />
-                    2D Plan
-                  </button>
-                </div>
-              </div>
-
-              {/* Map Canvas */}
-              <div className={`h-[390px] sm:h-[490px] w-full ${mobileViewMode === 'street' ? 'hidden lg:block' : ''}`}>
-                {twinMode === '3d' ? (
-                  <Suspense fallback={<Skeleton3D />}>
-                    <Venue3D
-                      venue={venue}
-                      graph={graph}
-                      selectedLevel={selectedLevel}
-                      selectedNodeId={activeStep?.node_id}
-                      startNodeId={route.from_node}
-                      endNodeId={route.to_node}
-                      routePath={activePath}
-                      walkerProgress={scrubProgress}
-                      isPlayingWalker={isPlayingWalker}
-                      onSelectNode={(n) => {
-                        const idx = route.steps.findIndex((s) => s.node_id === n.id);
-                        if (idx >= 0) handleStepClick(route.steps[idx], idx);
-                      }}
-                    />
-                  </Suspense>
-                ) : (
-                  <FloorPlan2D
-                    venue={venue}
-                    graph={graph}
-                    selectedLevel={
-                      typeof selectedLevel === 'number'
-                        ? selectedLevel
-                        : activeStep?.level ?? route.levels[0] ?? 0
-                    }
-                    onChangeLevel={(lvl) => setSelectedLevel(lvl)}
-                    selectedNodeId={activeStep?.node_id}
-                    startNodeId={route.from_node}
-                    endNodeId={route.to_node}
-                    routePath={activePath}
-                    walkerNodeId={activeStep?.node_id}
-                    onSelectNode={(n) => {
-                      const idx = route.steps.findIndex((s) => s.node_id === n.id);
-                      if (idx >= 0) handleStepClick(route.steps[idx], idx);
-                    }}
-                  />
+                    </div>
+                  </div>
                 )}
               </div>
 
-              {/* Leg-by-leg summary for multi-stop trips */}
-              {route.legs && route.legs.length > 1 && (
-                <div className="rounded-2xl bg-white p-3.5 ring-1 ring-slate-200/80 space-y-2">
-                  <div className="text-xs font-extrabold uppercase tracking-wider text-slate-600">
-                    Multi-Stop Leg Breakdown
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {route.legs.map((leg) => (
-                      <div
-                        key={leg.leg_index}
-                        className="rounded-xl bg-slate-50 px-3 py-2 text-xs ring-1 ring-slate-200/70 flex items-center justify-between gap-2"
-                      >
-                        <div className="truncate">
-                          <span className="font-bold text-indigo-600 mr-1">
-                            Leg {leg.leg_index}:
-                          </span>
-                          <span className="font-semibold text-slate-900">
-                            {leg.from_name} → {leg.to_name}
-                          </span>
-                        </div>
-                        <span className="shrink-0 font-mono text-[11px] text-slate-500">
-                          {Math.round(leg.distance_m)}m
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* LEFT ON DESKTOP / BOTTOM ON MOBILE: VISUAL TURN-BY-TURN STEPS */}
-            <div className={`lg:col-span-5 lg:order-1 space-y-3 ${mobileViewMode === 'street' || mobileViewMode === 'map' ? 'hidden lg:block' : ''}`}>
+              {/* LEFT ON DESKTOP / BOTTOM ON MOBILE: VISUAL TURN-BY-TURN STEPS */}
+              <div
+                className={`lg:col-span-5 lg:order-1 space-y-3 ${
+                  mobileViewMode === 'street' || mobileViewMode === 'map'
+                    ? 'hidden lg:block'
+                    : ''
+                }`}
+              >
               <div className="flex items-center justify-between px-1">
                 <h2 className="font-display text-base font-extrabold text-slate-900">
                   Visual Turn-by-Turn Steps ({route.steps.length})
