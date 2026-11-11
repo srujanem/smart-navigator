@@ -528,21 +528,60 @@ export const RoutePage: React.FC = () => {
     }
   };
 
-  const handleStepClick = (step: Step, idx: number) => {
-    setActiveStepIdx(idx);
-    setAltIndex(-1);
-    setIsPlayingWalker(false);
+  const handleStepClick = useCallback(
+    (step: Step, idx: number) => {
+      setActiveStepIdx(idx);
+      setAltIndex(-1);
+      setIsPlayingWalker(false);
 
-    if (route && route.path.length > 1) {
-      const pathIdx = route.path.indexOf(step.node_id);
-      if (pathIdx >= 0) {
-        setScrubProgress(pathIdx / (route.path.length - 1));
+      if (route && route.path.length > 1) {
+        const pathIdx = route.path.indexOf(step.node_id);
+        if (pathIdx >= 0) {
+          setScrubProgress(pathIdx / (route.path.length - 1));
+        }
       }
-    }
-    if (twinMode === '2d') {
-      setSelectedLevel(step.level);
-    }
-  };
+      if (twinMode === '2d') {
+        setSelectedLevel(step.level);
+      }
+    },
+    [route, twinMode],
+  );
+
+  // Windows Desktop Keyboard Shortcuts (← / → Step, Space = Play/Pause, V = Street View / 3D)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (
+        !route ||
+        recheckOpen ||
+        lightboxUrl ||
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLSelectElement ||
+        e.target instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        const nxt = Math.min(route.steps.length - 1, activeStepIdx + 1);
+        if (route.steps[nxt]) handleStepClick(route.steps[nxt], nxt);
+      } else if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        const prev = Math.max(0, activeStepIdx - 1);
+        if (route.steps[prev]) handleStepClick(route.steps[prev], prev);
+      } else if (e.key === ' ') {
+        e.preventDefault();
+        setIsPlayingWalker((p) => {
+          if (!p) setScrubProgress(null);
+          return !p;
+        });
+      } else if (e.key === 'v' || e.key === 'V') {
+        e.preventDefault();
+        setShowStreetStage((s) => !s);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [route, activeStepIdx, recheckOpen, lightboxUrl, handleStepClick]);
 
   const handlePlayNarration = () => {
     if (!('speechSynthesis' in window) || !route) return;
@@ -1128,7 +1167,10 @@ export const RoutePage: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={() => setMobileViewMode('map')}
+                onClick={() => {
+                  setMobileViewMode('map');
+                  setShowStreetStage(false);
+                }}
                 className={`flex-1 py-2 text-xs font-bold rounded-xl transition ${
                   mobileViewMode === 'map'
                     ? 'bg-slate-900 text-white shadow-sm'
@@ -1259,7 +1301,7 @@ export const RoutePage: React.FC = () => {
                 </div>
 
                 {/* FULL-BLEED WORKSPACE STAGE (Never squished, never cut off) */}
-                <div className="relative h-[480px] sm:h-[540px] lg:h-[calc(100vh-14rem)] min-h-[460px] max-h-[660px] w-full overflow-hidden rounded-3xl bg-[#060A16] ring-1 ring-slate-900/15 shadow-2xl">
+                <div className="relative h-[440px] sm:h-[520px] lg:h-[calc(100dvh-14.5rem)] min-h-[420px] max-h-[660px] w-full overflow-hidden rounded-3xl bg-[#060A16] ring-1 ring-slate-900/15 shadow-2xl">
                   {showStreetStage ? (
                     /* CINEMA STREET-VIEW FULL STAGE */
                     <div className="relative h-full w-full overflow-hidden flex flex-col justify-between">
@@ -1671,7 +1713,8 @@ export const RoutePage: React.FC = () => {
                   Visual Turn-by-Turn Steps ({route.steps.length})
                 </h2>
                 <span className="text-xs text-slate-500">
-                  Tap any step to inspect on map
+                  <span className="hidden lg:inline">⌨️ ←/→ Step · Space Play · </span>
+                  Tap step to inspect
                 </span>
               </div>
 
@@ -1691,7 +1734,7 @@ export const RoutePage: React.FC = () => {
                 </div>
               )}
 
-              <div className="space-y-2.5">
+              <div className="space-y-2.5 lg:max-h-[calc(100dvh-14.5rem)] lg:overflow-y-auto lg:pr-1.5 thin-scrollbar smooth-scroll">
                 {route.steps.map((step, idx) => {
                   const isActive = idx === activeStepIdx;
                   const isLast = idx === route.steps.length - 1;

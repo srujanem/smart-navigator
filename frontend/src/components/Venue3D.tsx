@@ -973,22 +973,26 @@ const SceneContent: React.FC<
         cameraMode={cameraMode}
       />
 
-      {/* Cached floor shadow (frames=1 eliminates multi-pass GPU re-render on every frame) */}
-      <ContactShadows
-        position={[0, baseFloorY - 2.15, 0]}
-        opacity={daylight ? 0.22 : 0.35}
-        scale={90}
-        blur={1.6}
-        far={16}
-        resolution={256}
-        frames={1}
-      />
+      {/* Cached floor shadow on Desktop (skipped on mobile GPUs for 60fps smoothness) */}
+      {(typeof window === 'undefined' || window.innerWidth >= 768) && (
+        <ContactShadows
+          position={[0, baseFloorY - 2.15, 0]}
+          opacity={daylight ? 0.22 : 0.35}
+          scale={90}
+          blur={1.6}
+          far={16}
+          resolution={256}
+          frames={1}
+        />
+      )}
     </group>
   );
 };
 
 const Venue3D: React.FC<Venue3DProps> = (props) => {
   const hasRoute = (props.routePath?.length ?? 0) >= 2;
+  const isSmallScreen =
+    typeof window !== 'undefined' && window.innerWidth < 768;
   const [cameraMode, setCameraMode] = useState<Camera3DMode>('orbit');
   const [explodeFactor, setExplodeFactor] = useState<number>(1);
   const [showRoomVolumes, setShowRoomVolumes] = useState<boolean>(true);
@@ -1062,10 +1066,11 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
     >
       <Canvas
         camera={{ position: [34, 30, 38], fov: 41 }}
-        dpr={[1, 1.25]}
-        performance={{ min: 0.6 }}
+        dpr={isSmallScreen ? 1 : [1, 1.25]}
+        performance={{ min: 0.55 }}
+        style={{ touchAction: mobileTouchOrbit ? 'none' : 'pan-y' }}
         gl={{
-          antialias: true,
+          antialias: !isSmallScreen,
           powerPreference: 'high-performance',
           stencil: false,
           depth: true,
@@ -1108,7 +1113,10 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
             makeDefault
             enabled={mobileTouchOrbit}
             enableDamping
-            dampingFactor={0.07}
+            dampingFactor={0.08}
+            rotateSpeed={isSmallScreen ? 0.65 : 0.82}
+            zoomSpeed={0.95}
+            panSpeed={0.85}
             minDistance={12}
             maxDistance={135}
             maxPolarAngle={Math.PI / 2.04}

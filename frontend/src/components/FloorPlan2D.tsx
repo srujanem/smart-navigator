@@ -285,6 +285,7 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
 
       {/* Interactive SVG Blueprint */}
       <div
+        style={{ touchAction: 'none' }}
         className={`relative flex-1 overflow-hidden ${
           editorMode === 'add_node'
             ? 'cursor-crosshair'
@@ -292,6 +293,11 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
               ? 'cursor-pointer'
               : 'cursor-grab active:cursor-grabbing'
         }`}
+        onWheel={(e) => {
+          e.preventDefault();
+          const delta = e.deltaY < 0 ? 0.16 : -0.16;
+          setZoom((z) => Math.max(0.65, Math.min(3.8, +(z + delta).toFixed(2))));
+        }}
         onTouchStart={(e) => {
           if (e.touches.length === 1) {
             const t = e.touches[0];
@@ -398,9 +404,9 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
         <svg
           ref={svgRef}
           viewBox={`${bounds.x} ${bounds.y} ${bounds.w} ${bounds.h}`}
-          className="h-full w-full"
+          className="h-full w-full will-change-transform"
           style={{
-            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transform: `translate3d(${pan.x}px, ${pan.y}px, 0) scale(${zoom})`,
             transformOrigin: 'center center',
           }}
         >

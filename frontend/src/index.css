@@ -5,12 +5,14 @@
 html {
   scroll-behavior: smooth;
   -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: none;
 }
 
 /* Mobile Safe Area & Touch Optimizations */
 @supports (padding: env(safe-area-inset-bottom)) {
   .safe-bottom {
-    padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+    padding-bottom: calc(0.85rem + env(safe-area-inset-bottom));
   }
   .safe-top {
     padding-top: env(safe-area-inset-top);
@@ -19,6 +21,13 @@ html {
 
 button, a, input, select {
   touch-action: manipulation;
+}
+
+/* GPU-accelerated smooth scrolling containers for Windows & Mobile */
+.smooth-scroll {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  will-change: scroll-position;
 }
 
 html.senior-mode {

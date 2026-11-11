@@ -1,17 +1,32 @@
 {
-  "name": "Navigator — Photo-based indoor navigation",
-  "short_name": "Navigator",
-  "description": "Take a photo inside any building and get guided to where you need to go.",
+  "name": "Smart Campus 360 — Spatial AI Indoor Navigation",
+  "short_name": "Navigator 360",
+  "description": "Zero-hardware indoor photo & 3D digital twin navigation for hospitals, campuses, malls, and offices.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0b1020",
-  "theme_color": "#0b1020",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#070B18",
+  "theme_color": "#070B18",
+  "categories": ["navigation", "medical", "education", "utilities"],
   "icons": [
     {
       "src": "/favicon.svg",
-      "sizes": "192x192 512x512",
+      "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Explore Venues",
+      "short_name": "Venues",
+      "url": "/venues"
+    },
+    {
+      "name": "Map & Dataset Studio",
+      "short_name": "Admin Studio",
+      "url": "/admin"
     }
   ]
 }
