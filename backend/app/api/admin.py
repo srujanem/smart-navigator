@@ -950,6 +950,19 @@ def admin_delete_edge(
 # 3. ANALYTICS, PHOTO DATASET, HEADING, PEOPLE & CLOSURES
 # ============================================================================
 
+def _classify_node_decision_point(n: Node, degree: int) -> tuple[bool, str]:
+    kind_low = (n.kind or "").lower()
+    if kind_low in ("entrance", "exit", "emergency"):
+        return True, "Entry / Emergency Exit"
+    if kind_low in ("lift", "stairs", "escalator", "elevator"):
+        return True, "Floor Transition (Lift / Stairs)"
+    if degree >= 3 or kind_low == "junction":
+        return True, f"{max(3, degree)}-Way Corridor Junction"
+    if n.is_place and kind_low not in ("corridor", "hallway", "passage"):
+        return True, "Destination Room / Department"
+    return False, "Interpolated Straight Corridor (Photo Optional)"
+
+
 @router.get("/admin/venues/{slug}/overview")
 def admin_overview(
     slug: str,
@@ -959,8 +972,10 @@ def admin_overview(
     v = get_venue_or_404(session, slug)
     assert_venue_write_access(user, v, allow_staff=True)
 
+    buildings = {b.id: b.name for b in session.exec(select(Building).where(Building.venue_id == v.id)).all()}
     nodes = session.exec(select(Node).where(Node.venue_id == v.id)).all()
     node_map = {n.id: n for n in nodes}
+    edges = session.exec(select(Edge).where(Edge.venue_id == v.id)).all()
     photos = session.exec(select(Photo).where(Photo.venue_id == v.id)).all()
     people = session.exec(select(Person).where(Person.venue_id == v.id)).all()
     routes = session.exec(select(RouteLog).where(RouteLog.venue_id == v.id)).all()
@@ -978,6 +993,7 @@ def admin_overview(
     )
 
     nodes_with_photos = len({p.node_id for p in photos})
+    visitor_photos_count = sum(1 for p in photos if p.source == "visitor")
 
     dest_counts = Counter(r.to_node for r in routes)
     top_destinations = [
@@ -1025,6 +1041,72 @@ def admin_overview(
         for l in recent_locs
     ]
 
+    # Compute "Where Visitors Get Lost" — Confusion & Signage Hotspots
+    deg_by_node: Counter[str] = Counter()
+    for e in edges:
+        deg_by_node[e.source] += 1
+        deg_by_node[e.target] += 1
+    photos_by_node: Counter[str] = Counter(p.node_id for p in photos)
+
+    loc_confs: dict[str, list[float]] = {}
+    mismatch_counts: Counter[str] = Counter()
+    for l in loc_logs:
+        target_nid = l.confirmed_node or l.predicted_node
+        if target_nid:
+            loc_confs.setdefault(target_nid, []).append(float(l.confidence))
+        if l.confirmed_node and l.predicted_node and l.confirmed_node != l.predicted_node:
+            mismatch_counts[l.confirmed_node] += 1
+
+    hotspot_candidates = []
+    for n in nodes:
+        is_dp, dp_reason = _classify_node_decision_point(n, deg_by_node[n.id])
+        p_cnt = photos_by_node[n.id]
+        confs = loc_confs.get(n.id, [])
+        low_conf_hits = sum(1 for c in confs if c < 0.68)
+        mismatches = mismatch_counts[n.id]
+        avg_conf = round(sum(confs) / len(confs), 2) if confs else (0.45 if p_cnt == 0 else 0.78)
+        traffic = traversal[n.id]
+
+        risk_score = (mismatches * 4) + (low_conf_hits * 3) + (3 if (is_dp and p_cnt == 0) else 0) + (2 if (is_dp and p_cnt == 1 and traffic >= 2) else 0) + min(3, traffic // 4)
+        if risk_score <= 0 and not is_dp:
+            continue
+
+        if mismatches > 0:
+            issue = f"{mismatches}× visitor corrected visual match"
+            rec = "Place QR Checkpoint sticker & capture distinct signboard angle"
+        elif low_conf_hits > 0:
+            issue = f"{low_conf_hits}× low-confidence match ({int(avg_conf * 100)}% avg)"
+            rec = "Identical walls — print QR Checkpoint or add opposite heading photo"
+        elif is_dp and p_cnt == 0:
+            issue = f"Unmapped {dp_reason}"
+            rec = "Record 10s corridor walk-through or place QR Checkpoint sticker"
+        elif is_dp and p_cnt < 2:
+            issue = f"Single-angle coverage at {dp_reason}"
+            rec = "Add 1 reverse-facing photo for bidirectional recognition"
+        else:
+            issue = f"High-traffic {dp_reason} ({traffic} traversals)"
+            rec = "Monitor signage clarity & keep 3+ reference angles"
+
+        hotspot_candidates.append({
+            "risk": risk_score,
+            "node_id": n.id,
+            "name": n.name,
+            "building_name": buildings.get(n.building_id, ""),
+            "level": n.level,
+            "photo_count": p_cnt,
+            "low_conf_count": low_conf_hits + mismatches,
+            "avg_confidence": avg_conf,
+            "traffic": traffic,
+            "issue": issue,
+            "recommendation": rec,
+        })
+
+    hotspot_candidates.sort(key=lambda item: (item["risk"], item["traffic"], -item["photo_count"]), reverse=True)
+    confusion_hotspots = [
+        {k: v for k, v in h.items() if k != "risk"}
+        for h in hotspot_candidates[:6]
+    ]
+
     return {
         "stats": {
             "routes_total": len(routes),
@@ -1035,12 +1117,14 @@ def admin_overview(
             "nodes_with_photos": nodes_with_photos,
             "nodes_total": len(nodes),
             "people": len(people),
+            "active_learning_photos": visitor_photos_count,
         },
         "top_destinations": top_destinations,
         "failed_searches": failed_searches,
         "crowd": crowd,
         "hourly": hourly,
         "recent_localizations": recent_out,
+        "confusion_hotspots": confusion_hotspots,
     }
 
 
@@ -1055,7 +1139,13 @@ def admin_dataset(
 
     buildings = {b.id: b.name for b in session.exec(select(Building).where(Building.venue_id == v.id)).all()}
     nodes = session.exec(select(Node).where(Node.venue_id == v.id)).all()
+    edges = session.exec(select(Edge).where(Edge.venue_id == v.id)).all()
     photos = session.exec(select(Photo).where(Photo.venue_id == v.id)).all()
+
+    deg_by_node: Counter[str] = Counter()
+    for e in edges:
+        deg_by_node[e.source] += 1
+        deg_by_node[e.target] += 1
 
     by_node: dict[str, list[Photo]] = {n.id: [] for n in nodes}
     for p in photos:
@@ -1063,9 +1153,23 @@ def admin_dataset(
 
     nodes_out = []
     covered = 0
+    decision_nodes = 0
+    decision_covered = 0
+    interpolated_nodes = 0
+    visitor_contributed = sum(1 for p in photos if p.source == "visitor")
+
     for n in nodes:
         p_list = by_node.get(n.id, [])
         cnt = len(p_list)
+        deg = deg_by_node[n.id]
+        is_dp, dp_reason = _classify_node_decision_point(n, deg)
+        if is_dp:
+            decision_nodes += 1
+            if cnt >= 1:
+                decision_covered += 1
+        else:
+            interpolated_nodes += 1
+
         if cnt >= 3:
             cov = "good"
             covered += 1
@@ -1084,6 +1188,9 @@ def admin_dataset(
             "y": n.y,
             "photo_count": cnt,
             "coverage": cov,
+            "is_decision_point": is_dp,
+            "decision_reason": dp_reason,
+            "degree": deg,
             "photos": [
                 {
                     "id": p.id,
@@ -1102,7 +1209,15 @@ def admin_dataset(
 
     return {
         "embedder": embedder_service.name,
-        "totals": {"photos": len(photos), "nodes": len(nodes), "covered": covered},
+        "totals": {
+            "photos": len(photos),
+            "nodes": len(nodes),
+            "covered": covered,
+            "decision_nodes": decision_nodes,
+            "decision_covered": decision_covered,
+            "interpolated_nodes": interpolated_nodes,
+            "visitor_contributed": visitor_contributed,
+        },
         "nodes": nodes_out,
     }
 

@@ -437,8 +437,20 @@ export function confirmLocalization(
   logId: string,
   nodeId: string,
   contribute: boolean,
-): Promise<{ ok: boolean; added_photo: boolean }> {
-  return request<{ ok: boolean; added_photo: boolean }>(
+): Promise<{
+  ok: boolean;
+  added_photo: boolean;
+  reason?: string;
+  quality?: number;
+  node_photo_count?: number;
+}> {
+  return request<{
+    ok: boolean;
+    added_photo: boolean;
+    reason?: string;
+    quality?: number;
+    node_photo_count?: number;
+  }>(
     `/api/venues/${encodeURIComponent(slug)}/localize/${encodeURIComponent(logId)}/confirm`,
     {
       method: 'POST',

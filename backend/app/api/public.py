@@ -316,6 +316,8 @@ def confirm_localization(
     payload: ConfirmPayload,
     session: Session = Depends(get_session),
 ):
+    import numpy as np
+
     v = get_venue_or_404(session, slug)
     log_row = session.exec(select(LocalizeLog).where(LocalizeLog.id == log_id, LocalizeLog.venue_id == v.id)).first()
     if not log_row:
@@ -329,33 +331,60 @@ def confirm_localization(
     session.add(log_row)
 
     added_photo = False
+    promotion_reason = "Feedback logged"
+    q_score = 0.0
+    existing_node_photos = session.exec(select(Photo).where(Photo.node_id == node.id)).all()
     src_file = MEDIA_DIR / log_row.photo_path
-    if payload.contribute and src_file.exists():
-        from PIL import Image
 
-        dest_rel = f"venues/{v.slug}/photos/{uuid.uuid4().hex[:12]}.webp"
-        dest_file = MEDIA_DIR / dest_rel
-        dest_file.parent.mkdir(parents=True, exist_ok=True)
-        img, _ = save_clean_image(src_file.read_bytes(), dest_file, max_side=1600)
-        q_score = compute_sharpness_quality(img)
-        vec = embedder_service.embed(img)
-        toks = ocr_service.extract_text(img)
-        if q_score >= 0.14:
-            p_row = Photo(
-                venue_id=v.id,
-                node_id=node.id,
-                path=dest_rel,
-                source="visitor",
-                quality=q_score,
-                embedding=embedder_service.to_bytes(vec),
-                embedder=embedder_service.name,
-                ocr_text=" ".join(toks),
-            )
-            session.add(p_row)
-            added_photo = True
+    if payload.contribute and src_file.exists():
+        if len(existing_node_photos) >= 8:
+            promotion_reason = "Node already has full reference coverage (8/8 cap)"
+        else:
+            dest_rel = f"venues/{v.slug}/photos/{uuid.uuid4().hex[:12]}.webp"
+            dest_file = MEDIA_DIR / dest_rel
+            dest_file.parent.mkdir(parents=True, exist_ok=True)
+            img, _ = save_clean_image(src_file.read_bytes(), dest_file, max_side=1600)
+            q_score = compute_sharpness_quality(img)
+            if q_score < 0.22:
+                dest_file.unlink(missing_ok=True)
+                promotion_reason = f"Skipped dataset promotion (sharpness {int(q_score * 100)}% below threshold)"
+            else:
+                vec = embedder_service.embed(img)
+                max_sim = 0.0
+                for ep in existing_node_photos:
+                    if ep.embedding:
+                        e_vec = embedder_service.from_bytes(ep.embedding)
+                        if e_vec.shape == vec.shape:
+                            sim = float(np.dot(vec, e_vec))
+                            if sim > max_sim:
+                                max_sim = sim
+                if max_sim >= 0.92:
+                    dest_file.unlink(missing_ok=True)
+                    promotion_reason = f"Near-duplicate angle already indexed ({int(max_sim * 100)}% match)"
+                else:
+                    toks = ocr_service.extract_text(img)
+                    p_row = Photo(
+                        venue_id=v.id,
+                        node_id=node.id,
+                        path=dest_rel,
+                        source="visitor",
+                        quality=q_score,
+                        embedding=embedder_service.to_bytes(vec),
+                        embedder=embedder_service.name,
+                        ocr_text=" ".join(toks),
+                    )
+                    session.add(p_row)
+                    added_photo = True
+                    promotion_reason = "Promoted to AI reference dataset (Active Learning)"
 
     session.commit()
-    return {"ok": True, "added_photo": added_photo}
+    return {
+        "ok": True,
+        "added_photo": added_photo,
+        "reason": promotion_reason,
+        "quality": round(float(q_score), 3),
+        "node_photo_count": len(existing_node_photos) + (1 if added_photo else 0),
+    }
 
 
 class RoutePayload(BaseModel):

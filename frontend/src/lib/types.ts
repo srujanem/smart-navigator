@@ -275,6 +275,19 @@ export interface UploaderProfileResponse {
   venues: VenueSummary[];
 }
 
+export interface ConfusionHotspot {
+  node_id: string;
+  name: string;
+  building_name: string;
+  level: number;
+  photo_count: number;
+  low_conf_count: number;
+  avg_confidence: number;
+  traffic: number;
+  issue: string;
+  recommendation: string;
+}
+
 export interface AdminOverview {
   stats: {
     routes_total: number;
@@ -285,6 +298,7 @@ export interface AdminOverview {
     nodes_with_photos: number;
     nodes_total: number;
     people: number;
+    active_learning_photos?: number;
   };
   top_destinations: {
     node_id: string;
@@ -310,6 +324,7 @@ export interface AdminOverview {
     created_at: string;
     photo_url: string | null;
   }[];
+  confusion_hotspots?: ConfusionHotspot[];
 }
 
 export interface DatasetPhoto {
@@ -336,6 +351,9 @@ export interface DatasetNode {
   y: number;
   photo_count: number;
   coverage: CoverageLevel;
+  is_decision_point?: boolean;
+  decision_reason?: string;
+  degree?: number;
   photos: DatasetPhoto[];
 }
 
@@ -345,6 +363,10 @@ export interface DatasetResponse {
     photos: number;
     nodes: number;
     covered: number;
+    decision_nodes?: number;
+    decision_covered?: number;
+    interpolated_nodes?: number;
+    visitor_contributed?: number;
   };
   nodes: DatasetNode[];
 }

@@ -47,6 +47,8 @@ export interface ConfirmedSpot {
   floorName?: string;
   headingDeg?: number | null;
   source: 'photo' | 'manual';
+  activeLearningPromoted?: boolean;
+  activeLearningNote?: string;
 }
 
 interface PhotoLocateModalProps {
@@ -260,13 +262,17 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
   const handleConfirmCandidate = async (cand: Candidate) => {
     if (!result) return;
     setConfirmingNodeId(cand.node_id);
+    let promoted = false;
+    let promoNote = '';
     try {
-      await confirmLocalization(
+      const res = await confirmLocalization(
         venue.slug,
         result.log_id,
         cand.node_id,
         contribute,
       );
+      promoted = Boolean(res.added_photo);
+      promoNote = res.reason || '';
     } catch {
       // Even if telemetry confirm fails transiently, allow visitor to proceed
     } finally {
@@ -281,6 +287,8 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
       floorName: cand.floor_name,
       headingDeg: cand.matched_heading_deg ?? null,
       source: 'photo',
+      activeLearningPromoted: promoted,
+      activeLearningNote: promoNote,
     });
     onClose();
   };
@@ -1080,17 +1088,20 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                   </div>
                 </div>
 
-                {/* Contribute Toggle */}
-                <label className="flex items-center gap-2.5 cursor-pointer select-none rounded-xl bg-slate-50 px-3.5 py-2.5 ring-1 ring-slate-200/70">
+                {/* Active Learning Self-Growing Dataset Toggle */}
+                <label className="flex items-start gap-2.5 cursor-pointer select-none rounded-xl bg-indigo-50/70 px-3.5 py-2.5 ring-1 ring-indigo-200/80">
                   <input
                     type="checkbox"
                     checked={contribute}
                     onChange={(e) => setContribute(e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                   />
-                  <span className="text-xs text-slate-700">
-                    Contribute this photo (automatically face-blurred & EXIF-stripped) to strengthen this venue's visual dataset
-                  </span>
+                  <div className="text-xs text-slate-700">
+                    <span className="font-bold text-indigo-950">
+                      🧠 Active Learning Self-Growing Dataset:
+                    </span>{' '}
+                    Auto-promote this face-blurred photo if it adds a new sharp angle (auto-deduplicated at 92% similarity & capped at 8 photos/node).
+                  </div>
                 </label>
 
                 {/* Primary & Secondary Actions */}

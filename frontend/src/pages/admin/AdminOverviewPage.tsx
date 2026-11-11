@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Activity,
+  AlertTriangle,
   Camera,
   CheckCircle2,
   Compass,
@@ -141,7 +143,7 @@ export const AdminOverviewPage: React.FC = () => {
             {data.stats.photos.toLocaleString()}
           </div>
           <div className="text-xs text-slate-500">
-            Indexed reference views
+            +{data.stats.active_learning_photos ?? 0} Active Learning visitor views
           </div>
         </div>
 
@@ -440,6 +442,85 @@ export const AdminOverviewPage: React.FC = () => {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Where Visitors Get Lost — Confusion & Signage Hotspots */}
+      <div className="card p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-display text-base font-extrabold text-slate-900 flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-500" />
+              Where Visitors Get Lost — Confusion & Signage Hotspots
+            </h2>
+            <p className="text-xs text-slate-500">
+              AI diagnosis of junctions with low-confidence visual matches, visitor corrections, or high traffic with sparse reference angles
+            </p>
+          </div>
+          <Link
+            to="/admin/dataset"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-50 px-3.5 py-2 text-xs font-extrabold text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100 transition"
+          >
+            Open Dataset & Print QR Checkpoints →
+          </Link>
+        </div>
+
+        {!data.confusion_hotspots || data.confusion_hotspots.length === 0 ? (
+          <div className="rounded-2xl bg-emerald-50 p-4 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-200">
+            Zero confusion hotspots detected! All critical decision points have strong visual & OCR separation.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {data.confusion_hotspots.map((hs) => (
+              <div
+                key={hs.node_id}
+                className="rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200/80 flex flex-col justify-between space-y-3"
+              >
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-600 truncate">
+                      {hs.building_name} · {formatLevel(hs.level)}
+                    </span>
+                    <span
+                      className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                        hs.photo_count === 0
+                          ? 'bg-rose-100 text-rose-800'
+                          : hs.avg_confidence < 0.68
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-cyan-100 text-cyan-800'
+                      }`}
+                    >
+                      {hs.photo_count} {hs.photo_count === 1 ? 'photo' : 'photos'} ·{' '}
+                      {Math.round(hs.avg_confidence * 100)}% conf
+                    </span>
+                  </div>
+
+                  <div className="font-display text-sm font-extrabold text-slate-900 truncate">
+                    {hs.name}
+                  </div>
+
+                  <div className="text-xs font-semibold text-rose-700">
+                    ⚠️ {hs.issue}
+                  </div>
+                  <div className="text-[11px] text-slate-600 leading-relaxed">
+                    💡 <strong>Fix:</strong> {hs.recommendation}
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-200/70 flex items-center justify-between text-[11px]">
+                  <span className="text-slate-400 font-medium">
+                    Traffic score: {hs.traffic}
+                  </span>
+                  <Link
+                    to="/admin/dataset"
+                    className="font-bold text-indigo-600 hover:text-indigo-800"
+                  >
+                    Fix in Dataset →
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

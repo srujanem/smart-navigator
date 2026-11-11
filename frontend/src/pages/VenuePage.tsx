@@ -98,6 +98,8 @@ export const VenuePage: React.FC = () => {
   const { location: visitorLoc, setLocation: setVisitorLoc } = useVisitorLocation(slug);
 
   const meetNodeParam = searchParams.get('meet') || '';
+  const atNodeParam = searchParams.get('at') || '';
+  const [activeLearningToast, setActiveLearningToast] = useState<string | null>(null);
 
   const [venue, setVenue] = useState<VenueDetail | null>(null);
   const [graph, setGraph] = useState<Graph | null>(null);
@@ -223,6 +225,29 @@ export const VenuePage: React.FC = () => {
     [graph, meetNodeParam],
   );
 
+  const qrCheckinNode = useMemo(
+    () => (atNodeParam && graph ? graph.nodes.find((n) => n.id === atNodeParam) ?? null : null),
+    [graph, atNodeParam],
+  );
+
+  // Instant 100%-confidence auto-checkin when scanning a QR Checkpoint sticker (?at=<nodeId>)
+  useEffect(() => {
+    if (!qrCheckinNode) return;
+    if (visitorLoc?.nodeId !== qrCheckinNode.id) {
+      setVisitorLoc({
+        nodeId: qrCheckinNode.id,
+        name: qrCheckinNode.name,
+        buildingName: qrCheckinNode.building_name,
+        level: qrCheckinNode.level,
+        floorName: qrCheckinNode.floor_name,
+        headingDeg: null,
+        source: 'manual',
+        updatedAt: Date.now(),
+      });
+      setSelectedLevel(qrCheckinNode.level);
+    }
+  }, [qrCheckinNode, visitorLoc?.nodeId, setVisitorLoc]);
+
   const filteredPlaces = useMemo(() => {
     if (activeCategory === 'all') return placeNodes;
     return placeNodes.filter((n) => n.category === activeCategory);
@@ -309,18 +334,17 @@ export const VenuePage: React.FC = () => {
   };
 
   const handleEmergencyRoute = () => {
-    if (!venue?.emergency_node_id) {
-      void handleNearestFacility('emergency', 'Emergency');
+    const fromId = visitorLoc?.nodeId ?? entranceNode?.id;
+    if (venue?.emergency_node_id && fromId && fromId !== venue.emergency_node_id) {
+      const fallbackFlag = visitorLoc?.nodeId ? '' : '&fromEntrance=1';
+      navigate(
+        `/v/${slug}/route?from=${encodeURIComponent(fromId)}&to=${encodeURIComponent(
+          venue.emergency_node_id,
+        )}&emergency=1${fallbackFlag}`,
+      );
       return;
     }
-    const fromId = visitorLoc?.nodeId ?? entranceNode?.id;
-    if (!fromId) return;
-    const fallbackFlag = visitorLoc?.nodeId ? '' : '&fromEntrance=1';
-    navigate(
-      `/v/${slug}/route?from=${encodeURIComponent(fromId)}&to=${encodeURIComponent(
-        venue.emergency_node_id,
-      )}&emergency=1${fallbackFlag}`,
-    );
+    void handleNearestFacility('exit', 'Emergency Exit');
   };
 
   const handleSpotConfirmed = (spot: ConfirmedSpot) => {
@@ -334,6 +358,12 @@ export const VenuePage: React.FC = () => {
       source: spot.source,
       updatedAt: Date.now(),
     });
+    if (spot.activeLearningPromoted) {
+      setActiveLearningToast(
+        '🧠 Active Learning: Your sharp photo was auto-indexed into this venue’s reference dataset!',
+      );
+      window.setTimeout(() => setActiveLearningToast(null), 6500);
+    }
     if (queuedDest) {
       const destId = queuedDest.nodeId;
       setQueuedDest(null);
@@ -524,19 +554,76 @@ export const VenuePage: React.FC = () => {
               Map Studio
             </Link>
 
-            {venue.emergency_node_id && (
-              <button
-                type="button"
-                onClick={handleEmergencyRoute}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-1.5 text-xs font-extrabold text-white shadow-lg shadow-rose-600/35 ring-1 ring-rose-400/50 hover:bg-rose-500 transition animate-pulse"
-              >
-                <Siren className="h-4 w-4" />
-                🚨 Emergency Route
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleEmergencyRoute}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-1.5 text-xs font-extrabold text-white shadow-lg shadow-rose-600/35 ring-1 ring-rose-400/50 hover:bg-rose-500 transition animate-pulse"
+              title="One-Click Code Blue / Nearest Emergency Exit Route"
+            >
+              <Siren className="h-4 w-4" />
+              🚨 Emergency Exit
+            </button>
           </div>
         </div>
       </header>
+
+      {/* =================================================================== */}
+      {/* QR CHECKPOINT INSTANT AUTO-CHECK-IN BANNER (WHEN ?at=<nodeId>)      */}
+      {/* =================================================================== */}
+      {qrCheckinNode && (
+        <div className="bg-gradient-to-r from-cyan-700 via-sky-700 to-indigo-800 text-white border-b border-white/15">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-emerald-400/20 ring-1 ring-emerald-300/40">
+                <CheckCircle2 className="h-4 w-4 text-emerald-300" />
+              </div>
+              <div className="text-xs sm:text-sm">
+                <span className="font-extrabold uppercase tracking-wider text-cyan-200 mr-2">
+                  ✅ QR Checkpoint Verified (100% Confidence):
+                </span>
+                Your starting location is locked at{' '}
+                <strong className="underline decoration-white/60">
+                  {qrCheckinNode.name}
+                </strong>{' '}
+                ({qrCheckinNode.building_name} · {formatLevel(qrCheckinNode.level, qrCheckinNode.floor_name)}). Pick any destination below!
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                const next = new URLSearchParams(searchParams);
+                next.delete('at');
+                setSearchParams(next);
+              }}
+              className="rounded-lg p-1.5 text-white/80 hover:bg-white/15 hover:text-white"
+              aria-label="Dismiss QR banner"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* =================================================================== */}
+      {/* ACTIVE LEARNING PROMOTION TOAST BANNER                              */}
+      {/* =================================================================== */}
+      {activeLearningToast && (
+        <div className="bg-indigo-950 text-indigo-100 border-b border-indigo-400/30">
+          <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-2.5 flex items-center justify-between gap-3 text-xs font-semibold">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-cyan-400 shrink-0" />
+              <span>{activeLearningToast}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveLearningToast(null)}
+              className="text-indigo-300 hover:text-white"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* =================================================================== */}
       {/* "MEET ME HERE" DEEP-LINK HANDOFF BANNER (WHEN ?meet=<nodeId>)       */}

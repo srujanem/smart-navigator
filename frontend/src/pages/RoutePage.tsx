@@ -55,6 +55,7 @@ import { PhotoLocateModal, type ConfirmedSpot } from '../components/PhotoLocateM
 import { ErrorState, Skeleton3D } from '../components/ErrorState';
 import {
   computeMultiStopRoute,
+  computeNearestRoute,
   computeRoute,
   getVenue,
   getVenueGraph,
@@ -228,9 +229,11 @@ export const RoutePage: React.FC = () => {
   const [isPlayingWalker, setIsPlayingWalker] = useState(true);
   const [scrubProgress, setScrubProgress] = useState<number | null>(null);
 
-  // Voice Narration State
+  // Voice Narration & Haptic Guidance State
   const [voiceLang, setVoiceLang] = useState<VoiceLang>('en-IN');
   const [speaking, setSpeaking] = useState(false);
+  const [hapticsEnabled, setHapticsEnabled] = useState(true);
+  const [hapticPulseLabel, setHapticPulseLabel] = useState<string | null>(null);
 
   // Re-check Location Modal & Lightbox
   const [recheckOpen, setRecheckOpen] = useState(false);
@@ -456,6 +459,75 @@ export const RoutePage: React.FC = () => {
     }
   };
 
+  const triggerHapticForStep = useCallback(
+    (step: Step | undefined | null) => {
+      if (!step || !hapticsEnabled) return;
+      let pattern: number[] = [40];
+      let cue = '📳 1 Short Tick · Proceed Straight';
+      if (step.icon === 'left') {
+        pattern = [95];
+        cue = '📳 1 Crisp Pulse · Turn Left';
+      } else if (step.icon === 'right') {
+        pattern = [80, 55, 80];
+        cue = '📳 2 Pulses · Turn Right';
+      } else if (step.icon === 'lift' || step.icon === 'up' || step.icon === 'down') {
+        pattern = [70, 45, 70, 45, 130];
+        cue = '📳 3 Pulses · Floor Transition';
+      } else if (step.icon === 'arrive') {
+        pattern = [220, 80, 220];
+        cue = '📳 Long Pulse · Destination Reached';
+      }
+      try {
+        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+          navigator.vibrate(pattern);
+        }
+      } catch {
+        // Ignore on desktop browsers without vibration hardware
+      }
+      setHapticPulseLabel(cue);
+    },
+    [hapticsEnabled],
+  );
+
+  useEffect(() => {
+    if (!route || !route.steps[activeStepIdx]) return;
+    triggerHapticForStep(route.steps[activeStepIdx]);
+  }, [activeStepIdx, route, triggerHapticForStep]);
+
+  const handleEmergencyFromHere = async () => {
+    if (!slug || !venue) return;
+    const currentStepNodeId =
+      route?.steps[activeStepIdx]?.node_id || effectiveFromId;
+    if (!currentStepNodeId) return;
+
+    if (venue.emergency_node_id && venue.emergency_node_id !== currentStepNodeId) {
+      const next = new URLSearchParams(searchParams);
+      next.set('from', currentStepNodeId);
+      next.set('to', venue.emergency_node_id);
+      next.set('emergency', '1');
+      next.delete('stops');
+      setSearchParams(next);
+      return;
+    }
+
+    try {
+      const nearest = await computeNearestRoute(
+        slug,
+        currentStepNodeId,
+        'exit',
+        profileParam,
+      );
+      const next = new URLSearchParams(searchParams);
+      next.set('from', nearest.from_node);
+      next.set('to', nearest.to_node);
+      next.set('emergency', '1');
+      next.delete('stops');
+      setSearchParams(next);
+    } catch {
+      // Fallback if already at exit
+    }
+  };
+
   const handleStepClick = (step: Step, idx: number) => {
     setActiveStepIdx(idx);
     setAltIndex(-1);
@@ -604,8 +676,20 @@ export const RoutePage: React.FC = () => {
               </div>
             </div>
 
-            {/* Right Controls: Re-check My Location + Share + Voice Narration */}
+            {/* Right Controls: Emergency Exit + Re-check My Location + Haptics + Share + Voice Narration */}
             <div className="flex flex-wrap items-center gap-2">
+              {!isEmergency && (
+                <button
+                  type="button"
+                  onClick={() => void handleEmergencyFromHere()}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3 py-2 text-xs font-extrabold text-white shadow-md shadow-rose-600/35 ring-1 ring-rose-400/50 hover:bg-rose-500 transition"
+                  title="Reroute immediately from your current step to the nearest emergency exit"
+                >
+                  <Siren className="h-3.5 w-3.5" />
+                  🚨 Emergency Exit
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={() => setRecheckOpen(true)}
@@ -613,6 +697,19 @@ export const RoutePage: React.FC = () => {
               >
                 <Camera className="h-3.5 w-3.5" />
                 📷 Re-check spot
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setHapticsEnabled((v) => !v)}
+                className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-2 text-xs font-bold ring-1 transition ${
+                  hapticsEnabled
+                    ? 'bg-amber-500/15 text-amber-200 ring-amber-400/35 hover:bg-amber-500/25'
+                    : 'bg-white/[0.06] text-slate-400 ring-white/10 hover:text-white'
+                }`}
+                title="Toggle Haptic Turn Vibrations (1 pulse=Left, 2=Right, 3=Lift/Stairs)"
+              >
+                {hapticsEnabled ? '📳 Haptics On' : '📴 Haptics Off'}
               </button>
 
               <button
@@ -684,6 +781,15 @@ export const RoutePage: React.FC = () => {
               </div>
             </div>
           </div>
+
+          {hapticsEnabled && hapticPulseLabel && (
+            <div className="flex items-center justify-between gap-2 rounded-xl bg-amber-500/10 px-3 py-1.5 text-[11px] font-semibold text-amber-200 ring-1 ring-amber-400/25">
+              <span>{hapticPulseLabel}</span>
+              <span className="text-[10px] text-amber-300/80 hidden sm:inline">
+                Eyes-Free Tactile Guidance · 1 Pulse=Left · 2=Right · 3=Lift/Stairs
+              </span>
+            </div>
+          )}
 
           {/* Second Row: 3 Mobility Profiles + Avoid Crowds Toggle + Alternative Pills */}
           <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-white/10">
