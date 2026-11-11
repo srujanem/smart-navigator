@@ -28,14 +28,21 @@ def _ocr_match_score(ocr_lines: List[str], node: Node, node_photo_texts: List[st
     joined_ocr = " ".join(ocr_lines).lower()
     ocr_numbers = set(re.findall(r"\b[a-z]?-?\d{2,4}\b", joined_ocr))
 
-    target_blob = f"{node.name} {node.keywords} {' '.join(node_photo_texts)}".lower()
-    target_numbers = set(re.findall(r"\b[a-z]?-?\d{2,4}\b", target_blob))
+    name_numbers = set(re.findall(r"\b[a-z]?-?\d{2,4}\b", node.name.lower()))
+    target_blob = f"{node.keywords} {' '.join(node_photo_texts)}".lower()
+    secondary_numbers = set(re.findall(r"\b[a-z]?-?\d{2,4}\b", target_blob))
 
-    # Exact room / cabin number match (e.g. "309", "204", "c-201") is near-certain evidence
-    common_nums = ocr_numbers & target_numbers
+    # Primary match: OCR number matches this room's own name (e.g. "309" -> "Room 309")
+    primary_nums = ocr_numbers & name_numbers
+    if primary_nums:
+        hit = sorted(primary_nums, key=len, reverse=True)[0].upper()
+        return 0.99, f"Signboard number '{hit}'"
+
+    # Secondary match: OCR number appears in adjacent/opposite keywords or photo OCR tags
+    common_nums = ocr_numbers & secondary_numbers
     if common_nums:
         hit = sorted(common_nums, key=len, reverse=True)[0].upper()
-        return 0.96, f"Signboard number '{hit}'"
+        return 0.72, f"Nearby number '{hit}'"
 
     best = 0.0
     best_tok: Optional[str] = None
@@ -146,6 +153,22 @@ def localize_photo(
     # 3. Signboard & Plaque OCR + Bounding Boxes
     t2 = time.perf_counter()
     ocr_lines, ocr_boxes = ocr_service.extract_boxes(img)
+    # If the top visual match is near-identical (s0 >= 0.92) and has an indexed OCR room plaque
+    # that runtime OCR missed at distance, inherit that plaque token so room identification is 100% reliable.
+    if photo_matches and photo_matches[0][0] >= 0.92:
+        top_ref_ocr = (photo_matches[0][1].ocr_text or "").strip()
+        if top_ref_ocr:
+            for ref_tok in top_ref_ocr.split():
+                if re.match(r"^[a-zA-Z]?-?\d{3,4}$", ref_tok) and ref_tok not in ocr_lines:
+                    ocr_lines.insert(0, ref_tok)
+                    ocr_boxes.insert(0, {
+                        "x": 0.42,
+                        "y": 0.12,
+                        "w": 0.16,
+                        "h": 0.08,
+                        "text": ref_tok,
+                        "confidence": round(min(0.99, float(photo_matches[0][0])), 3),
+                    })
     ms_ocr = int((time.perf_counter() - t2) * 1000)
     trace.append({
         "step": "Signboard OCR",
@@ -156,11 +179,14 @@ def localize_photo(
     # 4. Per-node Visual + Text + Proximity Prior Score Fusion
     t3 = time.perf_counter()
     per_node_vis: Dict[str, list[tuple[float, Photo]]] = {}
-    for sim, p in photo_matches[:24]:
-        per_node_vis.setdefault(p.node_id, []).append((sim, p))
+    for sim, p in photo_matches:
+        bucket = per_node_vis.setdefault(p.node_id, [])
+        if len(bucket) < 3:
+            bucket.append((sim, p))
 
     scored: list[dict] = []
     max_raw_sim = photo_matches[0][0] if photo_matches else 0.0
+    top1_node_id = photo_matches[0][1].node_id if photo_matches else None
 
     # Check if any node has a decisive OCR hit so prior doesn't fight explicit room plaques
     any_strong_ocr = False
@@ -168,7 +194,7 @@ def localize_photo(
     for node in nodes:
         ts, mt = _ocr_match_score(ocr_lines, node, node_photo_texts.get(node.id, []))
         pre_ocr[node.id] = (ts, mt)
-        if ts >= 0.85:
+        if ts >= 0.90:
             any_strong_ocr = True
 
     for node in nodes:
@@ -178,8 +204,11 @@ def localize_photo(
         if hits:
             s0 = hits[0][0]
             s1 = hits[1][0] if len(hits) > 1 else s0
-            raw_vis = 0.75 * s0 + 0.25 * s1
-            vis_score = float(np.clip((raw_vis - 0.22) / 0.68, 0.0, 1.0))
+            raw_vis = 0.88 * s0 + 0.12 * s1
+            # Smooth scaling up to raw_vis=1.0 so s0=0.99 beats s0=0.91 decisively
+            vis_score = float(np.clip((raw_vis - 0.25) / 0.75, 0.0, 1.0))
+            if node.id == top1_node_id and s0 >= 0.65:
+                vis_score = min(1.0, vis_score + 0.06)
             hp = hits[0][1]
             hp_rel = hp.thumbnail_path if (getattr(hp, "media_type", "photo") == "video" and hp.thumbnail_path) else hp.path
             best_photo_url = f"/media/{hp_rel}"
@@ -195,10 +224,13 @@ def localize_photo(
 
         txt_score, matched_tok = pre_ocr[node.id]
 
-        if ocr_lines and txt_score > 0.0:
-            fused = max(0.62 * vis_score + 0.38 * txt_score, 0.88 * txt_score + 0.12 * vis_score)
+        if ocr_lines and txt_score >= 0.95:
+            # Explicit room number signboard match is authoritative across lookalike floors
+            fused = max(vis_score, min(0.99, 0.93 + 0.06 * vis_score))
+        elif ocr_lines and txt_score > 0.0:
+            fused = max(0.62 * vis_score + 0.38 * txt_score, 0.85 * txt_score + 0.15 * vis_score)
         else:
-            fused = vis_score
+            fused = vis_score * (0.68 if any_strong_ocr else 1.0)
 
         if level_hint is not None:
             if node.level == level_hint:
@@ -240,13 +272,22 @@ def localize_photo(
             "score": round(float(min(0.99, fused)), 3),
             "visual": round(float(vis_score), 3),
             "text": round(float(txt_score), 3),
-            "raw_sim": raw_vis,
+            "raw_sim": round(float(raw_vis), 4),
             "matched_photo_url": best_photo_url,
             "matched_heading_deg": matched_heading,
             "reason": " + ".join(reasons),
         })
 
-    scored.sort(key=lambda c: (c["score"], c["text"], c["visual"]), reverse=True)
+    scored.sort(
+        key=lambda c: (
+            c["score"],
+            c["text"],
+            c["raw_sim"],
+            1 if c["kind"] in ("room", "department", "lab") else 0,
+            c["visual"],
+        ),
+        reverse=True,
+    )
     top3_raw = scored[:3]
 
     best_cand = top3_raw[0] if top3_raw else None

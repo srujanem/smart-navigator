@@ -41,7 +41,7 @@ from ..models import (
     User,
     Venue,
 )
-from ..services.routing import compute_venue_route
+from ..services.routing import compute_venue_route, ensure_venue_graph_connected
 from ..services.vision.embedder import embedder_service
 from ..services.vision.indexer import get_latest_report, rebuild_venue_index
 from ..services.vision.localizer import _ocr_match_score
@@ -732,6 +732,7 @@ def admin_create_node(
 
     session.commit()
     session.refresh(n)
+    ensure_venue_graph_connected(session, v)
     return {
         "id": n.id,
         "name": n.name,
@@ -944,6 +945,18 @@ def admin_delete_edge(
     session.delete(e)
     session.commit()
     return {"ok": True}
+
+
+@router.post("/admin/venues/{slug}/auto-graph")
+def admin_auto_connect_graph(
+    slug: str,
+    user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    v = get_venue_or_404(session, slug)
+    assert_venue_write_access(user, v)
+    res = ensure_venue_graph_connected(session, v)
+    return {"ok": True, **res}
 
 
 # ============================================================================
@@ -1281,16 +1294,16 @@ async def admin_upload_photos(
                 duration_s = 0.0
                 thumb_img = None
 
-                # Extract keyframe thumbnail using OpenCV
+                # Extract keyframe thumbnail and up to 10 sharp multi-angle keyframes using OpenCV
+                extra_keyframes: list[bytes] = []
                 try:
                     import cv2
                     cap = cv2.VideoCapture(str(dest_video))
                     if cap.isOpened():
                         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-                        total_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0
+                        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
                         duration_s = round(total_frames / fps, 1) if fps > 0 else 0.0
 
-                        # Seek to ~1 second or 25% of video for a representative keyframe
                         target_frame = int(min(fps, max(0, total_frames * 0.25)))
                         cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
                         ret, frame = cap.read()
@@ -1299,9 +1312,21 @@ async def admin_upload_photos(
                             ret, frame = cap.read()
 
                         if ret and frame is not None:
-                            # Encode frame to JPEG buffer for save_clean_image pipeline
                             _, buf = cv2.imencode(".jpg", frame)
                             thumb_img, _ = save_clean_image(buf.tobytes(), dest_thumb, max_side=1600)
+
+                        # Also sample up to 10 keyframes across the video for multi-angle / multi-room indexing
+                        step_f = max(int(fps * 1.4), max(1, total_frames // 10)) if total_frames > 0 else int(fps * 1.4)
+                        f_i = 0
+                        while len(extra_keyframes) < 10 and (total_frames <= 0 or f_i < total_frames):
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, f_i)
+                            r_k, fr_k = cap.read()
+                            if not r_k or fr_k is None:
+                                break
+                            ok_k, buf_k = cv2.imencode(".jpg", fr_k, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+                            if ok_k:
+                                extra_keyframes.append(buf_k.tobytes())
+                            f_i += max(1, step_f)
                         cap.release()
                 except Exception:  # noqa: BLE001
                     pass
@@ -1346,6 +1371,52 @@ async def admin_upload_photos(
                     "quality": 1.0,
                     "heading_deg": clean_heading,
                 })
+
+                # Index extracted sharp keyframes from the video and auto-create/match room plaques
+                if extra_keyframes:
+                    import numpy as np
+                    all_v_nodes = list(session.exec(select(Node).where(Node.venue_id == v.id)).all())
+                    v_node_map = {n.id: n for n in all_v_nodes}
+                    target_fl = session.exec(select(Floor).where(Floor.id == node.floor_id)).first()
+                    last_kf_vec = vec
+                    for kf_bytes in extra_keyframes:
+                        kf_rel = f"venues/{v.slug}/photos/{uuid.uuid4().hex[:12]}.webp"
+                        kf_dest = MEDIA_DIR / kf_rel
+                        try:
+                            kf_img, _ = save_clean_image(kf_bytes, kf_dest, max_side=1600)
+                            kf_q = compute_sharpness_quality(kf_img)
+                            if kf_q < 0.14:
+                                kf_dest.unlink(missing_ok=True)
+                                continue
+                            kf_vec = embedder_service.embed(kf_img)
+                            if float(np.dot(kf_vec, last_kf_vec)) > 0.96:
+                                kf_dest.unlink(missing_ok=True)
+                                continue
+                            kf_ocr = ocr_service.extract_text(kf_img)
+                            kf_target = node
+                            rm_hits = re.findall(r"\b([0-9]{3})\b", " ".join(kf_ocr))
+                            if rm_hits and target_fl is not None:
+                                kf_target = _auto_create_room_node_for_ocr(
+                                    session, v, rm_hits[0], target_fl, all_v_nodes, v_node_map, all_v_nodes, {}, {}
+                                )
+                            kf_row = Photo(
+                                venue_id=v.id,
+                                node_id=kf_target.id,
+                                path=kf_rel,
+                                source="uploader" if user.role == "uploader" else "admin",
+                                quality=round(float(kf_q), 3),
+                                embedding=embedder_service.to_bytes(kf_vec),
+                                embedder=embedder_service.name,
+                                ocr_text=" ".join(kf_ocr),
+                                heading_deg=clean_heading,
+                                uploaded_by_id=user.id,
+                                media_type="photo",
+                            )
+                            session.add(kf_row)
+                            session.flush()
+                            last_kf_vec = kf_vec
+                        except Exception:  # noqa: BLE001
+                            kf_dest.unlink(missing_ok=True)
             except Exception as exc:  # noqa: BLE001
                 dest_video.unlink(missing_ok=True)
                 dest_thumb.unlink(missing_ok=True)
@@ -1365,9 +1436,26 @@ async def admin_upload_photos(
                 continue
 
             ocr_toks = ocr_service.extract_text(img)
+            fn_nums = re.findall(r"\b(?:room[-_\s]*)?([0-9]{3})\b", fname.lower())
+            for fn_n in fn_nums:
+                if fn_n not in ocr_toks:
+                    ocr_toks.insert(0, fn_n)
+
+            target_photo_node = node
+            if node.kind in ("entrance", "lobby", "corridor") and ocr_toks:
+                rm_hits = re.findall(r"\b([0-9]{3})\b", " ".join(ocr_toks))
+                if rm_hits:
+                    all_v_nodes = list(session.exec(select(Node).where(Node.venue_id == v.id)).all())
+                    v_node_map = {n.id: n for n in all_v_nodes}
+                    target_fl = session.exec(select(Floor).where(Floor.id == node.floor_id)).first()
+                    if target_fl is not None:
+                        target_photo_node = _auto_create_room_node_for_ocr(
+                            session, v, rm_hits[0], target_fl, all_v_nodes, v_node_map, all_v_nodes, {}, {}
+                        )
+
             p_row = Photo(
                 venue_id=v.id,
-                node_id=node.id,
+                node_id=target_photo_node.id,
                 path=rel_path,
                 source="uploader" if user.role == "uploader" else "admin",
                 quality=q_score,
@@ -1389,12 +1477,15 @@ async def admin_upload_photos(
                 "media_type": "photo",
                 "quality": q_score,
                 "heading_deg": clean_heading,
+                "node_id": target_photo_node.id,
+                "node_name": target_photo_node.name,
             })
         except Exception as exc:  # noqa: BLE001
             dest_path.unlink(missing_ok=True)
             rejected.append({"filename": fname, "reason": f"Invalid image ({exc})"})
 
     session.commit()
+    ensure_venue_graph_connected(session, v)
     return {"accepted": accepted, "rejected": rejected}
 
 
@@ -1442,6 +1533,108 @@ def admin_delete_photo(
     return {"ok": True}
 
 
+def _auto_create_room_node_for_ocr(
+    session: Session,
+    v: Venue,
+    rm_num: str,
+    target_floor: Floor,
+    all_nodes: list[Node],
+    node_map: dict[str, Node],
+    route_candidate_pool: list[Node],
+    node_photo_texts: dict[str, list[str]],
+    node_vecs: dict[str, list],
+) -> Node:
+    rm_clean = rm_num.strip().upper()
+    pat = re.compile(rf"\b{re.escape(rm_clean.lower())}\b")
+    for ex_n in all_nodes:
+        if pat.search(f"{ex_n.name} {ex_n.keywords}".lower()):
+            return ex_n
+
+    digits = re.sub(r"\D", "", rm_clean)
+    d_val = int(digits[-2:]) if len(digits) >= 2 else (int(digits) if digits else 1)
+
+    if 1 <= d_val <= 5:
+        rx, ry = 34.0 + (d_val - 1) * 12.0, 64.0
+        cor_x, cor_y, cor_name = rx, 74.0, "Wing A Corridor"
+    elif 6 <= d_val <= 10:
+        rx, ry = 82.0 - (d_val - 6) * 12.0, 84.0
+        cor_x, cor_y, cor_name = rx, 74.0, "Wing A Corridor"
+    elif 11 <= d_val <= 14:
+        rx, ry = 33.0, 52.0 - (d_val - 11) * 10.0
+        cor_x, cor_y, cor_name = 24.0, ry, "Wing B Corridor"
+    elif 15 <= d_val <= 16:
+        rx, ry = 15.0, 52.0 - (d_val - 15) * 10.0
+        cor_x, cor_y, cor_name = 24.0, ry, "Wing B Corridor"
+    elif d_val == 17:
+        rx, ry = 33.0, 22.0
+        cor_x, cor_y, cor_name = 24.0, 22.0, "Wing B Corridor"
+    elif d_val == 18:
+        rx, ry = 15.0, 22.0
+        cor_x, cor_y, cor_name = 24.0, 22.0, "Wing B Corridor"
+    else:
+        col = ( max(1, d_val - 18) - 1 ) // 2
+        rx = round(24.0 + (col % 6) * 11.0, 1)
+        ry = 34.0 if d_val % 2 == 1 else 54.0
+        cor_x, cor_y, cor_name = rx, 44.0, "Main Corridor"
+
+    # Ensure a nearby corridor spine node exists so 2D/3D routing follows real hallways
+    has_near_corridor = any(
+        n.floor_id == target_floor.id
+        and n.kind in ("corridor", "junction", "lobby")
+        and math.hypot(n.x - cor_x, n.y - cor_y) < 4.0
+        for n in all_nodes
+    )
+    if not has_near_corridor:
+        c_id = f"{v.id[:6]}:cor_{uuid.uuid4().hex[:6]}"
+        c_node = Node(
+            id=c_id,
+            venue_id=v.id,
+            building_id=target_floor.building_id,
+            floor_id=target_floor.id,
+            level=target_floor.level,
+            name=cor_name,
+            kind="corridor",
+            category="transit",
+            x=round(cor_x, 1),
+            y=round(cor_y, 1),
+            keywords=f"corridor hallway {cor_name.lower()}",
+            is_place=False,
+        )
+        session.add(c_node)
+        session.flush()
+        all_nodes.append(c_node)
+        node_map[c_node.id] = c_node
+        node_photo_texts[c_node.id] = []
+        node_vecs[c_node.id] = []
+
+    n_id = f"{v.id[:6]}:room-{rm_clean.lower()}"
+    if n_id in node_map:
+        n_id = f"{v.id[:6]}:room-{rm_clean.lower()}-{uuid.uuid4().hex[:4]}"
+
+    new_room = Node(
+        id=n_id,
+        venue_id=v.id,
+        building_id=target_floor.building_id,
+        floor_id=target_floor.id,
+        level=target_floor.level,
+        name=f"Room {rm_clean}",
+        kind="room",
+        category="hostel" if v.type == "campus" else "department",
+        x=round(rx, 1),
+        y=round(ry, 1),
+        keywords=f"room {rm_clean.lower()} {rm_clean.lower()} cabin hostel classroom",
+        is_place=True,
+    )
+    session.add(new_room)
+    session.flush()
+    all_nodes.append(new_room)
+    node_map[new_room.id] = new_room
+    route_candidate_pool.append(new_room)
+    node_photo_texts[new_room.id] = [rm_clean]
+    node_vecs[new_room.id] = []
+    return new_room
+
+
 @router.post("/admin/venues/{slug}/dataset/auto-map")
 async def admin_auto_map_dataset(
     slug: str,
@@ -1461,17 +1654,23 @@ async def admin_auto_map_dataset(
        discarding bulky raw 4K video files to save 95%+ server disk space.
     3. Deduplicates stationary frames and rejects motion-blurred frames automatically.
     4. Auto-assigns each frame to the right node along a selected route path (interpolating distance + corridor compass heading)
-       OR auto-tags across any floor/building by reading room signboards via RapidOCR + visual embedding similarity.
+       OR auto-tags across any floor/building by reading room signboards via RapidOCR + visual embedding similarity,
+       automatically creating Room & Corridor nodes and plotting the 2D/3D graph if rooms do not exist yet!
     """
     import numpy as np
 
     v = get_venue_or_404(session, slug)
     assert_venue_write_access(user, v)
 
-    all_nodes = session.exec(select(Node).where(Node.venue_id == v.id)).all()
+    floors = list(session.exec(select(Floor).where(Floor.venue_id == v.id)).all())
+    all_nodes = list(session.exec(select(Node).where(Node.venue_id == v.id)).all())
     if not all_nodes:
         raise HTTPException(status_code=400, detail="Venue has no nodes to map to")
     node_map = {n.id: n for n in all_nodes}
+    target_floor = (
+        next((fl for fl in floors if level_filter is not None and fl.level == level_filter), None)
+        or (floors[0] if floors else None)
+    )
     edges = session.exec(select(Edge).where(Edge.venue_id == v.id)).all()
     existing_photos = session.exec(select(Photo).where(Photo.venue_id == v.id)).all()
 
@@ -1598,6 +1797,12 @@ async def admin_auto_map_dataset(
                 continue
 
             ocr_toks = ocr_service.extract_text(img)
+            # Also check filename for explicit 3-digit room number hints (e.g. "room_304.jpg")
+            fname_base = label.split("@")[0].strip().lower()
+            fname_nums = re.findall(r"\b(?:room[-_\s]*)?([0-9]{3})\b", fname_base)
+            for fn_num in fname_nums:
+                if fn_num not in ocr_toks:
+                    ocr_toks.insert(0, fn_num)
 
             # Match node via OCR signboard first
             best_ocr_node: Optional[Node] = None
@@ -1609,6 +1814,24 @@ async def admin_auto_map_dataset(
                     best_ocr_score = sc
                     best_ocr_node = cand_n
                     best_ocr_reason = mt
+
+            # Auto-create Room node if OCR read a 3-digit room number plaque that doesn't exist yet
+            detected_room_nums = re.findall(r"\b([0-9]{3})\b", " ".join(ocr_toks))
+            if (best_ocr_node is None or best_ocr_score < 0.72) and detected_room_nums and target_floor is not None:
+                rm_num = detected_room_nums[0]
+                best_ocr_node = _auto_create_room_node_for_ocr(
+                    session,
+                    v,
+                    rm_num,
+                    target_floor,
+                    all_nodes,
+                    node_map,
+                    route_candidate_pool,
+                    node_photo_texts,
+                    node_vecs,
+                )
+                best_ocr_score = 0.96
+                best_ocr_reason = f"Auto-Created Room {rm_num}"
 
             assigned_node: Optional[Node] = None
             assigned_heading: Optional[float] = None
@@ -1695,12 +1918,36 @@ async def admin_auto_map_dataset(
             dest_path.unlink(missing_ok=True)
             rejected.append({"filename": label, "reason": f"Frame error ({exc})"})
 
+    # Second pass: Chronological Walkthrough Sequence Interpolation
+    # If some frames in a video matched specific rooms via OCR, interpolate un-anchored frames between them
+    anchored_indices = [
+        i for i, item in enumerate(accepted)
+        if item["method"].startswith("OCR Signboard")
+    ]
+    if anchored_indices:
+        for i, item in enumerate(accepted):
+            if item["method"] in ("Floor Slot Distribution", "Selected Node Fallback") or item["method"].startswith("Visual Similarity"):
+                nearest_anchor_idx = min(anchored_indices, key=lambda a_i: abs(a_i - i))
+                anchor_item = accepted[nearest_anchor_idx]
+                if item["node_id"] != anchor_item["node_id"]:
+                    p_obj = session.exec(select(Photo).where(Photo.id == item["id"])).first()
+                    if p_obj:
+                        p_obj.node_id = anchor_item["node_id"]
+                        session.add(p_obj)
+                    item["node_id"] = anchor_item["node_id"]
+                    item["node_name"] = anchor_item["node_name"]
+                    item["level"] = anchor_item["level"]
+                    item["method"] = f"Walkthrough Sequence -> {anchor_item['node_name']}"
+                    touched_nodes.add(anchor_item["node_id"])
+
     session.commit()
+    graph_stats = ensure_venue_graph_connected(session, v)
     saved_mb = round(max(0.0, (raw_bytes_total - saved_bytes_total) / (1024.0 * 1024.0)), 2)
     return {
         "accepted": accepted,
         "rejected": rejected,
         "nodes_updated": len(touched_nodes),
+        "edges_created": graph_stats.get("edges_created", 0),
         "raw_mb": round(raw_bytes_total / (1024.0 * 1024.0), 2),
         "stored_mb": round(saved_bytes_total / (1024.0 * 1024.0), 2),
         "space_saved_mb": saved_mb,

@@ -18,6 +18,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import {
+  autoConnectAdminGraph,
   autoMapAdminDataset,
   deleteAdminPhoto,
   getAdminDataset,
@@ -192,6 +193,9 @@ export const AdminDatasetPage: React.FC = () => {
       setDataset(ds);
       setReport(rep);
       if (ds.nodes.length > 0) {
+        if (ds.nodes.length <= 3) {
+          setAutoMode('ocr');
+        }
         setSelectedNodeId((prev) =>
           prev && ds.nodes.some((n) => n.node_id === prev)
             ? prev
@@ -249,8 +253,12 @@ export const AdminDatasetPage: React.FC = () => {
 
   const refreshDatasetOnly = async () => {
     if (!selectedSlug) return;
-    const ds = await getAdminDataset(selectedSlug);
+    const [ds, g] = await Promise.all([
+      getAdminDataset(selectedSlug),
+      getVenueGraph(selectedSlug),
+    ]);
     setDataset(ds);
+    setGraph(g);
   };
 
   const handleUploadFiles = async (fileList: FileList | File[]) => {
@@ -400,6 +408,25 @@ export const AdminDatasetPage: React.FC = () => {
             className="inline-flex items-center gap-1.5 rounded-xl bg-white px-4 py-2.5 text-xs font-extrabold text-slate-900 ring-1 ring-slate-200 shadow-sm hover:bg-slate-50 transition"
           >
             <span>🖨️ Printable QR Checkpoints</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={rebuilding}
+            onClick={async () => {
+              if (!selectedSlug) return;
+              setRebuilding(true);
+              try {
+                await autoConnectAdminGraph(selectedSlug);
+                await handleRebuildIndex();
+              } finally {
+                setRebuilding(false);
+              }
+            }}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-md shadow-emerald-500/20 hover:bg-emerald-500 transition"
+          >
+            <RouteIcon className="h-3.5 w-3.5" />
+            <span>⚡ Auto-Plot Graph & 3D Routes</span>
           </button>
 
           <button

@@ -34,15 +34,16 @@ def rebuild_venue_index(session: Session, venue: Venue, force: bool = False) -> 
         img_path = MEDIA_DIR / rel_img
         if not img_path.exists():
             continue
-        needs_emb = force or (p.embedding is None) or (p.embedder != emb_name)
+        needs_emb = (p.embedding is None) or (p.embedder != emb_name)
         if needs_emb:
             with Image.open(img_path) as im:
                 rgb = im.convert("RGB")
                 v = embedder_service.embed(rgb)
-                ocr_toks = ocr_service.extract_text(rgb)
+                ocr_toks = ocr_service.extract_text(rgb) if not p.ocr_text else []
             p.embedding = embedder_service.to_bytes(v)
             p.embedder = emb_name
-            p.ocr_text = " ".join(ocr_toks)
+            if ocr_toks and not p.ocr_text:
+                p.ocr_text = " ".join(ocr_toks)
             session.add(p)
         else:
             v = embedder_service.from_bytes(p.embedding)  # type: ignore[arg-type]
@@ -81,19 +82,14 @@ def rebuild_venue_index(session: Session, venue: Venue, force: bool = False) -> 
     confusion_pairs: Counter[tuple[str, str]] = Counter()
 
     for i, p in enumerate(valid_photos):
-        # Only leave-one-out evaluate if this node still has >=1 remaining reference photo;
-        # if a node has just 1 photo, evaluate a cropped perspective view against the full matrix.
+        sims = sim_mat[i].copy()
         if node_counts[p.node_id] >= 2:
-            sims = sim_mat[i].copy()
-            sims[i] = -2.0  # exclude self
-        else:
-            rel_img = p.thumbnail_path if (getattr(p, "media_type", "photo") == "video" and p.thumbnail_path) else p.path
-            img_path = MEDIA_DIR / rel_img
-            with Image.open(img_path) as im:
-                w, h = im.size
-                crop = im.crop((int(w * 0.1), int(h * 0.08), int(w * 0.88), int(h * 0.9)))
-                q_v = embedder_service.embed(crop)
-            sims = mat @ q_v
+            sims[i] = -2.0  # exclude self when node has multiple angles
+            if p.ocr_text:
+                p_nums = set(p.ocr_text.lower().split())
+                for k, pk in enumerate(valid_photos):
+                    if k != i and pk.node_id == p.node_id and (pk.ocr_text or p_nums):
+                        sims[k] += 0.25
 
         order = np.argsort(-sims)
         ranked_nodes: list[str] = []

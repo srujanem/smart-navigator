@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  autoConnectAdminGraph,
   createAdminBuilding,
   createAdminEdge,
   createAdminFloor,
@@ -353,7 +354,12 @@ export const AdminMapBuilderPage: React.FC = () => {
 
   const handleUploadPhotosForSelectedNode = async (fileList: FileList | null) => {
     if (!fileList || !selectedNode || !selectedSlug) return;
-    const files = Array.from(fileList).filter((f) => f.type.startsWith('image/'));
+    const files = Array.from(fileList).filter(
+      (f) =>
+        f.type.startsWith('image/') ||
+        f.type.startsWith('video/') ||
+        /\.(jpg|jpeg|png|webp|heic|mp4|webm|mov|mkv)$/i.test(f.name),
+    );
     if (files.length === 0) return;
 
     setUploadingPhotos(true);
@@ -637,6 +643,35 @@ export const AdminMapBuilderPage: React.FC = () => {
           >
             <ImageIcon className="h-3.5 w-3.5 text-indigo-600" />
             Upload Venue Cover
+          </button>
+
+          <button
+            type="button"
+            disabled={busyAction}
+            onClick={async () => {
+              setBusyAction(true);
+              try {
+                const res = await autoConnectAdminGraph(venue.slug);
+                const [v, g] = await Promise.all([
+                  getVenue(venue.slug),
+                  getVenueGraph(venue.slug),
+                ]);
+                setVenue(v);
+                setGraph(g);
+                await refreshVenues();
+                showToast(
+                  `Auto-plotted ${res.total_nodes} nodes & ${res.total_edges} walkable edges (+${res.edges_created} new connections)`,
+                );
+              } catch (err) {
+                alert(err instanceof Error ? err.message : 'Auto-plot graph failed.');
+              } finally {
+                setBusyAction(false);
+              }
+            }}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-500 transition"
+          >
+            <GitCommit className="h-3.5 w-3.5" />
+            ⚡ Auto-Plot Graph &amp; 3D Routes
           </button>
 
           <button
@@ -1117,11 +1152,11 @@ export const AdminMapBuilderPage: React.FC = () => {
                   <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200 space-y-2.5">
                     <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                       <Camera className="h-3.5 w-3.5 text-cyan-600" />
-                      Attach Real Reference Photos (Optional)
+                      Attach Real Reference Photos or Walkthrough Video (Optional)
                     </div>
                     <input
                       type="file"
-                      accept="image/*"
+                      accept="image/*,video/mp4,video/webm,video/quicktime"
                       multiple
                       onChange={(e) =>
                         setNewNodeFiles(
@@ -1339,7 +1374,7 @@ export const AdminMapBuilderPage: React.FC = () => {
                 <input
                   ref={inspectorPhotoRef}
                   type="file"
-                  accept="image/*"
+                  accept="image/*,video/mp4,video/webm,video/quicktime"
                   multiple
                   className="hidden"
                   onChange={(e) => {

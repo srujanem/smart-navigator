@@ -23,7 +23,7 @@ from ..services.search import search_venue
 from ..services.vision.embedder import embedder_service
 from ..services.vision.localizer import localize_photo
 from ..services.vision.ocr import ocr_service
-from ..services.vision.privacy import has_face_blur
+from ..services.vision.privacy import has_face_blur, save_clean_image
 from ..services.vision.quality import compute_sharpness_quality
 
 router = APIRouter()

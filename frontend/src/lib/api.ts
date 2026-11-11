@@ -959,3 +959,21 @@ export function deleteAdminClosure(closureId: string): Promise<{ ok: boolean }> 
     true,
   );
 }
+
+export function autoConnectAdminGraph(slug: string): Promise<{
+  ok: boolean;
+  edges_created: number;
+  total_nodes: number;
+  total_edges: number;
+}> {
+  return request<{
+    ok: boolean;
+    edges_created: number;
+    total_nodes: number;
+    total_edges: number;
+  }>(
+    `/api/admin/venues/${encodeURIComponent(slug)}/auto-graph`,
+    { method: 'POST' },
+    true,
+  );
+}

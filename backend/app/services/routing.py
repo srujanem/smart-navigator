@@ -17,9 +17,174 @@ import networkx as nx
 from sqlmodel import Session, select
 
 from ..config import WALK_SPEED, WHEELCHAIR_SPEED
-from ..models import Building, Closure, Edge, LocalizeLog, Node, Photo, RouteLog, Venue
+from ..models import Building, Closure, Edge, Floor, LocalizeLog, Node, Photo, RouteLog, Venue
 
 STRETCHER_SPEED = 0.82
+
+
+def ensure_venue_graph_connected(session: Session, venue: Venue) -> dict:
+    """
+    Guarantees that all nodes on every floor of `venue` form a connected walkable graph
+    (auto-creating corridor spine links and room-to-corridor doors when an uploader adds rooms
+    or uploads walkthrough videos without manually drawing every edge), and links multi-floor
+    stairs/lifts vertically across levels.
+    """
+    nodes = list(session.exec(select(Node).where(Node.venue_id == venue.id)).all())
+    edges = list(session.exec(select(Edge).where(Edge.venue_id == venue.id)).all())
+    if len(nodes) <= 1:
+        return {"edges_created": 0, "total_nodes": len(nodes), "total_edges": len(edges)}
+
+    existing_pairs: set[tuple[str, str]] = set()
+    for e in edges:
+        existing_pairs.add((e.source, e.target))
+        existing_pairs.add((e.target, e.source))
+
+    created_edges = 0
+
+    def _add_edge(na: Node, nb: Node, kind: str = "walk") -> None:
+        nonlocal created_edges
+        if na.id == nb.id or (na.id, nb.id) in existing_pairs:
+            return
+        if na.level != nb.level:
+            dist = round(6.0 * abs(na.level - nb.level), 1)
+            e_kind = kind if kind in ("stairs", "lift") else "stairs"
+            acc = e_kind == "lift"
+        else:
+            dist = round(max(2.0, math.hypot(na.x - nb.x, na.y - nb.y)), 1)
+            e_kind = kind
+            acc = True
+        new_e = Edge(
+            venue_id=venue.id,
+            source=na.id,
+            target=nb.id,
+            distance=dist,
+            kind=e_kind,
+            accessible=acc,
+            stretcher_ok=acc,
+        )
+        session.add(new_e)
+        edges.append(new_e)
+        existing_pairs.add((na.id, nb.id))
+        existing_pairs.add((nb.id, na.id))
+        created_edges += 1
+
+    # 1. Per-floor connectivity (connect backbone transit nodes, then attach each room/place to nearest backbone)
+    by_floor: Dict[str, list[Node]] = {}
+    for n in nodes:
+        by_floor.setdefault(n.floor_id, []).append(n)
+
+    backbone_kinds = {"corridor", "junction", "lobby", "entrance", "stairs", "lift", "exit"}
+    for fl_id, fl_nodes in by_floor.items():
+        if len(fl_nodes) <= 1:
+            continue
+        fl_ids = {n.id for n in fl_nodes}
+        G_fl = nx.Graph()
+        for n in fl_nodes:
+            G_fl.add_node(n.id)
+        for e in edges:
+            if e.source in fl_ids and e.target in fl_ids:
+                G_fl.add_edge(e.source, e.target)
+
+        if nx.is_connected(G_fl):
+            continue
+
+        backbone = [n for n in fl_nodes if n.kind in backbone_kinds]
+        rooms = [n for n in fl_nodes if n.kind not in backbone_kinds]
+
+        # Step 1a: Connect all backbone nodes on this floor via minimum spanning tree (Prim's)
+        if len(backbone) >= 2:
+            bb_ids = {n.id for n in backbone}
+            G_bb = G_fl.subgraph(bb_ids).copy()
+            comps = [set(c) for c in nx.connected_components(G_bb)]
+            node_by_id = {n.id: n for n in fl_nodes}
+            while len(comps) > 1:
+                best_pair = None
+                best_d = float("inf")
+                c0 = comps[0]
+                for other_c in comps[1:]:
+                    for id_a in c0:
+                        na = node_by_id[id_a]
+                        for id_b in other_c:
+                            nb = node_by_id[id_b]
+                            d = math.hypot(na.x - nb.x, na.y - nb.y)
+                            if d < best_d:
+                                best_d = d
+                                best_pair = (na, nb, other_c)
+                if not best_pair:
+                    break
+                na, nb, merged_c = best_pair
+                _add_edge(na, nb, "walk")
+                G_fl.add_edge(na.id, nb.id)
+                c0 |= merged_c
+                comps.remove(merged_c)
+
+        # Step 1b: Connect every isolated room/place to its nearest backbone node (or nearest room if no backbone)
+        for rm in rooms:
+            if G_fl.degree(rm.id) == 0:
+                targets = backbone if backbone else [n for n in fl_nodes if n.id != rm.id]
+                if targets:
+                    nearest = min(targets, key=lambda t: math.hypot(rm.x - t.x, rm.y - t.y))
+                    _add_edge(rm, nearest, "walk")
+                    G_fl.add_edge(rm.id, nearest.id)
+
+        # Step 1c: If multiple connected components still remain on this floor, bridge them
+        node_by_id = {n.id: n for n in fl_nodes}
+        comps_all = [set(c) for c in nx.connected_components(G_fl)]
+        while len(comps_all) > 1:
+            best_pair = None
+            best_d = float("inf")
+            c0 = comps_all[0]
+            for other_c in comps_all[1:]:
+                for id_a in c0:
+                    na = node_by_id[id_a]
+                    for id_b in other_c:
+                        nb = node_by_id[id_b]
+                        d = math.hypot(na.x - nb.x, na.y - nb.y)
+                        if d < best_d:
+                            best_d = d
+                            best_pair = (na, nb, other_c)
+            if not best_pair:
+                break
+            na, nb, merged_c = best_pair
+            _add_edge(na, nb, "walk")
+            G_fl.add_edge(na.id, nb.id)
+            c0 |= merged_c
+            comps_all.remove(merged_c)
+
+    # 2. Multi-floor vertical connectivity (link stairs/lifts/lobbies across adjacent levels)
+    by_level: Dict[int, list[Node]] = {}
+    for n in nodes:
+        by_level.setdefault(n.level, []).append(n)
+    sorted_levels = sorted(by_level.keys())
+    for i in range(len(sorted_levels) - 1):
+        lv_a, lv_b = sorted_levels[i], sorted_levels[i + 1]
+        nodes_a, nodes_b = by_level[lv_a], by_level[lv_b]
+        ids_a = {n.id for n in nodes_a}
+        ids_b = {n.id for n in nodes_b}
+        has_inter = any(
+            (e.source in ids_a and e.target in ids_b) or (e.source in ids_b and e.target in ids_a)
+            for e in edges
+        )
+        if not has_inter:
+            for v_kind in ("stairs", "lift", "lobby", "entrance"):
+                cand_a = [n for n in nodes_a if n.kind == v_kind]
+                cand_b = [n for n in nodes_b if n.kind == v_kind]
+                if cand_a and cand_b:
+                    na = cand_a[0]
+                    nb = min(cand_b, key=lambda t: math.hypot(na.x - t.x, na.y - t.y))
+                    _add_edge(na, nb, "lift" if v_kind == "lift" else "stairs")
+                    has_inter = True
+            if not has_inter and nodes_a and nodes_b:
+                _add_edge(nodes_a[0], nodes_b[0], "stairs")
+
+    if created_edges > 0:
+        session.commit()
+
+    return {
+        "edges_created": created_edges,
+        "total_nodes": len(nodes),
+        "total_edges": len(edges),
+    }
 
 
 def _build_nx_graph(
@@ -185,11 +350,28 @@ def compute_venue_route(
     try:
         path = nx.astar_path(G, from_node, to_node, heuristic=heuristic, weight="weight")
     except nx.NetworkXNoPath as exc:
-        if profile == "stretcher":
-            raise ValueError("No stretcher-accessible wide corridor & bed-lift route available.") from exc
-        if profile == "wheelchair":
-            raise ValueError("No step-free (lift/ramp) route available — a lift on this path may be closed for maintenance.") from exc
-        raise ValueError("No walkable route available between these locations due to active closures.") from exc
+        # Self-heal unlinked nodes if no closures exist or if nodes are disconnected even without closures
+        G_check = _build_nx_graph(nodes, edges, set(), profile="walk", ignore_closures=True)
+        if not nx.has_path(G_check, from_node, to_node):
+            heal = ensure_venue_graph_connected(session, venue)
+            if heal.get("edges_created", 0) > 0:
+                edges = session.exec(select(Edge).where(Edge.venue_id == venue.id)).all()
+                G = _build_nx_graph(
+                    nodes,
+                    edges,
+                    closed_ids,
+                    profile=profile,
+                    ignore_closures=False,
+                    crowd_by_node=crowd_map,
+                )
+        try:
+            path = nx.astar_path(G, from_node, to_node, heuristic=heuristic, weight="weight")
+        except nx.NetworkXNoPath:
+            if profile == "stretcher":
+                raise ValueError("No stretcher-accessible wide corridor & bed-lift route available.") from exc
+            if profile == "wheelchair":
+                raise ValueError("No step-free (lift/ramp) route available — a lift on this path may be closed for maintenance.") from exc
+            raise ValueError("No walkable route available between these locations due to active closures.") from exc
 
     closures_avoided = 0
     notices: list[str] = []
