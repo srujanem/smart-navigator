@@ -89,7 +89,7 @@ export function clearAdminSession(): void {
 
 export const API_BASE = (
   (import.meta as any).env?.VITE_API_URL ||
-  'https://roses-clearing-faqs-bookmarks.trycloudflare.com'
+  'https://success-devon-relocation-fitness.trycloudflare.com'
 ).replace(/\/$/, '');
 
 export function mediaUrl(url: string | null | undefined): string {
