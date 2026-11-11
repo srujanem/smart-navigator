@@ -315,6 +315,10 @@ export interface AdminOverview {
 export interface DatasetPhoto {
   id: string;
   url: string;
+  thumbnail_url?: string;
+  media_type?: 'photo' | 'video';
+  duration_s?: number | null;
+  ocr_text?: string;
   source: string;
   quality: number;
   heading_deg?: number | null;
@@ -349,6 +353,9 @@ export interface UploadPhotosResponse {
   accepted: {
     id: string;
     url: string;
+    thumbnail_url?: string;
+    media_type?: 'photo' | 'video';
+    duration_s?: number | null;
     quality: number;
     heading_deg?: number | null;
   }[];
@@ -356,6 +363,29 @@ export interface UploadPhotosResponse {
     filename: string;
     reason: string;
   }[];
+}
+
+export interface AutoMapDatasetResponse {
+  accepted: {
+    id: string;
+    filename: string;
+    url: string;
+    node_id: string;
+    node_name: string;
+    level: number;
+    quality: number;
+    heading_deg?: number | null;
+    ocr_text?: string;
+    method: string;
+  }[];
+  rejected: {
+    filename: string;
+    reason: string;
+  }[];
+  nodes_updated: number;
+  raw_mb: number;
+  stored_mb: number;
+  space_saved_mb: number;
 }
 
 export interface IndexReport {

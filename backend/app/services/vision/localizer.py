@@ -85,8 +85,8 @@ def localize_photo(
 
     # 1. Preprocess, strip EXIF, blur faces, save query image
     t0 = time.perf_counter()
-    rel_query = f"venues/{venue.slug}/queries/{uuid.uuid4().hex[:12]}.jpg"
-    img, faces = save_clean_image(raw_bytes, MEDIA_DIR / rel_query, max_side=1024)
+    rel_query = f"venues/{venue.slug}/queries/{uuid.uuid4().hex[:12]}.webp"
+    img, faces = save_clean_image(raw_bytes, MEDIA_DIR / rel_query, max_side=1600)
     ms_pre = int((time.perf_counter() - t0) * 1000)
     blur_note = f"{faces} face(s) blurred" if faces else "no faces detected"
     trace.append({
@@ -117,7 +117,8 @@ def localize_photo(
         if p.ocr_text and p.node_id in node_photo_texts:
             node_photo_texts[p.node_id].append(p.ocr_text)
         if not p.embedding or p.embedder != emb_name:
-            p_file = MEDIA_DIR / p.path
+            rel_img = p.thumbnail_path if (getattr(p, "media_type", "photo") == "video" and p.thumbnail_path) else p.path
+            p_file = MEDIA_DIR / rel_img
             if p_file.exists():
                 from PIL import Image as PILImage
 
@@ -179,14 +180,17 @@ def localize_photo(
             s1 = hits[1][0] if len(hits) > 1 else s0
             raw_vis = 0.75 * s0 + 0.25 * s1
             vis_score = float(np.clip((raw_vis - 0.22) / 0.68, 0.0, 1.0))
-            best_photo_url = f"/media/{hits[0][1].path}"
-            matched_heading = hits[0][1].heading_deg
+            hp = hits[0][1]
+            hp_rel = hp.thumbnail_path if (getattr(hp, "media_type", "photo") == "video" and hp.thumbnail_path) else hp.path
+            best_photo_url = f"/media/{hp_rel}"
+            matched_heading = hp.heading_deg
         else:
             raw_vis = 0.0
             vis_score = 0.0
             any_p = next((p for p in photos if p.node_id == node.id), None)
             if any_p:
-                best_photo_url = f"/media/{any_p.path}"
+                ap_rel = any_p.thumbnail_path if (getattr(any_p, "media_type", "photo") == "video" and any_p.thumbnail_path) else any_p.path
+                best_photo_url = f"/media/{ap_rel}"
                 matched_heading = any_p.heading_deg
 
         txt_score, matched_tok = pre_ocr[node.id]

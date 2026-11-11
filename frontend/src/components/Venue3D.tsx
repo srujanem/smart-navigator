@@ -3,20 +3,25 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { ContactShadows, Float, Html, Line, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import {
+  Box,
   ChevronLeft,
   ChevronRight,
-  Film,
-  Image as ImageIcon,
+  Compass,
+  Eye,
+  Layers,
   Moon,
   Navigation,
   Orbit,
-  Play,
+  Radar,
   Sun,
   X,
 } from 'lucide-react';
 import type { Building, GEdge, GNode, Graph, VenueDetail } from '../lib/types';
 import { mediaUrl } from '../lib/api';
 import { formatLevel } from '../lib/locationStore';
+
+export type Camera3DMode = 'orbit' | 'chase' | 'first_person' | 'top_down';
+export type Radar3DFilter = 'none' | 'emergency' | 'lift' | 'washroom';
 
 export interface Venue3DProps {
   venue: VenueDetail;
@@ -37,9 +42,13 @@ interface Transform3D {
   levels: number[];
 }
 
-const LEVEL_GAP = 12;
+const BASE_LEVEL_GAP = 12;
 
-function computeTransform(venue: VenueDetail, graph: Graph): Transform3D {
+function computeTransform(
+  venue: VenueDetail,
+  graph: Graph,
+  explodeFactor = 1,
+): Transform3D {
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
@@ -82,7 +91,8 @@ function computeTransform(venue: VenueDetail, graph: Graph): Transform3D {
   const levelIndexMap = new Map<number, number>();
   levels.forEach((lvl, idx) => levelIndexMap.set(lvl, idx));
 
-  const centerYOffset = ((levels.length - 1) * LEVEL_GAP) / 2;
+  const gap = BASE_LEVEL_GAP * explodeFactor;
+  const centerYOffset = ((levels.length - 1) * gap) / 2;
 
   return {
     scale,
@@ -91,7 +101,7 @@ function computeTransform(venue: VenueDetail, graph: Graph): Transform3D {
       const idx = levelIndexMap.get(level) ?? 0;
       return [
         (x - cx) * scale,
-        idx * LEVEL_GAP - centerYOffset,
+        idx * gap - centerYOffset,
         (y - cy) * scale,
       ];
     },
@@ -150,25 +160,28 @@ const AnimatedLiftCab: React.FC<{
   );
 };
 
+const ROUTE_FLOW_CONES = 10;
+
 const WalkerAndBeacons: React.FC<{
   routePoints: [number, number, number][];
   startPos: [number, number, number] | null;
   endPos: [number, number, number] | null;
   walkerProgress?: number | null;
   isPlayingWalker: boolean;
-  followWalker: boolean;
+  cameraMode: Camera3DMode;
 }> = ({
   routePoints,
   startPos,
   endPos,
   walkerProgress,
   isPlayingWalker,
-  followWalker,
+  cameraMode,
 }) => {
   const walkerRef = useRef<THREE.Mesh>(null);
   const walkerAuraRef = useRef<THREE.Mesh>(null);
   const startRingRef = useRef<THREE.Mesh>(null);
   const endRingRef = useRef<THREE.Mesh>(null);
+  const flowConeRefs = useRef<(THREE.Mesh | null)[]>([]);
   const internalProgress = useRef(0);
   const smoothLook = useRef(new THREE.Vector3());
 
@@ -188,6 +201,13 @@ const WalkerAndBeacons: React.FC<{
   useFrame((state, delta) => {
     const t = state.clock.getElapsedTime();
 
+    if (cameraMode === 'top_down') {
+      const desiredTop = new THREE.Vector3(0, 66, 0.01);
+      state.camera.position.lerp(desiredTop, Math.min(1, delta * 3.5));
+      smoothLook.current.lerp(new THREE.Vector3(0, 0, 0), Math.min(1, delta * 4.5));
+      state.camera.lookAt(smoothLook.current);
+    }
+
     if (curve && walkerRef.current && walkerAuraRef.current) {
       let u = 0;
       if (typeof walkerProgress === 'number' && Number.isFinite(walkerProgress)) {
@@ -204,7 +224,20 @@ const WalkerAndBeacons: React.FC<{
       walkerAuraRef.current.position.copy(pt);
       walkerAuraRef.current.scale.setScalar(1 + Math.sin(t * 6) * 0.25);
 
-      if (followWalker) {
+      // Animate marching 3D laser flow cones along the route curve
+      for (let i = 0; i < ROUTE_FLOW_CONES; i++) {
+        const coneMesh = flowConeRefs.current[i];
+        if (!coneMesh) continue;
+        const coneU = (i / ROUTE_FLOW_CONES + t * 0.16) % 1;
+        const conePt = curve.getPointAt(coneU);
+        const coneTan = curve.getTangentAt(Math.min(0.995, coneU));
+        coneMesh.position.set(conePt.x, conePt.y + 0.15, conePt.z);
+        const targetLook = conePt.clone().add(coneTan);
+        coneMesh.lookAt(targetLook);
+        coneMesh.rotateX(Math.PI / 2);
+      }
+
+      if (cameraMode === 'chase' || cameraMode === 'first_person') {
         const tangent = curve.getTangentAt(Math.min(0.995, u));
         const horiz = new THREE.Vector3(tangent.x, 0, tangent.z);
         if (horiz.lengthSq() < 0.01) {
@@ -212,15 +245,29 @@ const WalkerAndBeacons: React.FC<{
         }
         horiz.normalize();
 
-        const desiredCam = pt
-          .clone()
-          .sub(horiz.clone().multiplyScalar(11.5))
-          .add(new THREE.Vector3(0, 6.8, 0));
-        const desiredTarget = pt.clone().add(horiz.clone().multiplyScalar(3.5));
+        if (cameraMode === 'first_person') {
+          const desiredCam = pt
+            .clone()
+            .sub(horiz.clone().multiplyScalar(2.4))
+            .add(new THREE.Vector3(0, 2.2, 0));
+          const desiredTarget = pt
+            .clone()
+            .add(horiz.clone().multiplyScalar(8.5))
+            .add(new THREE.Vector3(0, 1.3, 0));
+          state.camera.position.lerp(desiredCam, Math.min(1, delta * 4.5));
+          smoothLook.current.lerp(desiredTarget, Math.min(1, delta * 5.2));
+          state.camera.lookAt(smoothLook.current);
+        } else {
+          const desiredCam = pt
+            .clone()
+            .sub(horiz.clone().multiplyScalar(11.5))
+            .add(new THREE.Vector3(0, 6.8, 0));
+          const desiredTarget = pt.clone().add(horiz.clone().multiplyScalar(3.5));
 
-        state.camera.position.lerp(desiredCam, Math.min(1, delta * 3.8));
-        smoothLook.current.lerp(desiredTarget, Math.min(1, delta * 4.5));
-        state.camera.lookAt(smoothLook.current);
+          state.camera.position.lerp(desiredCam, Math.min(1, delta * 3.8));
+          smoothLook.current.lerp(desiredTarget, Math.min(1, delta * 4.5));
+          state.camera.lookAt(smoothLook.current);
+        }
       }
     }
 
@@ -251,11 +298,40 @@ const WalkerAndBeacons: React.FC<{
             <sphereGeometry args={[1.1, 24, 24]} />
             <meshBasicMaterial color="#22d3ee" transparent opacity={0.45} />
           </mesh>
+          {/* 3D Animated Marching Route Flow Chevrons / Cones */}
+          {Array.from({ length: ROUTE_FLOW_CONES }).map((_, idx) => (
+            <mesh
+              key={`flow-cone-${idx}`}
+              ref={(el) => {
+                flowConeRefs.current[idx] = el;
+              }}
+            >
+              <coneGeometry args={[0.28, 0.78, 12]} />
+              <meshStandardMaterial
+                color="#34d399"
+                emissive="#10b981"
+                emissiveIntensity={1.6}
+                transparent
+                opacity={0.9}
+              />
+            </mesh>
+          ))}
         </>
       )}
 
       {startPos && (
         <group position={startPos}>
+          {/* 3D Hologram Start Beacon Beam */}
+          <mesh position={[0, 4.5, 0]}>
+            <cylinderGeometry args={[0.14, 0.45, 9, 20, 1, true]} />
+            <meshBasicMaterial
+              color="#38bdf8"
+              transparent
+              opacity={0.22}
+              side={THREE.DoubleSide}
+              depthWrite={false}
+            />
+          </mesh>
           <mesh position={[0, 0.75, 0]}>
             <sphereGeometry args={[0.58, 24, 24]} />
             <meshStandardMaterial
@@ -282,6 +358,17 @@ const WalkerAndBeacons: React.FC<{
 
       {endPos && (
         <group position={endPos}>
+          {/* 3D Hologram Destination Beacon Beam */}
+          <mesh position={[0, 5.2, 0]}>
+            <cylinderGeometry args={[0.16, 0.52, 10.4, 20, 1, true]} />
+            <meshBasicMaterial
+              color="#fb7185"
+              transparent
+              opacity={0.25}
+              side={THREE.DoubleSide}
+              depthWrite={false}
+            />
+          </mesh>
           <mesh
             ref={endRingRef}
             rotation={[-Math.PI / 2, 0, 0]}
@@ -321,11 +408,34 @@ const WalkerAndBeacons: React.FC<{
   );
 };
 
+function matchesRadarFilter(node: GNode, filter: Radar3DFilter): boolean {
+  if (filter === 'none') return false;
+  const k = `${node.kind} ${node.category} ${node.name}`.toLowerCase();
+  if (filter === 'emergency') {
+    return (
+      k.includes('emergency') ||
+      k.includes('entrance') ||
+      k.includes('exit') ||
+      k.includes('gate') ||
+      k.includes('casualty')
+    );
+  }
+  if (filter === 'lift') {
+    return k.includes('lift') || k.includes('stair') || k.includes('elevator');
+  }
+  if (filter === 'washroom') {
+    return k.includes('washroom') || k.includes('toilet') || k.includes('restroom');
+  }
+  return false;
+}
+
 const SceneContent: React.FC<
   Venue3DProps & {
-    followWalker: boolean;
+    cameraMode: Camera3DMode;
     daylight: boolean;
-    showPhotoCards: boolean;
+    explodeFactor: number;
+    showRoomVolumes: boolean;
+    radarFilter: Radar3DFilter;
   }
 > = ({
   venue,
@@ -338,13 +448,18 @@ const SceneContent: React.FC<
   walkerProgress = null,
   isPlayingWalker = true,
   onSelectNode,
-  followWalker,
+  cameraMode,
   daylight,
-  showPhotoCards,
+  explodeFactor,
+  showRoomVolumes,
+  radarFilter,
 }) => {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
-  const tf = useMemo(() => computeTransform(venue, graph), [venue, graph]);
+  const tf = useMemo(
+    () => computeTransform(venue, graph, explodeFactor),
+    [venue, graph, explodeFactor],
+  );
 
   const nodeById = useMemo(() => {
     const m = new Map<string, GNode>();
@@ -675,20 +790,28 @@ const SceneContent: React.FC<
         />
       )}
 
-      {/* Place & Corridor Nodes + Floating Real-Photo Billboards */}
+      {/* Place & Corridor Nodes + 3D Volumetric Rooms + Facility Radar Pillars */}
       {graph.nodes.map((node) => {
         const isStart = node.id === startNodeId;
         const isEnd = node.id === endNodeId;
         const isSelected = node.id === selectedNodeId;
         const isHovered = node.id === hoveredId;
         const inRoute = routeNodeSet.has(node.id);
+        const isRadarMatch = matchesRadarFilter(node, radarFilter);
         const levelMatch =
           selectedLevel === 'all' || node.level === selectedLevel;
 
-        if (!levelMatch && !inRoute && !isStart && !isEnd && !isSelected) {
+        if (
+          !levelMatch &&
+          !inRoute &&
+          !isStart &&
+          !isEnd &&
+          !isSelected &&
+          !isRadarMatch
+        ) {
           return null;
         }
-        if (!node.is_place && !inRoute && !isSelected) {
+        if (!node.is_place && !inRoute && !isSelected && !isRadarMatch) {
           return null;
         }
 
@@ -712,10 +835,84 @@ const SceneContent: React.FC<
           isSelected ||
           isStart ||
           isEnd ||
-          (followWalker && inRoute && node.is_place);
+          isRadarMatch ||
+          ((cameraMode === 'chase' || cameraMode === 'first_person') &&
+            inRoute &&
+            node.is_place);
+
+        const roomBoxW =
+          node.kind.toLowerCase().includes('ward') ||
+          node.kind.toLowerCase().includes('lobby') ||
+          node.kind.toLowerCase().includes('mess')
+            ? 3.1
+            : 2.2;
+        const roomBoxD =
+          node.kind.toLowerCase().includes('ward') ||
+          node.kind.toLowerCase().includes('lobby') ||
+          node.kind.toLowerCase().includes('mess')
+            ? 2.8
+            : 2.0;
+        const roomBoxH = 2.15;
 
         return (
           <group key={node.id} position={[wx, wy + 0.28, wz]}>
+            {/* 3D Volumetric Architectural Room Enclosure */}
+            {showRoomVolumes && node.is_place && levelMatch && (
+              <group position={[0, roomBoxH / 2 - 0.08, 0]}>
+                <mesh
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    onSelectNode?.(node);
+                  }}
+                >
+                  <boxGeometry args={[roomBoxW, roomBoxH, roomBoxD]} />
+                  <meshPhysicalMaterial
+                    color={color}
+                    transparent
+                    opacity={
+                      isSelected || isStart || isEnd || inRoute ? 0.28 : 0.14
+                    }
+                    roughness={0.18}
+                    metalness={0.1}
+                    depthWrite={false}
+                  />
+                </mesh>
+                <Line
+                  points={rectBorder(roomBoxW, roomBoxD)}
+                  position={[0, roomBoxH / 2, 0]}
+                  color={color}
+                  lineWidth={isSelected || inRoute ? 2.1 : 1.1}
+                  transparent
+                  opacity={isSelected || inRoute ? 0.92 : 0.55}
+                />
+              </group>
+            )}
+
+            {/* 3D Facility Radar Highlight Beam */}
+            {isRadarMatch && (
+              <group position={[0, 4.2, 0]}>
+                <mesh>
+                  <cylinderGeometry args={[0.16, 0.58, 8.4, 20, 1, true]} />
+                  <meshBasicMaterial
+                    color={color}
+                    transparent
+                    opacity={0.38}
+                    side={THREE.DoubleSide}
+                    depthWrite={false}
+                  />
+                </mesh>
+                <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -4.1, 0]}>
+                  <ringGeometry args={[0.68, 1.15, 28]} />
+                  <meshBasicMaterial
+                    color={color}
+                    transparent
+                    opacity={0.85}
+                    side={THREE.DoubleSide}
+                  />
+                </mesh>
+              </group>
+            )}
+
             <mesh
               onClick={(ev) => {
                 ev.stopPropagation();
@@ -735,13 +932,25 @@ const SceneContent: React.FC<
               <meshStandardMaterial
                 color={color}
                 emissive={color}
-                emissiveIntensity={isSelected || isHovered ? 1.55 : 0.95}
+                emissiveIntensity={
+                  isSelected || isHovered || isRadarMatch ? 1.65 : 0.95
+                }
               />
             </mesh>
 
             {showLabel && (
               <Html
-                position={[0, isEnd ? 2.4 : isStart ? 1.8 : 1.2, 0]}
+                position={[
+                  0,
+                  isEnd
+                    ? 2.6
+                    : isStart
+                      ? 2.1
+                      : showRoomVolumes && node.is_place
+                        ? 2.35
+                        : 1.25,
+                  0,
+                ]}
                 center
                 style={{ pointerEvents: 'none' }}
               >
@@ -753,11 +962,19 @@ const SceneContent: React.FC<
                         ? 'bg-rose-500/95 text-white ring-rose-300'
                         : isSelected
                           ? 'bg-purple-600/95 text-white ring-purple-300'
-                          : 'bg-slate-900/90 text-white ring-white/20'
+                          : isRadarMatch
+                            ? 'bg-emerald-600/95 text-white ring-emerald-300'
+                            : 'bg-slate-900/90 text-white ring-white/20'
                   }`}
                 >
                   <span>
-                    {isStart ? '📍 Start: ' : isEnd ? '🏁 Dest: ' : ''}
+                    {isStart
+                      ? '📍 Start: '
+                      : isEnd
+                        ? '🏁 Dest: '
+                        : isRadarMatch
+                          ? '📡 '
+                          : ''}
                     {node.name}
                   </span>
                   <span className="ml-1.5 text-[10px] opacity-80">
@@ -770,14 +987,14 @@ const SceneContent: React.FC<
         );
       })}
 
-      {/* Animated Walker + Follow Camera + Start/Destination Beacons */}
+      {/* Animated Walker + Follow Camera + Start/Destination Beacons + Route Flow Cones */}
       <WalkerAndBeacons
         routePoints={routePoints}
         startPos={startPos}
         endPos={endPos}
         walkerProgress={walkerProgress}
         isPlayingWalker={isPlayingWalker}
-        followWalker={followWalker}
+        cameraMode={cameraMode}
       />
 
       <ContactShadows
@@ -793,7 +1010,10 @@ const SceneContent: React.FC<
 
 const Venue3D: React.FC<Venue3DProps> = (props) => {
   const hasRoute = (props.routePath?.length ?? 0) >= 2;
-  const [followWalker, setFollowWalker] = useState(false);
+  const [cameraMode, setCameraMode] = useState<Camera3DMode>('orbit');
+  const [explodeFactor, setExplodeFactor] = useState<number>(1);
+  const [showRoomVolumes, setShowRoomVolumes] = useState<boolean>(true);
+  const [radarFilter, setRadarFilter] = useState<Radar3DFilter>('none');
   const [daylight, setDaylight] = useState(false);
   const [mobileTouchOrbit, setMobileTouchOrbit] = useState(true);
   const [inspectedNode, setInspectedNode] = useState<GNode | null>(null);
@@ -805,6 +1025,13 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
       if (match) setInspectedNode(match);
     }
   }, [props.selectedNodeId, props.graph.nodes]);
+
+  // Reset chase/first_person camera mode if route is cleared
+  useEffect(() => {
+    if (!hasRoute && (cameraMode === 'chase' || cameraMode === 'first_person')) {
+      setCameraMode('orbit');
+    }
+  }, [hasRoute, cameraMode]);
 
   // Route place nodes for sequential landmark carousel
   const routePlaces = useMemo(() => {
@@ -842,6 +1069,10 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
     props.onSelectNode?.(nextNode);
   };
 
+  const cycleExplodeFactor = () => {
+    setExplodeFactor((prev) => (prev === 1 ? 1.7 : prev === 1.7 ? 2.5 : 1));
+  };
+
   return (
     <div
       className={`relative h-full w-full select-none rounded-2xl overflow-hidden transition-colors duration-500 ${
@@ -877,59 +1108,123 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
         />
         <SceneContent
           {...props}
-          followWalker={hasRoute && followWalker}
+          cameraMode={cameraMode}
           daylight={daylight}
+          explodeFactor={explodeFactor}
+          showRoomVolumes={showRoomVolumes}
+          radarFilter={radarFilter}
           onSelectNode={(node) => {
             setInspectedNode(node);
             props.onSelectNode?.(node);
           }}
         />
-        {!(hasRoute && followWalker) && (
+        {cameraMode === 'orbit' && (
           <OrbitControls
             makeDefault
             enabled={mobileTouchOrbit}
             enableDamping
             dampingFactor={0.07}
             minDistance={12}
-            maxDistance={125}
+            maxDistance={135}
             maxPolarAngle={Math.PI / 2.04}
             touches={{ ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }}
           />
         )}
       </Canvas>
 
-      {/* Top Left Camera Mode Pill (Orbit vs Follow Walker POV) */}
-      {hasRoute && (
-        <div className="absolute top-3 left-3 z-10 flex items-center gap-1 rounded-xl bg-slate-950/80 p-1 text-xs ring-1 ring-white/15 backdrop-blur-md">
-          <button
-            type="button"
-            onClick={() => setFollowWalker(false)}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-bold transition ${
-              !followWalker
-                ? 'bg-cyan-500 text-slate-950 shadow-sm'
-                : 'text-slate-300 hover:bg-white/10'
-            }`}
-          >
-            <Orbit className="h-3.5 w-3.5" />
-            Orbit 3D
-          </button>
-          <button
-            type="button"
-            onClick={() => setFollowWalker(true)}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-bold transition ${
-              followWalker
-                ? 'bg-emerald-400 text-slate-950 shadow-sm'
-                : 'text-slate-300 hover:bg-white/10'
-            }`}
-          >
-            <Navigation className="h-3.5 w-3.5" />
-            Follow Walker POV
-          </button>
-        </div>
-      )}
+      {/* Top Left 4-Mode 3D Camera Bar */}
+      <div className="absolute top-3 left-3 z-10 flex flex-wrap items-center gap-1 rounded-xl bg-slate-950/85 p-1 text-[11px] ring-1 ring-white/15 backdrop-blur-md">
+        <button
+          type="button"
+          onClick={() => setCameraMode('orbit')}
+          className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 font-bold transition ${
+            cameraMode === 'orbit'
+              ? 'bg-cyan-500 text-slate-950 shadow-sm'
+              : 'text-slate-300 hover:bg-white/10'
+          }`}
+        >
+          <Orbit className="h-3.5 w-3.5" />
+          Orbit 3D
+        </button>
 
-      {/* Top Right Controls */}
-      <div className="absolute top-3 right-3 z-10 flex items-center gap-1.5">
+        {hasRoute && (
+          <>
+            <button
+              type="button"
+              onClick={() => setCameraMode('chase')}
+              className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 font-bold transition ${
+                cameraMode === 'chase'
+                  ? 'bg-emerald-400 text-slate-950 shadow-sm'
+                  : 'text-slate-300 hover:bg-white/10'
+              }`}
+            >
+              <Navigation className="h-3.5 w-3.5" />
+              Chase POV
+            </button>
+            <button
+              type="button"
+              onClick={() => setCameraMode('first_person')}
+              className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 font-bold transition ${
+                cameraMode === 'first_person'
+                  ? 'bg-purple-400 text-slate-950 shadow-sm'
+                  : 'text-slate-300 hover:bg-white/10'
+              }`}
+            >
+              <Eye className="h-3.5 w-3.5" />
+              1st-Person Walk
+            </button>
+          </>
+        )}
+
+        <button
+          type="button"
+          onClick={() =>
+            setCameraMode((m) => (m === 'top_down' ? 'orbit' : 'top_down'))
+          }
+          className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 font-bold transition ${
+            cameraMode === 'top_down'
+              ? 'bg-amber-400 text-slate-950 shadow-sm'
+              : 'text-slate-300 hover:bg-white/10'
+          }`}
+          title="Top-down architectural drone view"
+        >
+          <Compass className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Drone Top</span>
+        </button>
+      </div>
+
+      {/* Top Right 3D Architectural Controls (Explode Stack, 3D Rooms, Daylight, Mobile Orbit) */}
+      <div className="absolute top-3 right-3 z-10 flex flex-wrap items-center justify-end gap-1.5">
+        {props.selectedLevel === 'all' && (
+          <button
+            type="button"
+            onClick={cycleExplodeFactor}
+            className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-[11px] font-bold ring-1 backdrop-blur-md transition ${
+              explodeFactor > 1
+                ? 'bg-indigo-500/90 text-white ring-indigo-300 shadow-md'
+                : 'bg-slate-950/80 text-slate-200 ring-white/15 hover:bg-slate-900'
+            }`}
+            title="Explode vertical spacing between floors for X-Ray inspection"
+          >
+            <Layers className="h-3.5 w-3.5 text-cyan-300" />
+            <span>Explode {explodeFactor}×</span>
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={() => setShowRoomVolumes((v) => !v)}
+          className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-[11px] font-bold ring-1 backdrop-blur-md transition ${
+            showRoomVolumes
+              ? 'bg-cyan-500/90 text-slate-950 ring-cyan-300'
+              : 'bg-slate-950/80 text-slate-300 ring-white/15 hover:bg-slate-900'
+          }`}
+          title="Toggle 3D Volumetric Room Enclosures"
+        >
+          <Box className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">3D Rooms</span>
+        </button>
+
         <button
           type="button"
           onClick={() => setMobileTouchOrbit((v) => !v)}
@@ -951,15 +1246,46 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
           {daylight ? (
             <>
               <Moon className="h-3.5 w-3.5 text-cyan-400" />
-              Night
+              <span className="hidden sm:inline">Night</span>
             </>
           ) : (
             <>
               <Sun className="h-3.5 w-3.5 text-amber-300" />
-              Daylight
+              <span className="hidden sm:inline">Daylight</span>
             </>
           )}
         </button>
+      </div>
+
+      {/* 3D Facility Radar Highlight Bar (Emergency/Exits, Lifts/Stairs, Washrooms) */}
+      <div className="absolute top-14 left-3 z-10 flex items-center gap-1 rounded-xl bg-slate-950/80 p-1 text-[10px] ring-1 ring-white/10 backdrop-blur-md">
+        <span className="inline-flex items-center gap-1 px-1.5 text-slate-400 font-bold">
+          <Radar className="h-3 w-3 text-cyan-400" />
+          <span className="hidden sm:inline">3D Radar:</span>
+        </span>
+        {(
+          [
+            { id: 'none', label: 'Off' },
+            { id: 'emergency', label: '🚨 Exits/ER' },
+            { id: 'lift', label: '🛗 Lifts/Stairs' },
+            { id: 'washroom', label: '🚻 WC' },
+          ] as { id: Radar3DFilter; label: string }[]
+        ).map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() =>
+              setRadarFilter((cur) => (cur === item.id ? 'none' : item.id))
+            }
+            className={`rounded-lg px-2 py-0.5 font-bold transition ${
+              radarFilter === item.id
+                ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                : 'text-slate-300 hover:bg-white/10'
+            }`}
+          >
+            {item.label}
+          </button>
+        ))}
       </div>
 
       {/* FIXED ANCHOR INSPECTOR PANEL & LANDMARK CAROUSEL (Never overlaps 3D scene) */}
@@ -969,7 +1295,8 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
             <div className="flex items-center gap-1.5 min-w-0">
               <span className="h-2 w-2 rounded-full bg-cyan-400 shrink-0 animate-pulse" />
               <span className="text-[11px] font-extrabold uppercase tracking-wider text-cyan-300 truncate">
-                {inspectedNode.building_name} · {formatLevel(inspectedNode.level, inspectedNode.floor_name)}
+                {inspectedNode.building_name} ·{' '}
+                {formatLevel(inspectedNode.level, inspectedNode.floor_name)}
               </span>
             </div>
             <button
@@ -987,7 +1314,11 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
             {inspectedNode.video_url ? (
               <video
                 src={mediaUrl(inspectedNode.video_url)}
-                poster={inspectedNode.photo_url ? mediaUrl(inspectedNode.photo_url) : undefined}
+                poster={
+                  inspectedNode.photo_url
+                    ? mediaUrl(inspectedNode.photo_url)
+                    : undefined
+                }
                 autoPlay
                 loop
                 muted
@@ -1014,7 +1345,11 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
           <div className="mt-2.5 flex items-center justify-between gap-2">
             <div className="min-w-0">
               <h4 className="font-display text-sm font-bold truncate">
-                {inspectedNode.id === props.startNodeId ? '📍 ' : inspectedNode.id === props.endNodeId ? '🏁 ' : ''}
+                {inspectedNode.id === props.startNodeId
+                  ? '📍 '
+                  : inspectedNode.id === props.endNodeId
+                    ? '🏁 '
+                    : ''}
                 {inspectedNode.name}
               </h4>
               <p className="text-[11px] text-slate-400 truncate">
@@ -1034,7 +1369,9 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
                   <ChevronLeft className="h-3.5 w-3.5" />
                 </button>
                 <span className="text-[10px] font-mono font-bold px-1 text-cyan-300">
-                  {routePlaceIndex >= 0 ? `${routePlaceIndex + 1}/${routePlaces.length}` : `1/${routePlaces.length}`}
+                  {routePlaceIndex >= 0
+                    ? `${routePlaceIndex + 1}/${routePlaces.length}`
+                    : `1/${routePlaces.length}`}
                 </span>
                 <button
                   type="button"
@@ -1054,7 +1391,10 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
       {!inspectedNode && (
         <div className="pointer-events-none absolute bottom-3 left-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-950/80 px-3 py-1.5 text-[11px] text-slate-200 ring-1 ring-white/10 backdrop-blur-md">
           <span className="inline-flex items-center gap-1">
-            <span className="h-2 w-2 rounded-full bg-sky-400" /> Places
+            <span className="h-2 w-2 rounded-full bg-sky-400" /> 3D Rooms
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <span className="h-2 w-2 rounded-full bg-emerald-400" /> Flow Cones
           </span>
           <span className="inline-flex items-center gap-1">
             <span className="h-2 w-2 rounded-full bg-cyan-400" /> Moving Lift
@@ -1066,7 +1406,7 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
             <span className="h-2 w-2 rounded-full bg-rose-500" /> Destination
           </span>
           <span className="hidden sm:inline text-slate-400 ml-1">
-            · Tap any pin to open inspect card
+            · Tap any room/pin to inspect
           </span>
         </div>
       )}

@@ -30,7 +30,8 @@ def rebuild_venue_index(session: Session, venue: Venue, force: bool = False) -> 
     vecs: list[np.ndarray] = []
 
     for p in photos:
-        img_path = MEDIA_DIR / p.path
+        rel_img = p.thumbnail_path if (getattr(p, "media_type", "photo") == "video" and p.thumbnail_path) else p.path
+        img_path = MEDIA_DIR / rel_img
         if not img_path.exists():
             continue
         needs_emb = force or (p.embedding is None) or (p.embedder != emb_name)
@@ -86,7 +87,8 @@ def rebuild_venue_index(session: Session, venue: Venue, force: bool = False) -> 
             sims = sim_mat[i].copy()
             sims[i] = -2.0  # exclude self
         else:
-            img_path = MEDIA_DIR / p.path
+            rel_img = p.thumbnail_path if (getattr(p, "media_type", "photo") == "video" and p.thumbnail_path) else p.path
+            img_path = MEDIA_DIR / rel_img
             with Image.open(img_path) as im:
                 w, h = im.size
                 crop = im.crop((int(w * 0.1), int(h * 0.08), int(w * 0.88), int(h * 0.9)))

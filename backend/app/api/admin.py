@@ -41,11 +41,13 @@ from ..models import (
     User,
     Venue,
 )
+from ..services.routing import compute_venue_route
 from ..services.vision.embedder import embedder_service
 from ..services.vision.indexer import get_latest_report, rebuild_venue_index
+from ..services.vision.localizer import _ocr_match_score
 from ..services.vision.ocr import ocr_service
 from ..services.vision.privacy import save_clean_image
-from ..services.vision.quality import validate_dataset_photo
+from ..services.vision.quality import compute_sharpness_quality, validate_dataset_photo
 from .public import get_venue_or_404, serialize_person, serialize_venue_summary
 
 router = APIRouter()
@@ -1086,6 +1088,10 @@ def admin_dataset(
                 {
                     "id": p.id,
                     "url": f"/media/{p.path}",
+                    "thumbnail_url": f"/media/{p.thumbnail_path}" if getattr(p, "thumbnail_path", None) else f"/media/{p.path}",
+                    "media_type": getattr(p, "media_type", "photo") or "photo",
+                    "duration_s": getattr(p, "duration_s", None),
+                    "ocr_text": getattr(p, "ocr_text", "") or "",
                     "source": p.source,
                     "quality": p.quality,
                     "heading_deg": p.heading_deg,
@@ -1314,9 +1320,276 @@ def admin_delete_photo(
     if v:
         assert_venue_write_access(user, v)
     (MEDIA_DIR / p.path).unlink(missing_ok=True)
+    if getattr(p, "thumbnail_path", None):
+        (MEDIA_DIR / p.thumbnail_path).unlink(missing_ok=True)
     session.delete(p)
     session.commit()
     return {"ok": True}
+
+
+@router.post("/admin/venues/{slug}/dataset/auto-map")
+async def admin_auto_map_dataset(
+    slug: str,
+    mode: str = Form("route"),  # "route" | "ocr"
+    from_node_id: Optional[str] = Form(default=None),
+    to_node_id: Optional[str] = Form(default=None),
+    level_filter: Optional[int] = Form(default=None),
+    fallback_node_id: Optional[str] = Form(default=None),
+    files: List[UploadFile] = File(...),
+    user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """
+    Enterprise Hospital / Multi-Route Smart Auto-Mapper:
+    1. Accepts a continuous corridor walk-through video (.mp4/.webm/.mov) OR a batch of photos/keyframes.
+    2. Extracts sharp keyframes, strips EXIF, blurs faces, and compresses to lightweight 1600px WebP (~60 KB/frame),
+       discarding bulky raw 4K video files to save 95%+ server disk space.
+    3. Deduplicates stationary frames and rejects motion-blurred frames automatically.
+    4. Auto-assigns each frame to the right node along a selected route path (interpolating distance + corridor compass heading)
+       OR auto-tags across any floor/building by reading room signboards via RapidOCR + visual embedding similarity.
+    """
+    import numpy as np
+
+    v = get_venue_or_404(session, slug)
+    assert_venue_write_access(user, v)
+
+    all_nodes = session.exec(select(Node).where(Node.venue_id == v.id)).all()
+    if not all_nodes:
+        raise HTTPException(status_code=400, detail="Venue has no nodes to map to")
+    node_map = {n.id: n for n in all_nodes}
+    edges = session.exec(select(Edge).where(Edge.venue_id == v.id)).all()
+    existing_photos = session.exec(select(Photo).where(Photo.venue_id == v.id)).all()
+
+    node_photo_texts: dict[str, list[str]] = {n.id: [] for n in all_nodes}
+    node_vecs: dict[str, list[np.ndarray]] = {n.id: [] for n in all_nodes}
+    for ep in existing_photos:
+        if ep.ocr_text and ep.node_id in node_photo_texts:
+            node_photo_texts[ep.node_id].append(ep.ocr_text)
+        if ep.embedding and ep.node_id in node_vecs:
+            node_vecs[ep.node_id].append(embedder_service.from_bytes(ep.embedding))
+
+    # Build route path if mode == "route"
+    route_path_ids: list[str] = []
+    route_cum_dist: list[float] = []
+    route_headings: list[Optional[float]] = []
+    route_candidate_pool: list[Node] = []
+
+    if mode == "route" and from_node_id and to_node_id:
+        if from_node_id not in node_map or to_node_id not in node_map:
+            raise HTTPException(status_code=400, detail="Invalid start or end node for route walk-through")
+        try:
+            r_data = compute_venue_route(session, v, from_node_id, to_node_id, record_log=False)
+            route_path_ids = r_data.get("path", [from_node_id, to_node_id])
+        except Exception:
+            route_path_ids = [from_node_id, to_node_id]
+
+        # Compute cumulative distance and compass heading at each node along the path
+        cum = 0.0
+        route_cum_dist.append(0.0)
+        for idx in range(len(route_path_ids) - 1):
+            na = node_map[route_path_ids[idx]]
+            nb = node_map[route_path_ids[idx + 1]]
+            seg_d = max(1.0, math.hypot(nb.x - na.x, nb.y - na.y))
+            cum += seg_d
+            route_cum_dist.append(cum)
+            dx, dy = nb.x - na.x, nb.y - na.y
+            hdg = round((math.degrees(math.atan2(dx, -dy)) + 360.0) % 360.0, 1) if math.hypot(dx, dy) > 1e-2 else None
+            route_headings.append(hdg)
+        route_headings.append(route_headings[-1] if route_headings else None)
+
+        # Include route nodes + 1-hop adjacent rooms/doors along the corridor for OCR signboard matching
+        adj_ids = set(route_path_ids)
+        for e in edges:
+            if e.source in adj_ids:
+                adj_ids.add(e.target)
+            elif e.target in adj_ids:
+                adj_ids.add(e.source)
+        route_candidate_pool = [node_map[nid] for nid in adj_ids if nid in node_map]
+    else:
+        route_candidate_pool = [
+            n for n in all_nodes
+            if level_filter is None or n.level == level_filter
+        ] or all_nodes
+
+    # Step 1: Unpack uploaded files (slice videos into sharp keyframes & collect raw bytes)
+    raw_frames: list[tuple[str, bytes]] = []
+    raw_bytes_total = 0
+    saved_bytes_total = 0
+
+    for f in files:
+        fname = f.filename or "capture.webp"
+        raw = await f.read()
+        if not raw:
+            continue
+        raw_bytes_total += len(raw)
+        ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+        is_video = ext in ("mp4", "webm", "mov", "mkv", "avi") or (f.content_type or "").startswith("video/")
+
+        if is_video:
+            tmp_video = MEDIA_DIR / f"venues/{v.slug}/videos/tmp_{uuid.uuid4().hex[:10]}.{ext or 'mp4'}"
+            tmp_video.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                tmp_video.write_bytes(raw)
+                import cv2
+                cap = cv2.VideoCapture(str(tmp_video))
+                if cap.isOpened():
+                    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+                    total_f = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                    # Extract a frame every ~1.2 seconds (up to 28 keyframes per video)
+                    step_f = max(int(fps * 1.2), max(1, total_f // 28)) if total_f > 0 else int(fps * 1.2)
+                    frame_idx = 0
+                    extracted = 0
+                    while extracted < 28:
+                        if total_f > 0 and frame_idx >= total_f:
+                            break
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                        ret, frame = cap.read()
+                        if not ret or frame is None:
+                            break
+                        ok_enc, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 92])
+                        if ok_enc:
+                            t_sec = round(frame_idx / max(1.0, fps), 1)
+                            raw_frames.append((f"{fname} @ {t_sec}s", buf.tobytes()))
+                            extracted += 1
+                        frame_idx += max(1, step_f)
+                    cap.release()
+            finally:
+                tmp_video.unlink(missing_ok=True)
+        else:
+            raw_frames.append((fname, raw))
+
+    accepted = []
+    rejected = []
+    touched_nodes: set[str] = set()
+    last_accepted_vec: Optional[np.ndarray] = None
+
+    total_frames_count = len(raw_frames)
+    for idx, (label, frame_bytes) in enumerate(raw_frames):
+        rel_path = f"venues/{v.slug}/photos/{uuid.uuid4().hex[:12]}.webp"
+        dest_path = MEDIA_DIR / rel_path
+        try:
+            img, _ = save_clean_image(frame_bytes, dest_path, max_side=1600)
+            q_score = compute_sharpness_quality(img)
+            if q_score < 0.13:
+                dest_path.unlink(missing_ok=True)
+                rejected.append({"filename": label, "reason": f"Motion blur detected (sharpness {int(q_score*100)}%)"})
+                continue
+
+            vec = embedder_service.embed(img)
+            # Deduplicate consecutive near-identical corridor frames
+            if last_accepted_vec is not None and float(np.dot(vec, last_accepted_vec)) > 0.965:
+                dest_path.unlink(missing_ok=True)
+                rejected.append({"filename": label, "reason": "Duplicate stationary frame skipped"})
+                continue
+
+            ocr_toks = ocr_service.extract_text(img)
+
+            # Match node via OCR signboard first
+            best_ocr_node: Optional[Node] = None
+            best_ocr_score = 0.0
+            best_ocr_reason: Optional[str] = None
+            for cand_n in route_candidate_pool:
+                sc, mt = _ocr_match_score(ocr_toks, cand_n, node_photo_texts.get(cand_n.id, []))
+                if sc > best_ocr_score:
+                    best_ocr_score = sc
+                    best_ocr_node = cand_n
+                    best_ocr_reason = mt
+
+            assigned_node: Optional[Node] = None
+            assigned_heading: Optional[float] = None
+            match_method = "Route Path Interpolation"
+
+            if best_ocr_node is not None and best_ocr_score >= 0.72:
+                assigned_node = best_ocr_node
+                match_method = f"OCR Signboard ({best_ocr_reason or 'Text Match'})"
+                if route_path_ids and assigned_node.id in route_path_ids:
+                    r_idx = route_path_ids.index(assigned_node.id)
+                    assigned_heading = route_headings[r_idx]
+            elif mode == "route" and route_path_ids:
+                # Interpolate along the route path by chronological frame progress
+                u = idx / float(max(1, total_frames_count - 1))
+                total_d = route_cum_dist[-1] if route_cum_dist else 0.0
+                target_d = u * total_d
+                chosen_i = 0
+                best_d_diff = float("inf")
+                for r_i, cd in enumerate(route_cum_dist):
+                    if abs(cd - target_d) < best_d_diff:
+                        best_d_diff = abs(cd - target_d)
+                        chosen_i = r_i
+                assigned_node = node_map[route_path_ids[chosen_i]]
+                assigned_heading = route_headings[chosen_i]
+                match_method = f"Walk Path Slot #{chosen_i + 1}/{len(route_path_ids)}"
+            else:
+                # Visual similarity against existing photos on candidate floor/venue
+                best_vis_node: Optional[Node] = None
+                best_vis_sim = -1.0
+                for cand_n in route_candidate_pool:
+                    for ref_v in node_vecs.get(cand_n.id, []):
+                        if ref_v.shape == vec.shape:
+                            sim = float(np.dot(vec, ref_v))
+                            if sim > best_vis_sim:
+                                best_vis_sim = sim
+                                best_vis_node = cand_n
+                if best_vis_node is not None and best_vis_sim >= 0.55:
+                    assigned_node = best_vis_node
+                    match_method = f"Visual Similarity ({int(best_vis_sim * 100)}%)"
+                elif fallback_node_id and fallback_node_id in node_map:
+                    assigned_node = node_map[fallback_node_id]
+                    match_method = "Selected Node Fallback"
+                else:
+                    assigned_node = route_candidate_pool[idx % len(route_candidate_pool)]
+                    match_method = "Floor Slot Distribution"
+
+            p_row = Photo(
+                venue_id=v.id,
+                node_id=assigned_node.id,
+                path=rel_path,
+                source="uploader" if user.role == "uploader" else "admin",
+                quality=round(float(q_score), 3),
+                embedding=embedder_service.to_bytes(vec),
+                embedder=embedder_service.name,
+                ocr_text=" ".join(ocr_toks),
+                heading_deg=assigned_heading,
+                uploaded_by_id=user.id,
+                media_type="photo",
+                thumbnail_path=None,
+                duration_s=None,
+            )
+            session.add(p_row)
+            session.flush()
+
+            last_accepted_vec = vec
+            node_vecs.setdefault(assigned_node.id, []).append(vec)
+            touched_nodes.add(assigned_node.id)
+            if dest_path.exists():
+                saved_bytes_total += dest_path.stat().st_size
+
+            accepted.append({
+                "id": p_row.id,
+                "filename": label,
+                "url": f"/media/{rel_path}",
+                "node_id": assigned_node.id,
+                "node_name": assigned_node.name,
+                "level": assigned_node.level,
+                "quality": round(float(q_score), 3),
+                "heading_deg": assigned_heading,
+                "ocr_text": " ".join(ocr_toks[:6]),
+                "method": match_method,
+            })
+        except Exception as exc:  # noqa: BLE001
+            dest_path.unlink(missing_ok=True)
+            rejected.append({"filename": label, "reason": f"Frame error ({exc})"})
+
+    session.commit()
+    saved_mb = round(max(0.0, (raw_bytes_total - saved_bytes_total) / (1024.0 * 1024.0)), 2)
+    return {
+        "accepted": accepted,
+        "rejected": rejected,
+        "nodes_updated": len(touched_nodes),
+        "raw_mb": round(raw_bytes_total / (1024.0 * 1024.0), 2),
+        "stored_mb": round(saved_bytes_total / (1024.0 * 1024.0), 2),
+        "space_saved_mb": saved_mb,
+    }
 
 
 @router.post("/admin/venues/{slug}/index/rebuild")

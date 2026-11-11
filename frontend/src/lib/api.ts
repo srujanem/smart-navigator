@@ -2,6 +2,7 @@ import type {
   AdminOverview,
   AdminUser,
   AuthResponse,
+  AutoMapDatasetResponse,
   Building,
   Closure,
   CreateEdgePayload,
@@ -88,7 +89,7 @@ export function clearAdminSession(): void {
 
 export const API_BASE = (
   (import.meta as any).env?.VITE_API_URL ||
-  'https://photograph-bones-soccer-encryption.trycloudflare.com'
+  'https://com-telling-invited-practice.trycloudflare.com'
 ).replace(/\/$/, '');
 
 export function mediaUrl(url: string | null | undefined): string {
@@ -241,15 +242,18 @@ export function searchVenue(
   );
 }
 
-async function compressImageForUpload(
+export async function compressImageForUpload(
   file: File,
-  maxSide = 1024,
+  maxSide = 1600,
   quality = 0.88,
 ): Promise<File> {
   if (typeof window === 'undefined' || typeof createImageBitmap !== 'function') {
     return file;
   }
-  if (file.size <= 450_000 && file.type === 'image/jpeg') {
+  if (!file.type.startsWith('image/')) {
+    return file;
+  }
+  if (file.size <= 350_000 && (file.type === 'image/webp' || file.type === 'image/jpeg')) {
     return file;
   }
   try {
@@ -267,15 +271,119 @@ async function compressImageForUpload(
     }
     ctx.drawImage(bmp, 0, 0, w, h);
     bmp.close();
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, 'image/jpeg', quality),
+    let blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob(resolve, 'image/webp', quality),
     );
+    let mime = 'image/webp';
+    let ext = 'webp';
+    if (!blob) {
+      blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, 'image/jpeg', quality),
+      );
+      mime = 'image/jpeg';
+      ext = 'jpg';
+    }
     if (!blob) return file;
-    const cleanName = file.name.replace(/\.[^.]+$/, '') + '.jpg';
-    return new File([blob], cleanName, { type: 'image/jpeg' });
+    const cleanName = file.name.replace(/\.[^.]+$/, '') + `.${ext}`;
+    return new File([blob], cleanName, { type: mime });
   } catch {
     return file;
   }
+}
+
+export async function extractVideoKeyframesInBrowser(
+  videoFile: File,
+  maxFrames = 24,
+  maxSide = 1600,
+): Promise<File[]> {
+  if (typeof window === 'undefined') return [videoFile];
+  return new Promise<File[]>((resolve) => {
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.muted = true;
+    video.playsInline = true;
+    const objUrl = URL.createObjectURL(videoFile);
+    video.src = objUrl;
+
+    const cleanup = () => {
+      URL.revokeObjectURL(objUrl);
+      video.removeAttribute('src');
+      video.load();
+    };
+
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      resolve([videoFile]);
+    }, 25000);
+
+    video.onerror = () => {
+      window.clearTimeout(timeout);
+      cleanup();
+      resolve([videoFile]);
+    };
+
+    video.onloadedmetadata = async () => {
+      const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+      if (duration <= 0.2 || video.videoWidth <= 0) {
+        window.clearTimeout(timeout);
+        cleanup();
+        resolve([videoFile]);
+        return;
+      }
+
+      const stepSec = Math.max(1.0, duration / maxFrames);
+      const timestamps: number[] = [];
+      for (let t = 0.2; t < duration && timestamps.length < maxFrames; t += stepSec) {
+        timestamps.push(Number(t.toFixed(2)));
+      }
+      if (timestamps.length === 0) timestamps.push(0.1);
+
+      const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight, 1));
+      const w = Math.max(1, Math.round(video.videoWidth * scale));
+      const h = Math.max(1, Math.round(video.videoHeight * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        window.clearTimeout(timeout);
+        cleanup();
+        resolve([videoFile]);
+        return;
+      }
+
+      const extracted: File[] = [];
+      const baseName = videoFile.name.replace(/\.[^.]+$/, '');
+
+      for (let i = 0; i < timestamps.length; i++) {
+        const t = timestamps[i];
+        const okSeek = await new Promise<boolean>((resSeek) => {
+          const onSeeked = () => {
+            video.removeEventListener('seeked', onSeeked);
+            resSeek(true);
+          };
+          video.addEventListener('seeked', onSeeked);
+          video.currentTime = t;
+        });
+        if (!okSeek) continue;
+        ctx.drawImage(video, 0, 0, w, h);
+        const blob = await new Promise<Blob | null>((r) =>
+          canvas.toBlob(r, 'image/webp', 0.86),
+        );
+        if (blob) {
+          extracted.push(
+            new File([blob], `${baseName}_f${String(i + 1).padStart(2, '0')}_${t}s.webp`, {
+              type: 'image/webp',
+            }),
+          );
+        }
+      }
+
+      window.clearTimeout(timeout);
+      cleanup();
+      resolve(extracted.length > 0 ? extracted : [videoFile]);
+    };
+  });
 }
 
 export async function localizePhoto(
@@ -284,7 +392,7 @@ export async function localizePhoto(
   level?: number | null,
   priorNodeId?: string | null,
 ): Promise<LocalizeResult> {
-  const optimizedFile = await compressImageForUpload(file, 1024, 0.88);
+  const optimizedFile = await compressImageForUpload(file, 1600, 0.88);
   const fd = new FormData();
   fd.append('file', optimizedFile);
   if (level !== undefined && level !== null) {
@@ -660,7 +768,7 @@ export function getAdminDataset(slug: string): Promise<DatasetResponse> {
   );
 }
 
-export function uploadAdminPhotos(
+export async function uploadAdminPhotos(
   slug: string,
   nodeId: string,
   files: File[],
@@ -672,10 +780,75 @@ export function uploadAdminPhotos(
     fd.append('heading_deg', String(headingDeg));
   }
   for (const f of files) {
-    fd.append('files', f);
+    if (f.type.startsWith('image/')) {
+      const opt = await compressImageForUpload(f, 1600, 0.88);
+      fd.append('files', opt);
+    } else {
+      fd.append('files', f);
+    }
   }
   return request<UploadPhotosResponse>(
     `/api/admin/venues/${encodeURIComponent(slug)}/photos`,
+    { method: 'POST', body: fd },
+    true,
+  );
+}
+
+export async function autoMapAdminDataset(
+  slug: string,
+  options: {
+    mode: 'route' | 'ocr';
+    fromNodeId?: string;
+    toNodeId?: string;
+    levelFilter?: number | null;
+    fallbackNodeId?: string | null;
+    files: File[];
+    onProgressStage?: (stageText: string) => void;
+  },
+): Promise<AutoMapDatasetResponse> {
+  const fd = new FormData();
+  fd.append('mode', options.mode);
+  if (options.fromNodeId) fd.append('from_node_id', options.fromNodeId);
+  if (options.toNodeId) fd.append('to_node_id', options.toNodeId);
+  if (options.levelFilter !== undefined && options.levelFilter !== null) {
+    fd.append('level_filter', String(options.levelFilter));
+  }
+  if (options.fallbackNodeId) {
+    fd.append('fallback_node_id', options.fallbackNodeId);
+  }
+
+  const readyFiles: File[] = [];
+  for (const f of options.files) {
+    const ext = f.name.split('.').pop()?.toLowerCase() || '';
+    const isVid =
+      f.type.startsWith('video/') ||
+      ['mp4', 'webm', 'mov', 'mkv', 'avi'].includes(ext);
+    if (isVid) {
+      options.onProgressStage?.(
+        `Slicing 4K/HD video "${f.name}" into lightweight WebP keyframes on device...`,
+      );
+      const frames = await extractVideoKeyframesInBrowser(f, 24, 1600);
+      readyFiles.push(...frames);
+    } else if (f.type.startsWith('image/')) {
+      options.onProgressStage?.(
+        `Compressing "${f.name}" to 1600px WebP on device...`,
+      );
+      const opt = await compressImageForUpload(f, 1600, 0.88);
+      readyFiles.push(opt);
+    } else {
+      readyFiles.push(f);
+    }
+  }
+
+  options.onProgressStage?.(
+    `Uploading ${readyFiles.length} optimized frame(s) & running AI Route/OCR Auto-Mapper...`,
+  );
+  for (const rf of readyFiles) {
+    fd.append('files', rf);
+  }
+
+  return request<AutoMapDatasetResponse>(
+    `/api/admin/venues/${encodeURIComponent(slug)}/dataset/auto-map`,
     { method: 'POST', body: fd },
     true,
   );
