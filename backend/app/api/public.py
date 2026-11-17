@@ -266,7 +266,40 @@ def venue_sample_queries(slug: str, session: Session = Depends(get_session)):
     manifest_file = MEDIA_DIR / f"venues/{v.slug}/sample_queries/manifest.json"
     if manifest_file.exists():
         return json.loads(manifest_file.read_text(encoding="utf-8"))
-    return []
+
+    # Dynamically provide up to 6 diverse room/landmark test photos for venues without a static manifest
+    photos = session.exec(select(Photo).where(Photo.venue_id == v.id)).all()
+    if not photos:
+        return []
+    nodes = {n.id: n for n in session.exec(select(Node).where(Node.venue_id == v.id)).all()}
+    floors = {f.id: f.name for f in session.exec(select(Floor).where(Floor.venue_id == v.id)).all()}
+
+    def _priority(p: Photo) -> tuple[int, float]:
+        n = nodes.get(p.node_id)
+        has_ocr = 1 if (p.ocr_text or "").strip() else 0
+        is_room = 1 if (n and n.is_place and any(ch.isdigit() for ch in n.name)) else 0
+        return (is_room * 2 + has_ocr, p.quality)
+
+    picked: list[dict] = []
+    seen_nodes: set[str] = set()
+    for p in sorted(photos, key=_priority, reverse=True):
+        if p.node_id in seen_nodes:
+            continue
+        node = nodes.get(p.node_id)
+        if not node or not node.is_place:
+            continue
+        seen_nodes.add(p.node_id)
+        fl_label = floors.get(node.floor_id, f"Floor {node.level}")
+        ocr_hint = (p.ocr_text or "").strip()
+        picked.append({
+            "id": p.id,
+            "label": node.name,
+            "hint": f"{fl_label}{f' · OCR: {ocr_hint[:24]}' if ocr_hint else ''}",
+            "photo_url": f"/media/{p.path}",
+        })
+        if len(picked) >= 6:
+            break
+    return picked
 
 
 @router.get("/venues/{slug}/search")

@@ -311,7 +311,7 @@ export const AdminLoginPage: React.FC = () => {
                       type="text"
                       value={regOrg}
                       onChange={(e) => setRegOrg(e.target.value)}
-                      placeholder="Hospital, University, Tech Park"
+                      placeholder="Hospital, Campus, Tech Hub"
                       className="input-dark pl-9 py-2.5 text-xs"
                     />
                   </div>

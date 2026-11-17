@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { ContactShadows, Float, Html, Line, OrbitControls } from '@react-three/drei';
+import { ContactShadows, Float, Line, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import {
   Box,
@@ -444,6 +444,7 @@ const SceneContent: React.FC<
     explodeFactor: number;
     showRoomVolumes: boolean;
     radarFilter: Radar3DFilter;
+    onHoverNode?: (node: GNode | null) => void;
   }
 > = ({
   venue,
@@ -461,6 +462,7 @@ const SceneContent: React.FC<
   explodeFactor,
   showRoomVolumes,
   radarFilter,
+  onHoverNode,
 }) => {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
@@ -685,16 +687,15 @@ const SceneContent: React.FC<
                       opacity={selectedLevel === 'all' ? 0.18 : 0.1}
                     />
                   </mesh>
-                  <lineSegments>
-                    <edgesGeometry
-                      args={[new THREE.BoxGeometry(1.66, sh.height, 1.66)]}
-                    />
-                    <lineBasicMaterial
+                  <mesh>
+                    <boxGeometry args={[1.66, sh.height, 1.66]} />
+                    <meshBasicMaterial
                       color={color}
+                      wireframe
                       transparent
-                      opacity={0.45}
+                      opacity={0.35}
                     />
-                  </lineSegments>
+                  </mesh>
                 </>
               ) : (
                 <>
@@ -907,10 +908,12 @@ const SceneContent: React.FC<
               onPointerOver={(ev) => {
                 ev.stopPropagation();
                 setHoveredId(node.id);
+                onHoverNode?.(node);
                 document.body.style.cursor = 'pointer';
               }}
               onPointerOut={() => {
                 setHoveredId((prev) => (prev === node.id ? null : prev));
+                onHoverNode?.(null);
                 document.body.style.cursor = 'auto';
               }}
             >
@@ -925,39 +928,15 @@ const SceneContent: React.FC<
             </mesh>
 
             {showLabel && (
-              <Html
-                position={[0, 2.2, 0]}
-                center
-                style={{ pointerEvents: 'none' }}
-              >
-                <div
-                  className={`whitespace-nowrap rounded-lg px-2.5 py-1 text-[11px] font-bold shadow-xl ring-1 ${
-                    isStart
-                      ? 'bg-sky-500 text-white ring-sky-300'
-                      : isEnd
-                        ? 'bg-rose-500 text-white ring-rose-300'
-                        : isSelected
-                          ? 'bg-purple-600 text-white ring-purple-300'
-                          : isRadarMatch
-                            ? 'bg-emerald-600 text-white ring-emerald-300'
-                            : 'bg-slate-950 text-white ring-white/20'
-                  }`}
-                >
-                  <span>
-                    {isStart
-                      ? '📍 Start: '
-                      : isEnd
-                        ? '🏁 Dest: '
-                        : isRadarMatch
-                          ? '📡 '
-                          : ''}
-                    {node.name}
-                  </span>
-                  <span className="ml-1.5 text-[10px] opacity-80">
-                    ({formatLevel(node.level, node.floor_name)})
-                  </span>
-                </div>
-              </Html>
+              <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.22, 0]}>
+                <ringGeometry args={[radius + 0.15, radius + 0.42, 28]} />
+                <meshBasicMaterial
+                  color={isEnd ? '#fb7185' : isStart ? '#38bdf8' : '#c084fc'}
+                  transparent
+                  opacity={0.92}
+                  side={THREE.DoubleSide}
+                />
+              </mesh>
             )}
           </group>
         );
@@ -1000,6 +979,13 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
   const [daylight, setDaylight] = useState(false);
   const [mobileTouchOrbit, setMobileTouchOrbit] = useState(true);
   const [inspectedNode, setInspectedNode] = useState<GNode | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<GNode | null>(null);
+
+  useEffect(() => {
+    return () => {
+      document.body.style.cursor = 'auto';
+    };
+  }, []);
 
   // Sync selectedNodeId prop with inspected node
   useEffect(() => {
@@ -1072,6 +1058,7 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
         gl={{
           antialias: !isSmallScreen,
           powerPreference: 'high-performance',
+          preserveDrawingBuffer: true,
           stencil: false,
           depth: true,
         }}
@@ -1103,6 +1090,7 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
           explodeFactor={explodeFactor}
           showRoomVolumes={showRoomVolumes}
           radarFilter={radarFilter}
+          onHoverNode={setHoveredNode}
           onSelectNode={(node) => {
             setInspectedNode(node);
             props.onSelectNode?.(node);
@@ -1274,6 +1262,23 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
           )}
         </button>
       </div>
+
+      {/* Floating Native React Hover Pill (Zero Portal removeChild Conflicts) */}
+      {hoveredNode && (
+        <div className="pointer-events-none absolute top-14 left-1/2 -translate-x-1/2 z-10 whitespace-nowrap rounded-lg bg-slate-950/90 px-3 py-1 text-[11px] font-bold text-white shadow-xl ring-1 ring-cyan-400/40 backdrop-blur-md">
+          <span>
+            {hoveredNode.id === props.startNodeId
+              ? '📍 Start: '
+              : hoveredNode.id === props.endNodeId
+                ? '🏁 Dest: '
+                : ''}
+            {hoveredNode.name}
+          </span>
+          <span className="ml-1.5 text-[10px] text-cyan-300">
+            ({formatLevel(hoveredNode.level, hoveredNode.floor_name)})
+          </span>
+        </div>
+      )}
 
       {/* FIXED ANCHOR INSPECTOR PANEL & LANDMARK CAROUSEL (Never overlaps 3D scene) */}
       {inspectedNode && (

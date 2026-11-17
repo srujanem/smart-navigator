@@ -487,8 +487,9 @@ export const RoutePage: React.FC = () => {
         cue = '📳 Long Pulse · Destination Reached';
       }
       try {
-        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
-          navigator.vibrate(pattern);
+        const nav = typeof navigator !== 'undefined' ? (navigator as Navigator & { userActivation?: { hasBeenActive: boolean } }) : null;
+        if (nav && 'vibrate' in nav && (!nav.userActivation || nav.userActivation.hasBeenActive)) {
+          nav.vibrate(pattern);
         }
       } catch {
         // Ignore on desktop browsers without vibration hardware
