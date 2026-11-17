@@ -32,11 +32,17 @@ import type {
 import {
   cacheVenueDetail,
   cacheVenueGraph,
+  cacheVenuePeople,
   cacheVenuesList,
+  computeOfflineMultiStopRoute,
+  computeOfflineNearestRoute,
   computeOfflineRoute,
+  computeOfflineSearch,
   getCachedVenueDetail,
   getCachedVenueGraph,
+  getCachedVenuePeople,
   getCachedVenuesList,
+  loadBundledOfflineSnapshot,
 } from './offlineRouter';
 
 const ADMIN_TOKEN_KEY = 'navigator_admin_token';
@@ -89,8 +95,19 @@ export function clearAdminSession(): void {
 
 export const API_BASE = (
   (import.meta as any).env?.VITE_API_URL ||
-  'https://success-devon-relocation-fitness.trycloudflare.com'
+  'https://dealing-ground-modified-stuff.trycloudflare.com'
 ).replace(/\/$/, '');
+
+function isOfflineFallbackError(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 0 || err.status >= 502);
+}
+
+async function resolveOfflineGraph(slug: string): Promise<Graph | null> {
+  const cached = getCachedVenueGraph(slug);
+  if (cached) return cached;
+  const bundle = await loadBundledOfflineSnapshot();
+  return bundle?.graphs?.[slug] ?? null;
+}
 
 export function mediaUrl(url: string | null | undefined): string {
   if (!url) return '';
@@ -109,6 +126,7 @@ async function request<T>(
   path: string,
   options: RequestInit = {},
   auth = false,
+  timeoutMs = 0,
 ): Promise<T> {
   const headers = new Headers(options.headers || {});
   if (!(options.body instanceof FormData) && !headers.has('Content-Type') && options.body) {
@@ -123,13 +141,21 @@ async function request<T>(
 
   const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
   let res: Response;
+  const controller = timeoutMs > 0 && typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timerId = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
   try {
-    res = await fetch(url, { ...options, headers });
+    res = await fetch(url, {
+      ...options,
+      headers,
+      signal: options.signal ?? controller?.signal,
+    });
   } catch {
     throw new ApiError(
       'Unable to reach Navigator API server. Check connection or use cached offline mode.',
       0,
     );
+  } finally {
+    if (timerId !== null) window.clearTimeout(timerId);
   }
 
   if (res.status === 401 && auth) {
@@ -163,20 +189,20 @@ async function request<T>(
 // ---------------------------------------------------------------------------
 
 export function getHealth(): Promise<HealthStatus> {
-  return request<HealthStatus>('/api/health');
+  return request<HealthStatus>('/api/health', {}, false, 4500);
 }
 
 export async function getVenues(q?: string): Promise<VenueSummary[]> {
   const qs = q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
   try {
-    const list = await request<VenueSummary[]>(`/api/venues${qs}`);
+    const list = await request<VenueSummary[]>(`/api/venues${qs}`, {}, false, 6500);
     if (!q?.trim()) {
       cacheVenuesList(list);
     }
     return list;
   } catch (err) {
-    if (err instanceof ApiError && err.status === 0) {
-      const cached = getCachedVenuesList();
+    if (isOfflineFallbackError(err)) {
+      const cached = getCachedVenuesList() ?? (await loadBundledOfflineSnapshot())?.venues ?? null;
       if (cached) {
         const ql = q?.trim().toLowerCase();
         return ql
@@ -192,12 +218,12 @@ export async function getVenues(q?: string): Promise<VenueSummary[]> {
 
 export async function getVenue(slug: string): Promise<VenueDetail> {
   try {
-    const detail = await request<VenueDetail>(`/api/venues/${encodeURIComponent(slug)}`);
+    const detail = await request<VenueDetail>(`/api/venues/${encodeURIComponent(slug)}`, {}, false, 6500);
     cacheVenueDetail(slug, detail);
     return detail;
   } catch (err) {
-    if (err instanceof ApiError && err.status === 0) {
-      const cached = getCachedVenueDetail(slug);
+    if (isOfflineFallbackError(err)) {
+      const cached = getCachedVenueDetail(slug) ?? (await loadBundledOfflineSnapshot())?.details?.[slug] ?? null;
       if (cached) return cached;
     }
     throw err;
@@ -206,28 +232,47 @@ export async function getVenue(slug: string): Promise<VenueDetail> {
 
 export async function getVenueGraph(slug: string): Promise<Graph> {
   try {
-    const g = await request<Graph>(`/api/venues/${encodeURIComponent(slug)}/graph`);
+    const g = await request<Graph>(`/api/venues/${encodeURIComponent(slug)}/graph`, {}, false, 6500);
     cacheVenueGraph(slug, g);
     return g;
   } catch (err) {
-    if (err instanceof ApiError && err.status === 0) {
-      const cached = getCachedVenueGraph(slug);
+    if (isOfflineFallbackError(err)) {
+      const cached = await resolveOfflineGraph(slug);
       if (cached) return cached;
     }
     throw err;
   }
 }
 
-export function getVenuePeople(slug: string, q?: string): Promise<Person[]> {
+export async function getVenuePeople(slug: string, q?: string): Promise<Person[]> {
   const qs = q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
-  return request<Person[]>(`/api/venues/${encodeURIComponent(slug)}/people${qs}`);
+  try {
+    const list = await request<Person[]>(`/api/venues/${encodeURIComponent(slug)}/people${qs}`, {}, false, 6500);
+    if (!q?.trim()) {
+      cacheVenuePeople(slug, list);
+    }
+    return list;
+  } catch (err) {
+    if (isOfflineFallbackError(err)) {
+      const cached = getCachedVenuePeople(slug) ?? (await loadBundledOfflineSnapshot())?.people?.[slug] ?? null;
+      if (cached) {
+        const ql = q?.trim().toLowerCase();
+        return ql
+          ? cached.filter((p) =>
+              `${p.name} ${p.title} ${p.role} ${p.department} ${p.node_name}`.toLowerCase().includes(ql),
+            )
+          : cached;
+      }
+    }
+    throw err;
+  }
 }
 
 export function getSampleQueries(slug: string): Promise<SampleQuery[]> {
-  return request<SampleQuery[]>(`/api/venues/${encodeURIComponent(slug)}/sample-queries`);
+  return request<SampleQuery[]>(`/api/venues/${encodeURIComponent(slug)}/sample-queries`, {}, false, 6500);
 }
 
-export function searchVenue(
+export async function searchVenue(
   slug: string,
   q: string,
   fromNodeId?: string | null,
@@ -237,9 +282,24 @@ export function searchVenue(
   if (fromNodeId) {
     params.set('from', fromNodeId);
   }
-  return request<SearchResponse>(
-    `/api/venues/${encodeURIComponent(slug)}/search?${params.toString()}`,
-  );
+  try {
+    return await request<SearchResponse>(
+      `/api/venues/${encodeURIComponent(slug)}/search?${params.toString()}`,
+      {},
+      false,
+      5500,
+    );
+  } catch (err) {
+    if (isOfflineFallbackError(err)) {
+      const graph = await resolveOfflineGraph(slug);
+      if (graph) {
+        const people =
+          getCachedVenuePeople(slug) ?? (await loadBundledOfflineSnapshot())?.people?.[slug] ?? [];
+        return computeOfflineSearch(graph, people, q, fromNodeId);
+      }
+    }
+    throw err;
+  }
 }
 
 export async function compressImageForUpload(
@@ -467,19 +527,24 @@ export async function computeRoute(
   options?: { avoidCrowds?: boolean; headingDeg?: number | null },
 ): Promise<Route> {
   try {
-    return await request<Route>(`/api/venues/${encodeURIComponent(slug)}/route`, {
-      method: 'POST',
-      body: JSON.stringify({
-        from_node: fromNode,
-        to_node: toNode,
-        profile,
-        avoid_crowds: Boolean(options?.avoidCrowds),
-        heading_deg: options?.headingDeg ?? null,
-      }),
-    });
+    return await request<Route>(
+      `/api/venues/${encodeURIComponent(slug)}/route`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          from_node: fromNode,
+          to_node: toNode,
+          profile,
+          avoid_crowds: Boolean(options?.avoidCrowds),
+          heading_deg: options?.headingDeg ?? null,
+        }),
+      },
+      false,
+      7000,
+    );
   } catch (err) {
-    if (err instanceof ApiError && err.status === 0) {
-      const cachedGraph = getCachedVenueGraph(slug);
+    if (isOfflineFallbackError(err)) {
+      const cachedGraph = await resolveOfflineGraph(slug);
       if (cachedGraph) {
         return computeOfflineRoute(cachedGraph, fromNode, toNode, profile);
       }
@@ -488,41 +553,71 @@ export async function computeRoute(
   }
 }
 
-export function computeNearestRoute(
+export async function computeNearestRoute(
   slug: string,
   fromNode: string,
   targetKind: string,
   profile: RouteProfile = 'walk',
   options?: { avoidCrowds?: boolean; headingDeg?: number | null },
 ): Promise<Route> {
-  return request<Route>(`/api/venues/${encodeURIComponent(slug)}/route/nearest`, {
-    method: 'POST',
-    body: JSON.stringify({
-      from_node: fromNode,
-      target_kind: targetKind,
-      profile,
-      avoid_crowds: Boolean(options?.avoidCrowds),
-      heading_deg: options?.headingDeg ?? null,
-    }),
-  });
+  try {
+    return await request<Route>(
+      `/api/venues/${encodeURIComponent(slug)}/route/nearest`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          from_node: fromNode,
+          target_kind: targetKind,
+          profile,
+          avoid_crowds: Boolean(options?.avoidCrowds),
+          heading_deg: options?.headingDeg ?? null,
+        }),
+      },
+      false,
+      7000,
+    );
+  } catch (err) {
+    if (isOfflineFallbackError(err)) {
+      const cachedGraph = await resolveOfflineGraph(slug);
+      if (cachedGraph) {
+        return computeOfflineNearestRoute(cachedGraph, fromNode, targetKind, profile);
+      }
+    }
+    throw err;
+  }
 }
 
-export function computeMultiStopRoute(
+export async function computeMultiStopRoute(
   slug: string,
   stops: string[],
   profile: RouteProfile = 'walk',
   options?: { optimize?: boolean; avoidCrowds?: boolean; headingDeg?: number | null },
 ): Promise<Route> {
-  return request<Route>(`/api/venues/${encodeURIComponent(slug)}/route/multi`, {
-    method: 'POST',
-    body: JSON.stringify({
-      stops,
-      profile,
-      optimize: Boolean(options?.optimize),
-      avoid_crowds: Boolean(options?.avoidCrowds),
-      heading_deg: options?.headingDeg ?? null,
-    }),
-  });
+  try {
+    return await request<Route>(
+      `/api/venues/${encodeURIComponent(slug)}/route/multi`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          stops,
+          profile,
+          optimize: Boolean(options?.optimize),
+          avoid_crowds: Boolean(options?.avoidCrowds),
+          heading_deg: options?.headingDeg ?? null,
+        }),
+      },
+      false,
+      7000,
+    );
+  } catch (err) {
+    if (isOfflineFallbackError(err)) {
+      const cachedGraph = await resolveOfflineGraph(slug);
+      if (cachedGraph) {
+        return computeOfflineMultiStopRoute(cachedGraph, stops, profile);
+      }
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------

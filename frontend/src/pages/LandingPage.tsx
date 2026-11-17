@@ -174,7 +174,7 @@ export const LandingPage: React.FC = () => {
   }, [loadData]);
 
   return (
-    <div className="min-h-screen bg-[#070B18] text-white selection:bg-cyan-500/30 selection:text-cyan-200">
+    <div className="min-h-screen overflow-x-hidden bg-[#070B18] text-white selection:bg-cyan-500/30 selection:text-cyan-200">
       <Navbar variant="dark" />
 
       {/* =================================================================== */}
@@ -448,7 +448,7 @@ export const LandingPage: React.FC = () => {
               From a single hallway photo to turn-by-turn indoor clarity
             </h2>
             <p className="mt-3 text-base text-slate-600">
-              No mobile app downloads, no Bluetooth calibration, and no QR codes on walls. Every venue runs on pure visual understanding and topological A* routing.
+              No mobile app downloads and no mandatory Bluetooth hardware. Every venue runs on pure visual understanding and topological A* routing, with optional printable Door QR Checkpoints.
             </p>
           </div>
 
@@ -811,7 +811,7 @@ export const LandingPage: React.FC = () => {
                   Zero BLE Beacons or Tags
                 </h3>
                 <p className="text-xs text-slate-400 leading-relaxed">
-                  Deploy across an entire hospital or university using ordinary hallway photos — no battery beacons, Wi-Fi sniffing, or wall stickers.
+                  Deploy across an entire hospital or university using ordinary hallway photos — no powered Bluetooth beacons or Wi-Fi infrastructure needed.
                 </p>
               </div>
 

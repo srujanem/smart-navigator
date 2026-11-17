@@ -136,6 +136,15 @@ export const VenuePage: React.FC = () => {
   const [selectedLevel, setSelectedLevel] = useState<number | 'all'>('all');
   const [inspectedNode, setInspectedNode] = useState<GNode | null>(null);
   const [activeCategory, setActiveCategory] = useState<string>('all');
+  const [failedPhotoUrls, setFailedPhotoUrls] = useState<Set<string>>(() => new Set());
+  const markPhotoFailed = (rawUrl: string) => {
+    setFailedPhotoUrls((prev) => {
+      if (prev.has(rawUrl)) return prev;
+      const next = new Set(prev);
+      next.add(rawUrl);
+      return next;
+    });
+  };
 
   const loadVenueBundle = useCallback(async () => {
     if (!slug) return;
@@ -1152,10 +1161,11 @@ export const VenuePage: React.FC = () => {
             {inspectedNode && (
               <div className="absolute inset-x-3 bottom-3 sm:bottom-auto sm:top-3 sm:right-3 sm:left-auto sm:w-80 z-20 overflow-hidden rounded-2xl bg-white/95 shadow-2xl ring-1 ring-slate-900/10 backdrop-blur-xl transition-all">
                 <div className="relative h-36 w-full bg-slate-900 overflow-hidden">
-                  {inspectedNode.photo_url ? (
+                  {inspectedNode.photo_url && !failedPhotoUrls.has(inspectedNode.photo_url) ? (
                     <img
                       src={mediaUrl(inspectedNode.photo_url)}
                       alt={inspectedNode.name}
+                      onError={() => markPhotoFailed(inspectedNode.photo_url!)}
                       className="h-full w-full object-cover hdr-photo"
                     />
                   ) : (
@@ -1368,12 +1378,13 @@ export const VenuePage: React.FC = () => {
                 >
                   <div>
                     <div className="relative h-40 w-full overflow-hidden bg-[#060A16]">
-                      {place.photo_url ? (
+                      {place.photo_url && !failedPhotoUrls.has(place.photo_url) ? (
                         <>
                           <img
                             src={mediaUrl(place.photo_url)}
                             alt={place.name}
                             loading="lazy"
+                            onError={() => markPhotoFailed(place.photo_url!)}
                             className="h-full w-full object-cover hdr-photo transition-transform duration-500 ease-out group-hover:scale-110"
                           />
                           <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-slate-950/75 via-transparent to-transparent" />

@@ -202,7 +202,7 @@ export const IsometricVenueArt: React.FC<IsometricVenueArtProps> = ({
       </svg>
 
       {!compact && (
-        <div className="pointer-events-none absolute right-3.5 bottom-12 inline-flex items-center gap-1 rounded-md bg-slate-950/75 px-2 py-0.5 text-[10px] font-mono font-semibold text-cyan-300 ring-1 ring-cyan-400/30 backdrop-blur-md">
+        <div className="pointer-events-none absolute right-4 top-12 inline-flex items-center gap-1 rounded-md bg-slate-950/75 px-2 py-0.5 text-[10px] font-mono font-semibold text-cyan-300 ring-1 ring-cyan-400/30 backdrop-blur-md">
           <Cuboid className="h-3 w-3" />
           {label || '3D ARCHITECTURAL TWIN'}
         </div>
@@ -218,6 +218,7 @@ interface VenueCardProps {
 
 export const VenueCard: React.FC<VenueCardProps> = ({ venue, dark = false }) => {
   const cardRef = useRef<HTMLAnchorElement>(null);
+  const [imgFailed, setImgFailed] = useState(false);
   const [tilt, setTilt] = useState<{ rx: number; ry: number; sx: number; sy: number; active: boolean }>({
     rx: 0,
     ry: 0,
@@ -288,12 +289,14 @@ export const VenueCard: React.FC<VenueCardProps> = ({ venue, dark = false }) => 
 
       {/* Cinema HDR Cover Visual */}
       <div className="relative h-52 w-full overflow-hidden bg-[#060A16]">
-        {venue.cover_url ? (
+        {venue.cover_url && !imgFailed ? (
           <>
             <img
+              key={venue.cover_url}
               src={mediaUrl(venue.cover_url)}
               alt={venue.name}
               loading="lazy"
+              onError={() => setImgFailed(true)}
               className="h-full w-full object-cover hdr-photo transition-transform duration-700 ease-out group-hover:scale-110"
             />
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-[#050914]/90 via-[#050914]/25 to-transparent" />

@@ -1,5 +1,5 @@
-const CACHE_NAME = 'navigator-pwa-v3';
-const SHELL_ASSETS = ['/', '/index.html', '/manifest.json', '/favicon.svg'];
+const CACHE_NAME = 'navigator-pwa-v4';
+const SHELL_ASSETS = ['/', '/index.html', '/manifest.json', '/favicon.svg', '/offline-bundle.json'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

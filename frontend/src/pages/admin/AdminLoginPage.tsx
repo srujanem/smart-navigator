@@ -179,30 +179,31 @@ export const AdminLoginPage: React.FC = () => {
           </div>
 
           {/* Mode Switcher Tabs */}
-          <div className="grid grid-cols-2 rounded-2xl bg-white/[0.05] p-1 ring-1 ring-white/10">
+          <div className="grid grid-cols-2 gap-1 rounded-2xl bg-white/[0.05] p-1 ring-1 ring-white/10">
             <button
               type="button"
               onClick={() => switchTab('login')}
-              className={`flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-extrabold transition ${
+              className={`flex items-center justify-center gap-1.5 rounded-xl px-2.5 sm:px-3 py-2.5 text-[11px] sm:text-xs font-extrabold whitespace-nowrap transition ${
                 tab === 'login'
                   ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-md'
                   : 'text-slate-300 hover:text-white'
               }`}
             >
-              <KeyRound className="h-3.5 w-3.5" />
-              Sign In
+              <KeyRound className="h-3.5 w-3.5 shrink-0" />
+              <span>Sign In</span>
             </button>
             <button
               type="button"
               onClick={() => switchTab('register')}
-              className={`flex items-center justify-center gap-1.5 rounded-xl py-2.5 text-xs font-extrabold transition ${
+              className={`flex items-center justify-center gap-1.5 rounded-xl px-2.5 sm:px-3 py-2.5 text-[11px] sm:text-xs font-extrabold whitespace-nowrap transition ${
                 tab === 'register'
                   ? 'bg-gradient-to-r from-emerald-500 to-cyan-600 text-white shadow-md'
                   : 'text-slate-300 hover:text-white'
               }`}
             >
-              <UserPlus className="h-3.5 w-3.5" />
-              Create Uploader Account
+              <UserPlus className="h-3.5 w-3.5 shrink-0" />
+              <span className="sm:hidden">Create Account</span>
+              <span className="hidden sm:inline">Create Uploader Account</span>
             </button>
           </div>
 
@@ -310,7 +311,7 @@ export const AdminLoginPage: React.FC = () => {
                       type="text"
                       value={regOrg}
                       onChange={(e) => setRegOrg(e.target.value)}
-                      placeholder="Hospital, University, Tech Park..."
+                      placeholder="Hospital, University, Tech Park"
                       className="input-dark pl-9 py-2.5 text-xs"
                     />
                   </div>

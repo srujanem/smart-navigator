@@ -143,10 +143,18 @@ export const PeoplePage: React.FC = () => {
   if (error || !venue || !graph) {
     return (
       <div className="min-h-screen bg-slate-50 p-6">
-        <ErrorState
-          message={error || 'Directory unavailable.'}
-          onRetry={() => void loadDirectory()}
-        />
+        <div className="max-w-3xl mx-auto pt-10">
+          <Link
+            to={slug ? `/v/${slug}` : '/venues'}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900 mb-4"
+          >
+            <ArrowLeft className="h-4 w-4" /> Back to Venue
+          </Link>
+          <ErrorState
+            message={error || 'Directory unavailable.'}
+            onRetry={() => void loadDirectory()}
+          />
+        </div>
       </div>
     );
   }

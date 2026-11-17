@@ -85,7 +85,7 @@ export const VenuesPage: React.FC = () => {
   }, [venues]);
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+    <div className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-900 flex flex-col">
       <Navbar variant="dark" />
 
       {/* Cinema Aurora Header Banner */}
@@ -159,7 +159,7 @@ export const VenuesPage: React.FC = () => {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search by venue name, city, specialty, or campus..."
+                placeholder="Search venue, city, or campus..."
                 className="input-dark pl-10 pr-9 py-2.5"
               />
               {query && (
@@ -174,7 +174,7 @@ export const VenuesPage: React.FC = () => {
               )}
             </div>
 
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1">
+            <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 py-1">
               {TYPE_FILTERS.map((f) => {
                 const active = typeFilter === f.key;
                 return (

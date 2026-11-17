@@ -243,6 +243,15 @@ export const RoutePage: React.FC = () => {
     url: string;
     caption: string;
   } | null>(null);
+  const [failedPhotoUrls, setFailedPhotoUrls] = useState<Set<string>>(() => new Set());
+  const markPhotoFailed = (rawUrl: string) => {
+    setFailedPhotoUrls((prev) => {
+      if (prev.has(rawUrl)) return prev;
+      const next = new Set(prev);
+      next.add(rawUrl);
+      return next;
+    });
+  };
 
   // Load Venue + Graph
   const loadBase = useCallback(async () => {
@@ -648,10 +657,28 @@ export const RoutePage: React.FC = () => {
   if (!venue || !graph) {
     return (
       <div className="min-h-screen bg-slate-50 p-6">
-        <ErrorState
-          message={routeError || 'Venue data unavailable.'}
-          onRetry={() => void loadBase()}
-        />
+        <div className="max-w-3xl mx-auto pt-10">
+          <div className="flex items-center gap-4 mb-4">
+            {slug && (
+              <Link
+                to={`/v/${slug}`}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 hover:text-slate-900"
+              >
+                <ArrowLeft className="h-4 w-4" /> Back to Venue
+              </Link>
+            )}
+            <Link
+              to="/venues"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+            >
+              All Venues
+            </Link>
+          </div>
+          <ErrorState
+            message={routeError || 'Venue data unavailable.'}
+            onRetry={() => void loadBase()}
+          />
+        </div>
       </div>
     );
   }
@@ -1321,11 +1348,12 @@ export const RoutePage: React.FC = () => {
                             playsInline
                             className="h-full w-full object-cover"
                           />
-                        ) : activeStep?.photo_url ? (
+                        ) : activeStep?.photo_url && !failedPhotoUrls.has(activeStep.photo_url) ? (
                           <img
                             src={mediaUrl(activeStep.photo_url)}
                             alt={activeStep.name}
                             loading="lazy"
+                            onError={() => markPhotoFailed(activeStep.photo_url!)}
                             className="h-full w-full object-cover"
                           />
                         ) : (
@@ -1493,10 +1521,11 @@ export const RoutePage: React.FC = () => {
                       {/* Floating Step Picture-in-Picture Landmark Card */}
                       {activeStep && (
                         <div className="absolute bottom-3 left-3 z-10 w-[calc(100%-1.5rem)] sm:w-auto max-w-sm rounded-2xl bg-slate-950/90 p-2 text-white ring-1 ring-white/15 shadow-2xl flex items-center gap-2.5">
-                          {activeStep.photo_url ? (
+                          {activeStep.photo_url && !failedPhotoUrls.has(activeStep.photo_url) ? (
                             <img
                               src={mediaUrl(activeStep.photo_url)}
                               alt=""
+                              onError={() => markPhotoFailed(activeStep.photo_url!)}
                               onClick={() => {
                                 setLightboxZoom(1);
                                 setLightboxUrl({
@@ -1594,10 +1623,11 @@ export const RoutePage: React.FC = () => {
                       {/* Floating Step Picture-in-Picture Landmark Card */}
                       {activeStep && (
                         <div className="absolute bottom-3 left-3 z-10 w-[calc(100%-1.5rem)] sm:w-auto max-w-sm rounded-2xl bg-slate-950/90 p-2 text-white ring-1 ring-white/15 shadow-2xl flex items-center gap-2.5">
-                          {activeStep.photo_url ? (
+                          {activeStep.photo_url && !failedPhotoUrls.has(activeStep.photo_url) ? (
                             <img
                               src={mediaUrl(activeStep.photo_url)}
                               alt=""
+                              onError={() => markPhotoFailed(activeStep.photo_url!)}
                               onClick={() => {
                                 setLightboxZoom(1);
                                 setLightboxUrl({
@@ -1784,7 +1814,7 @@ export const RoutePage: React.FC = () => {
                           <p className="mt-0.5 text-xs text-slate-500">{step.name}</p>
 
                           {/* Reference Photo Thumbnail */}
-                          {step.photo_url && (
+                          {step.photo_url && !failedPhotoUrls.has(step.photo_url) && (
                             <div
                               onClick={(ev) => {
                                 ev.stopPropagation();
@@ -1801,6 +1831,7 @@ export const RoutePage: React.FC = () => {
                                   src={mediaUrl(step.photo_url)}
                                   alt={step.name}
                                   loading="lazy"
+                                  onError={() => markPhotoFailed(step.photo_url!)}
                                   className="h-full w-full object-cover hdr-photo transition-transform duration-300 group-hover:scale-110"
                                 />
                                 <span className="absolute right-1 bottom-1 rounded bg-slate-950/75 p-0.5 text-cyan-300 opacity-0 group-hover:opacity-100 transition">

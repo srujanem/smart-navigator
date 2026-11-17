@@ -2,8 +2,12 @@ import type {
   GEdge,
   GNode,
   Graph,
+  Person,
   Route,
+  RouteLeg,
   RouteProfile,
+  SearchResponse,
+  SearchResult,
   Step,
   StepIcon,
   VenueDetail,
@@ -12,7 +16,27 @@ import type {
 
 const VENUE_CACHE_PREFIX = 'navigator_offline_venue_';
 const GRAPH_CACHE_PREFIX = 'navigator_offline_graph_';
+const PEOPLE_CACHE_PREFIX = 'navigator_offline_people_';
 const VENUES_LIST_KEY = 'navigator_offline_venues_list';
+
+export interface BundledOfflineSnapshot {
+  venues: VenueSummary[];
+  details: Record<string, VenueDetail>;
+  graphs: Record<string, Graph>;
+  people: Record<string, Person[]>;
+}
+
+let bundledSnapshotPromise: Promise<BundledOfflineSnapshot | null> | null = null;
+
+export function loadBundledOfflineSnapshot(): Promise<BundledOfflineSnapshot | null> {
+  if (typeof window === 'undefined') return Promise.resolve(null);
+  if (!bundledSnapshotPromise) {
+    bundledSnapshotPromise = fetch('/offline-bundle.json', { cache: 'force-cache' })
+      .then((res) => (res.ok ? (res.json() as Promise<BundledOfflineSnapshot>) : null))
+      .catch(() => null);
+  }
+  return bundledSnapshotPromise;
+}
 
 export function cacheVenuesList(list: VenueSummary[]): void {
   try {
@@ -60,6 +84,23 @@ export function getCachedVenueGraph(slug: string): Graph | null {
   try {
     const raw = localStorage.getItem(`${GRAPH_CACHE_PREFIX}${slug}`);
     return raw ? (JSON.parse(raw) as Graph) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function cacheVenuePeople(slug: string, people: Person[]): void {
+  try {
+    localStorage.setItem(`${PEOPLE_CACHE_PREFIX}${slug}`, JSON.stringify(people));
+  } catch {
+    // Ignore
+  }
+}
+
+export function getCachedVenuePeople(slug: string): Person[] | null {
+  try {
+    const raw = localStorage.getItem(`${PEOPLE_CACHE_PREFIX}${slug}`);
+    return raw ? (JSON.parse(raw) as Person[]) : null;
   } catch {
     return null;
   }
@@ -282,5 +323,165 @@ export function computeOfflineRoute(
     closures_avoided: 0,
     notice: 'Offline Basement Mode — computed locally from cached venue blueprint.',
     offline_fallback: true,
+  };
+}
+
+export function computeOfflineNearestRoute(
+  graph: Graph,
+  fromNode: string,
+  targetKind: string,
+  profile: RouteProfile = 'walk',
+): Route {
+  const kindLow = targetKind.toLowerCase();
+  const candidates = graph.nodes.filter((n) => {
+    const blob = `${n.kind} ${n.category ?? ''} ${n.name} ${n.keywords}`.toLowerCase();
+    if (kindLow === 'exit') return blob.includes('exit') || blob.includes('entrance') || blob.includes('gate');
+    if (kindLow === 'washroom') return blob.includes('washroom') || blob.includes('restroom') || blob.includes('toilet');
+    if (kindLow === 'lift') return blob.includes('lift') || blob.includes('elevator');
+    return blob.includes(kindLow);
+  });
+
+  let best: Route | null = null;
+  for (const cand of candidates) {
+    try {
+      const r = computeOfflineRoute(graph, fromNode, cand.id, profile);
+      if (!best || r.distance_m < best.distance_m) {
+        best = r;
+      }
+    } catch {
+      // Unreachable candidate
+    }
+  }
+  if (!best) {
+    throw new Error(`No accessible ${targetKind} found in offline blueprint.`);
+  }
+  return best;
+}
+
+export function computeOfflineMultiStopRoute(
+  graph: Graph,
+  stops: string[],
+  profile: RouteProfile = 'walk',
+): Route {
+  if (stops.length < 2) {
+    throw new Error('At least two stops are required.');
+  }
+  const nodeMap = new Map(graph.nodes.map((n) => [n.id, n]));
+  const combinedPath: string[] = [];
+  const combinedSteps: Step[] = [];
+  const legs: RouteLeg[] = [];
+  let totalDist = 0;
+  let totalEta = 0;
+  const levelSet = new Set<number>();
+
+  for (let i = 0; i < stops.length - 1; i++) {
+    const a = stops[i];
+    const b = stops[i + 1];
+    const legRoute = computeOfflineRoute(graph, a, b, profile);
+    totalDist += legRoute.distance_m;
+    totalEta += legRoute.eta_s;
+    legRoute.levels.forEach((l) => levelSet.add(l));
+    legs.push({
+      leg_index: i,
+      from_node: a,
+      from_name: nodeMap.get(a)?.name ?? a,
+      to_node: b,
+      to_name: nodeMap.get(b)?.name ?? b,
+      distance_m: legRoute.distance_m,
+      eta_s: legRoute.eta_s,
+      path: legRoute.path,
+    });
+    if (i === 0) {
+      combinedPath.push(...legRoute.path);
+      combinedSteps.push(...legRoute.steps);
+    } else {
+      combinedPath.push(...legRoute.path.slice(1));
+      combinedSteps.push(...legRoute.steps.slice(1));
+    }
+  }
+
+  return {
+    from_node: stops[0],
+    to_node: stops[stops.length - 1],
+    stops,
+    legs,
+    profile,
+    distance_m: Math.round(totalDist * 10) / 10,
+    eta_s: totalEta,
+    path: combinedPath,
+    levels: Array.from(levelSet).sort((a, b) => a - b),
+    steps: combinedSteps.map((s, idx) => ({ ...s, index: idx })),
+    alternatives: [],
+    closures_avoided: 0,
+    notice: 'Offline Multi-Stop Mode — computed locally from cached venue blueprint.',
+    offline_fallback: true,
+  };
+}
+
+export function computeOfflineSearch(
+  graph: Graph,
+  people: Person[],
+  rawQuery: string,
+  fromNodeId?: string | null,
+): SearchResponse {
+  const q = rawQuery.trim().toLowerCase();
+  if (!q) return { query: rawQuery, interpreted: null, results: [] };
+
+  const tokens = q.split(/\s+/).filter(Boolean);
+  const results: SearchResult[] = [];
+
+  for (const n of graph.nodes) {
+    if (!n.is_place) continue;
+    const blob = `${n.name} ${n.kind} ${n.category ?? ''} ${n.building_name} ${n.floor_name} ${n.keywords}`.toLowerCase();
+    let score = 0;
+    if (n.name.toLowerCase() === q) score = 1.0;
+    else if (n.name.toLowerCase().includes(q)) score = 0.92;
+    else if (tokens.every((t) => blob.includes(t))) score = 0.8;
+    else if (tokens.some((t) => t.length >= 2 && blob.includes(t))) score = 0.55;
+    if (score > 0) {
+      let distLabel = '';
+      if (fromNodeId && fromNodeId !== n.id) {
+        try {
+          const r = computeOfflineRoute(graph, fromNodeId, n.id, 'walk');
+          distLabel = ` · ~${Math.round(r.distance_m)}m`;
+        } catch {
+          // Ignore unreachable
+        }
+      }
+      results.push({
+        type: 'place',
+        id: n.id,
+        name: n.name,
+        subtitle: `${n.building_name} · Floor ${n.level}${distLabel}`,
+        node_id: n.id,
+        score,
+      });
+    }
+  }
+
+  for (const p of people) {
+    const blob = `${p.name} ${p.title} ${p.role} ${p.department} ${p.node_name}`.toLowerCase();
+    let score = 0;
+    if (p.name.toLowerCase().includes(q)) score = 0.95;
+    else if (tokens.every((t) => blob.includes(t))) score = 0.78;
+    else if (tokens.some((t) => t.length >= 2 && blob.includes(t))) score = 0.52;
+    if (score > 0) {
+      results.push({
+        type: 'person',
+        id: p.id,
+        name: p.name,
+        subtitle: `${p.title || p.role} · ${p.node_name}`,
+        node_id: p.target_node_id,
+        score,
+        status: p.status,
+      });
+    }
+  }
+
+  results.sort((a, b) => b.score - a.score);
+  return {
+    query: rawQuery,
+    interpreted: 'Offline local search',
+    results: results.slice(0, 12),
   };
 }
