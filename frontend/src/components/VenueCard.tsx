@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowUpRight,
@@ -217,15 +217,7 @@ interface VenueCardProps {
 }
 
 export const VenueCard: React.FC<VenueCardProps> = ({ venue, dark = false }) => {
-  const cardRef = useRef<HTMLAnchorElement>(null);
   const [imgFailed, setImgFailed] = useState(false);
-  const [tilt, setTilt] = useState<{ rx: number; ry: number; sx: number; sy: number; active: boolean }>({
-    rx: 0,
-    ry: 0,
-    sx: 50,
-    sy: 30,
-    active: false,
-  });
 
   const accent = venue.accent || '#0ea5e9';
   const peopleLabel =
@@ -235,57 +227,15 @@ export const VenueCard: React.FC<VenueCardProps> = ({ venue, dark = false }) => 
         ? 'Faculty'
         : 'Staff';
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    const el = cardRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const px = (e.clientX - rect.left) / rect.width;
-    const py = (e.clientY - rect.top) / rect.height;
-    const ry = (px - 0.5) * 8;
-    const rx = (0.5 - py) * 7;
-    setTilt({
-      rx,
-      ry,
-      sx: Math.round(px * 100),
-      sy: Math.round(py * 100),
-      active: true,
-    });
-  };
-
-  const handleMouseLeave = () => {
-    setTilt((prev) => ({ ...prev, rx: 0, ry: 0, active: false }));
-  };
-
   return (
     <Link
-      ref={cardRef}
       to={`/v/${venue.slug}`}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-      style={{
-        transform: tilt.active
-          ? `perspective(1000px) rotateX(${tilt.rx.toFixed(2)}deg) rotateY(${tilt.ry.toFixed(2)}deg) translateY(-4px)`
-          : 'perspective(1000px) rotateX(0deg) rotateY(0deg) translateY(0px)',
-        transition: tilt.active
-          ? 'transform 90ms ease-out, box-shadow 250ms ease'
-          : 'transform 380ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 300ms ease',
-      }}
-      className={`group relative flex flex-col overflow-hidden rounded-3xl will-change-transform ${
+      className={`group relative flex flex-col overflow-hidden rounded-3xl transition-transform duration-200 hover:-translate-y-1 ${
         dark
           ? 'bg-[#0B1326]/95 ring-1 ring-white/10 hover:ring-cyan-400/55 shadow-2xl shadow-black/45'
           : 'bg-white ring-1 ring-slate-900/[0.08] hover:ring-indigo-500/45 shadow-soft hover:shadow-2xl'
       }`}
     >
-      {/* Dynamic Specular Cursor Spotlight */}
-      <div
-        className="pointer-events-none absolute inset-0 z-20 transition-opacity duration-300"
-        style={{
-          opacity: tilt.active ? 1 : 0,
-          background: `radial-gradient(380px circle at ${tilt.sx}% ${tilt.sy}%, ${
-            dark ? 'rgba(56,189,248,0.15)' : 'rgba(99,102,241,0.10)'
-          }, transparent 65%)`,
-        }}
-      />
 
       {/* Cinema HDR Cover Visual */}
       <div className="relative h-52 w-full overflow-hidden bg-[#060A16]">

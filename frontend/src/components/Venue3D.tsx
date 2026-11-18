@@ -974,7 +974,7 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
     typeof window !== 'undefined' && window.innerWidth < 768;
   const [cameraMode, setCameraMode] = useState<Camera3DMode>('orbit');
   const [explodeFactor, setExplodeFactor] = useState<number>(1);
-  const [showRoomVolumes, setShowRoomVolumes] = useState<boolean>(true);
+  const [showRoomVolumes, setShowRoomVolumes] = useState<boolean>(() => !isSmallScreen);
   const [radarFilter, setRadarFilter] = useState<Radar3DFilter>('none');
   const [daylight, setDaylight] = useState(false);
   const [mobileTouchOrbit, setMobileTouchOrbit] = useState(true);

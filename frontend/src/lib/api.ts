@@ -95,8 +95,10 @@ export function clearAdminSession(): void {
 
 export const API_BASE = (
   (import.meta as any).env?.VITE_API_URL ||
-  'https://dealing-ground-modified-stuff.trycloudflare.com'
+  'https://ambassador-doing-school-classroom.trycloudflare.com'
 ).replace(/\/$/, '');
+
+let apiServerDownUntil = 0;
 
 function isOfflineFallbackError(err: unknown): boolean {
   return err instanceof ApiError && (err.status === 0 || err.status >= 502);
@@ -119,6 +121,9 @@ export function mediaUrl(url: string | null | undefined): string {
   ) {
     return url;
   }
+  if (Date.now() < apiServerDownUntil) {
+    return '';
+  }
   return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
 }
 
@@ -128,6 +133,19 @@ async function request<T>(
   auth = false,
   timeoutMs = 0,
 ): Promise<T> {
+  const canFastFallback =
+    !auth &&
+    (!options.method ||
+      options.method === 'GET' ||
+      path.endsWith('/route') ||
+      path.includes('/route/'));
+  if (canFastFallback && Date.now() < apiServerDownUntil) {
+    throw new ApiError(
+      'Unable to reach Navigator API server. Check connection or use cached offline mode.',
+      0,
+    );
+  }
+
   const headers = new Headers(options.headers || {});
   if (!(options.body instanceof FormData) && !headers.has('Content-Type') && options.body) {
     headers.set('Content-Type', 'application/json');
@@ -150,12 +168,19 @@ async function request<T>(
       signal: options.signal ?? controller?.signal,
     });
   } catch {
+    apiServerDownUntil = Date.now() + 45_000;
     throw new ApiError(
       'Unable to reach Navigator API server. Check connection or use cached offline mode.',
       0,
     );
   } finally {
     if (timerId !== null) window.clearTimeout(timerId);
+  }
+
+  if (res.status >= 502) {
+    apiServerDownUntil = Date.now() + 45_000;
+  } else {
+    apiServerDownUntil = 0;
   }
 
   if (res.status === 401 && auth) {

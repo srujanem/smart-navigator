@@ -244,6 +244,12 @@ export const RoutePage: React.FC = () => {
     caption: string;
   } | null>(null);
   const [failedPhotoUrls, setFailedPhotoUrls] = useState<Set<string>>(() => new Set());
+  const [storyModeOpen, setStoryModeOpen] = useState(false);
+  const [helpCardOpen, setHelpCardOpen] = useState(false);
+  const [torchActive, setTorchActive] = useState(false);
+  const [compassHeading, setCompassHeading] = useState<number | null>(null);
+  const torchStreamRef = React.useRef<MediaStream | null>(null);
+
   const markPhotoFailed = (rawUrl: string) => {
     setFailedPhotoUrls((prev) => {
       if (prev.has(rawUrl)) return prev;
@@ -252,6 +258,51 @@ export const RoutePage: React.FC = () => {
       return next;
     });
   };
+
+  useEffect(() => {
+    const onOrient = (ev: DeviceOrientationEvent) => {
+      const webkitH = (ev as DeviceOrientationEvent & { webkitCompassHeading?: number }).webkitCompassHeading;
+      if (typeof webkitH === 'number' && Number.isFinite(webkitH)) {
+        setCompassHeading(Math.round(webkitH));
+      } else if (typeof ev.alpha === 'number' && Number.isFinite(ev.alpha)) {
+        setCompassHeading(Math.round((360 - ev.alpha) % 360));
+      }
+    };
+    window.addEventListener('deviceorientation', onOrient, true);
+    return () => window.removeEventListener('deviceorientation', onOrient, true);
+  }, []);
+
+  const toggleNightTorch = async () => {
+    if (torchActive) {
+      torchStreamRef.current?.getTracks().forEach((t) => t.stop());
+      torchStreamRef.current = null;
+      setTorchActive(false);
+      return;
+    }
+    setTorchActive(true);
+    try {
+      if (navigator.mediaDevices?.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+        });
+        torchStreamRef.current = stream;
+        const track = stream.getVideoTracks()[0];
+        if (track && 'applyConstraints' in track) {
+          await track.applyConstraints({
+            advanced: [{ torch: true } as MediaTrackConstraintSet],
+          });
+        }
+      }
+    } catch {
+      // Fallback: keep high-contrast screen torch glow active even on devices without hardware LED access
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      torchStreamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
 
   // Load Venue + Graph
   const loadBase = useCallback(async () => {
@@ -383,6 +434,59 @@ export const RoutePage: React.FC = () => {
     }
     return route.path;
   }, [route, altIndex]);
+
+  // Visual Landmark Facing Cues & "You Passed Too Far" Overshoot Checkpoints
+  const stepWayfindingHints = useMemo(() => {
+    const hints: Record<number, { facing?: string; overshoot?: string }> = {};
+    if (!route || !graph || route.steps.length === 0) return hints;
+    const pathSet = new Set(activePath);
+
+    route.steps.forEach((st, idx) => {
+      const currNode = nodeMap.get(st.node_id);
+      if (!currNode) return;
+      const sameFloorPlaces = graph.nodes.filter(
+        (n) => n.is_place && n.level === currNode.level && n.id !== currNode.id,
+      );
+
+      if (idx === 0) {
+        const nextStep = route.steps[1];
+        const nextNode = nextStep ? nodeMap.get(nextStep.node_id) : null;
+        const nearbyRef = sameFloorPlaces
+          .filter((n) => n.id !== nextNode?.id)
+          .sort(
+            (a, b) =>
+              Math.hypot(a.x - currNode.x, a.y - currNode.y) -
+              Math.hypot(b.x - currNode.x, b.y - currNode.y),
+          )[0];
+        if (nextNode && nearbyRef) {
+          hints[idx] = {
+            facing: `🧭 Facing Check: Stand at ${currNode.name} facing towards ${nextNode.name} (keep ${nearbyRef.name} beside/behind you).`,
+          };
+        } else if (nextNode) {
+          hints[idx] = {
+            facing: `🧭 Facing Check: Face towards ${nextNode.name} before walking.`,
+          };
+        }
+      }
+
+      if (st.icon === 'left' || st.icon === 'right' || idx === route.steps.length - 1) {
+        const offPathLandmark = sameFloorPlaces
+          .filter((n) => !pathSet.has(n.id))
+          .sort(
+            (a, b) =>
+              Math.hypot(a.x - currNode.x, a.y - currNode.y) -
+              Math.hypot(b.x - currNode.x, b.y - currNode.y),
+          )[0];
+        if (offPathLandmark && Math.hypot(offPathLandmark.x - currNode.x, offPathLandmark.y - currNode.y) <= 22) {
+          hints[idx] = {
+            ...hints[idx],
+            overshoot: `⚠️ Checkpoint: If you pass ${offPathLandmark.name}, you walked too far — turn back.`,
+          };
+        }
+      }
+    });
+    return hints;
+  }, [route, graph, activePath, nodeMap]);
 
   const activeDistance =
     route && altIndex >= 0 && route.alternatives[altIndex]
@@ -768,6 +872,24 @@ export const RoutePage: React.FC = () => {
 
               <button
                 type="button"
+                onClick={() => setStoryModeOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500/20 px-3 py-2 text-xs font-extrabold text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-500 hover:text-slate-950 transition"
+                title="Open Simple Photo Story Walking Cards"
+              >
+                📱 Story Mode
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setHelpCardOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-500/20 px-3 py-2 text-xs font-bold text-indigo-200 ring-1 ring-indigo-400/35 hover:bg-indigo-500 hover:text-white transition"
+                title="Show big multilingual help card to any person nearby"
+              >
+                🙋 Ask Passerby
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setHapticsEnabled((v) => !v)}
                 className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-2 text-xs font-bold ring-1 transition ${
                   hapticsEnabled
@@ -987,13 +1109,20 @@ export const RoutePage: React.FC = () => {
           </div>
         )}
 
-        {route?.orientation_hint && (
-          <div className="flex items-center gap-3 rounded-2xl bg-indigo-50 px-4 py-3 text-xs text-indigo-950 ring-1 ring-indigo-200">
-            <Compass className="h-4 w-4 text-indigo-600 shrink-0" />
-            <div>
-              <span className="font-bold">Camera Facing Orientation: </span>
-              {route.orientation_hint}
+        {(route?.orientation_hint || stepWayfindingHints[0]?.facing) && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-indigo-50 px-4 py-3 text-xs text-indigo-950 ring-1 ring-indigo-200">
+            <div className="flex items-center gap-2.5">
+              <Compass className="h-4 w-4 text-indigo-600 shrink-0" />
+              <div>
+                <span className="font-bold">Which Way Am I Facing? </span>
+                {route?.orientation_hint || stepWayfindingHints[0]?.facing}
+              </div>
             </div>
+            {compassHeading !== null && (
+              <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-2.5 py-1 text-[11px] font-extrabold text-white">
+                🧭 Live Compass: {compassHeading}°
+              </span>
+            )}
           </div>
         )}
 
@@ -1814,6 +1943,18 @@ export const RoutePage: React.FC = () => {
                           )}
                           <p className="mt-0.5 text-xs text-slate-500">{step.name}</p>
 
+                          {stepWayfindingHints[idx]?.facing && (
+                            <div className="mt-2 rounded-xl bg-cyan-50 px-2.5 py-1.5 text-[11px] font-semibold text-cyan-900 ring-1 ring-cyan-200">
+                              {stepWayfindingHints[idx].facing}
+                            </div>
+                          )}
+
+                          {stepWayfindingHints[idx]?.overshoot && (
+                            <div className="mt-2 rounded-xl bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-900 ring-1 ring-amber-200">
+                              {stepWayfindingHints[idx].overshoot}
+                            </div>
+                          )}
+
                           {/* Reference Photo Thumbnail */}
                           {step.photo_url && !failedPhotoUrls.has(step.photo_url) && (
                             <div
@@ -1929,6 +2070,296 @@ export const RoutePage: React.FC = () => {
         }
         onConfirmedLocation={handleRecheckedLocation}
       />
+
+      {/* FULL-SCREEN SIMPLE PHOTO STORY WALKING MODE */}
+      {storyModeOpen && route && activeStep && (
+        <div
+          className={`fixed inset-0 z-50 flex flex-col justify-between bg-[#050914] text-white p-4 sm:p-6 ${
+            torchActive ? 'ring-8 ring-inset ring-amber-300' : ''
+          }`}
+        >
+          {/* Top Story Progress Bar & Controls */}
+          <div className="mx-auto w-full max-w-lg space-y-3 z-10">
+            <div className="flex gap-1.5">
+              {route.steps.map((st, i) => (
+                <button
+                  key={st.index}
+                  type="button"
+                  onClick={() => handleStepClick(st, i)}
+                  className={`h-1.5 flex-1 rounded-full transition-all ${
+                    i <= activeStepIdx ? 'bg-cyan-400' : 'bg-white/20'
+                  }`}
+                  aria-label={`Jump to step ${i + 1}`}
+                />
+              ))}
+            </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-cyan-500 px-3 py-1 text-xs font-extrabold text-slate-950">
+                  STEP {activeStepIdx + 1} / {route.steps.length}
+                </span>
+                <span className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-cyan-200">
+                  {formatLevel(activeStep.level)}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void toggleNightTorch()}
+                  className={`rounded-xl px-2.5 py-1.5 text-xs font-extrabold ring-1 transition ${
+                    torchActive
+                      ? 'bg-amber-400 text-slate-950 ring-amber-200'
+                      : 'bg-white/10 text-slate-200 ring-white/15'
+                  }`}
+                >
+                  🔦 {torchActive ? 'Torch ON' : 'Torch'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStoryModeOpen(false);
+                    setHelpCardOpen(true);
+                  }}
+                  className="rounded-xl bg-indigo-600 px-2.5 py-1.5 text-xs font-bold text-white"
+                >
+                  🙋 Help Card
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStoryModeOpen(false)}
+                  className="rounded-xl bg-white/10 p-1.5 text-slate-300 hover:text-white"
+                  aria-label="Close Story Mode"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Center Giant Photo + Big Turn Banner */}
+          <div className="mx-auto my-3 w-full max-w-lg flex-1 overflow-hidden rounded-3xl bg-slate-900 ring-1 ring-white/15 relative flex flex-col justify-between">
+            <div className="absolute inset-0">
+              {activeStep.photo_url && !failedPhotoUrls.has(activeStep.photo_url) ? (
+                <img
+                  src={mediaUrl(activeStep.photo_url)}
+                  alt={activeStep.name}
+                  onError={() => markPhotoFailed(activeStep.photo_url!)}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <IsometricVenueArt
+                  accent={venue.accent || '#0ea5e9'}
+                  buildings={venue.buildings.length}
+                  floors={Math.max(2, route.levels.length)}
+                  compact
+                />
+              )}
+              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/35 to-slate-950/70" />
+            </div>
+
+            {/* Huge Direction Pill */}
+            <div className="relative z-10 p-4 flex justify-center">
+              <div className="inline-flex items-center gap-2.5 rounded-2xl bg-slate-950/90 px-5 py-3 text-base sm:text-lg font-extrabold text-cyan-300 ring-2 ring-cyan-400 shadow-2xl">
+                {renderStepIcon(activeStep.icon)}
+                <span>
+                  {activeStep.icon === 'left'
+                    ? '⬅️ TURN LEFT'
+                    : activeStep.icon === 'right'
+                      ? '➡️ TURN RIGHT'
+                      : activeStep.icon === 'up'
+                        ? '⬆️ GO UP STAIRS'
+                        : activeStep.icon === 'down'
+                          ? '⬇️ GO DOWN STAIRS'
+                          : activeStep.icon === 'lift'
+                            ? '🛗 TAKE LIFT'
+                            : activeStep.icon === 'arrive'
+                              ? '🏁 YOU ARRIVED!'
+                              : '⬆️ WALK STRAIGHT'}
+                  {activeStep.distance_m > 0 ? ` · ${Math.round(activeStep.distance_m)}m` : ''}
+                </span>
+              </div>
+            </div>
+
+            {/* Bottom Step Instruction & Checkpoint Warnings */}
+            <div className="relative z-10 p-5 space-y-2.5 bg-slate-950/85 backdrop-blur-md border-t border-white/10">
+              <div className="text-lg sm:text-xl font-display font-extrabold leading-snug text-white">
+                {activeStep.instruction}
+              </div>
+              {voiceLang !== 'en-IN' && (
+                <div className="text-sm font-bold text-cyan-300">
+                  {localizeInstruction(activeStep, voiceLang)}
+                </div>
+              )}
+              {stepWayfindingHints[activeStepIdx]?.facing && (
+                <div className="rounded-xl bg-cyan-500/20 px-3 py-2 text-xs font-bold text-cyan-200 ring-1 ring-cyan-400/40">
+                  {stepWayfindingHints[activeStepIdx].facing}
+                </div>
+              )}
+              {stepWayfindingHints[activeStepIdx]?.overshoot && (
+                <div className="rounded-xl bg-amber-500/20 px-3 py-2 text-xs font-bold text-amber-200 ring-1 ring-amber-400/40">
+                  {stepWayfindingHints[activeStepIdx].overshoot}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Giant Thumb Navigation Bar */}
+          <div className="mx-auto w-full max-w-lg flex items-center gap-2.5 z-10">
+            <button
+              type="button"
+              disabled={activeStepIdx <= 0}
+              onClick={() =>
+                handleStepClick(route.steps[Math.max(0, activeStepIdx - 1)], Math.max(0, activeStepIdx - 1))
+              }
+              className="flex-1 rounded-2xl bg-white/10 py-4 text-sm font-extrabold text-white ring-1 ring-white/15 disabled:opacity-30"
+            >
+              ⬅️ Prev
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if ('speechSynthesis' in window) {
+                  window.speechSynthesis.cancel();
+                  const u = new SpeechSynthesisUtterance(localizeInstruction(activeStep, voiceLang));
+                  u.lang = voiceLang;
+                  window.speechSynthesis.speak(u);
+                }
+              }}
+              className="rounded-2xl bg-indigo-600 px-4 py-4 text-sm font-extrabold text-white"
+              title="Speak this step"
+            >
+              🔊
+            </button>
+            <button
+              type="button"
+              disabled={activeStepIdx >= route.steps.length - 1}
+              onClick={() => {
+                const nxt = Math.min(route.steps.length - 1, activeStepIdx + 1);
+                handleStepClick(route.steps[nxt], nxt);
+              }}
+              className="flex-[1.6] rounded-2xl bg-gradient-to-r from-cyan-400 to-emerald-400 py-4 text-sm font-extrabold text-slate-950 shadow-lg disabled:opacity-35"
+            >
+              Next Step ➡️
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* "SHOW TO A PASSERBY" MULTILINGUAL HELP FLASHCARD MODAL */}
+      {helpCardOpen && (
+        <div
+          onClick={() => setHelpCardOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/92 p-4 backdrop-blur-lg"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-lg rounded-3xl bg-white p-6 text-slate-900 shadow-2xl ring-4 ring-cyan-400 space-y-4"
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-100 px-3 py-1 text-xs font-extrabold uppercase tracking-wider text-indigo-800">
+                🙋 Show This Screen to Anyone Nearby
+              </span>
+              <button
+                type="button"
+                onClick={() => setHelpCardOpen(false)}
+                className="rounded-xl bg-slate-100 p-2 text-slate-600 hover:bg-slate-200"
+                aria-label="Close help card"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="rounded-2xl bg-slate-900 p-4 text-white text-center space-y-1">
+              <div className="text-xs font-bold uppercase tracking-wider text-cyan-300">
+                Destination Needed
+              </div>
+              <div className="font-display text-2xl sm:text-3xl font-extrabold text-white">
+                {destNode?.name || 'Destination'}
+              </div>
+              <div className="text-xs sm:text-sm font-semibold text-emerald-300">
+                {destNode?.building_name || venue.name} ·{' '}
+                {formatLevel(destNode?.level ?? 0, destNode?.floor_name)}
+              </div>
+            </div>
+
+            <div className="space-y-2.5 text-sm">
+              <div className="rounded-2xl bg-slate-50 p-3.5 ring-1 ring-slate-200">
+                <div className="text-[11px] font-bold uppercase text-slate-400">English</div>
+                <div className="mt-0.5 font-extrabold text-slate-900 text-base">
+                  "Excuse me, could you please point me towards {destNode?.name || 'this room'} ({formatLevel(destNode?.level ?? 0)})?"
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-indigo-50/70 p-3.5 ring-1 ring-indigo-200">
+                <div className="text-[11px] font-bold uppercase text-indigo-600">ಕನ್ನಡ (Kannada)</div>
+                <div className="mt-0.5 font-extrabold text-slate-900 text-base">
+                  "ದಯವಿಟ್ಟು ನನಗೆ {destNode?.name || 'ಈ ಸ್ಥಳ'} ({formatLevel(destNode?.level ?? 0)}) ಕಡೆಗೆ ದಾರಿ ತೋರಿಸಿ."
+                </div>
+              </div>
+
+              <div className="rounded-2xl bg-emerald-50/70 p-3.5 ring-1 ring-emerald-200">
+                <div className="text-[11px] font-bold uppercase text-emerald-700">हिन्दी (Hindi)</div>
+                <div className="mt-0.5 font-extrabold text-slate-900 text-base">
+                  "कृपया मुझे {destNode?.name || 'इस जगह'} ({formatLevel(destNode?.level ?? 0)}) का रास्ता बताएं।"
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  if ('speechSynthesis' in window) {
+                    window.speechSynthesis.cancel();
+                    const u = new SpeechSynthesisUtterance(
+                      `Excuse me, please point me towards ${destNode?.name || 'my destination'} on ${formatLevel(destNode?.level ?? 0)}.`,
+                    );
+                    u.lang = 'en-IN';
+                    window.speechSynthesis.speak(u);
+                  }
+                }}
+                className="flex-1 rounded-xl bg-slate-900 py-2.5 text-xs font-extrabold text-white hover:bg-indigo-600 transition"
+              >
+                🔊 Speak English
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if ('speechSynthesis' in window) {
+                    window.speechSynthesis.cancel();
+                    const u = new SpeechSynthesisUtterance(
+                      `ದಯವಿಟ್ಟು ನನಗೆ ${destNode?.name || ''} ಕಡೆಗೆ ದಾರಿ ತೋರಿಸಿ.`,
+                    );
+                    u.lang = 'kn-IN';
+                    window.speechSynthesis.speak(u);
+                  }
+                }}
+                className="flex-1 rounded-xl bg-indigo-600 py-2.5 text-xs font-extrabold text-white hover:bg-indigo-500 transition"
+              >
+                🔊 ಕನ್ನಡದಲ್ಲಿ ಹೇಳಿ
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if ('speechSynthesis' in window) {
+                    window.speechSynthesis.cancel();
+                    const u = new SpeechSynthesisUtterance(
+                      `कृपया मुझे ${destNode?.name || ''} का रास्ता बताएं।`,
+                    );
+                    u.lang = 'hi-IN';
+                    window.speechSynthesis.speak(u);
+                  }
+                }}
+                className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-xs font-extrabold text-white hover:bg-emerald-500 transition"
+              >
+                🔊 हिन्दी में बोलें
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Zoomable HDR Landmark Photo Lightbox */}
       {lightboxUrl && (

@@ -566,13 +566,16 @@ def find_nearest_matching_nodes(
 
 
 FACILITY_MATCHERS = {
-    "exit": ("exit", "entrance", "gate", "emergency"),
-    "emergency": ("emergency", "trauma", "casualty", "first aid"),
+    "exit": ("exit", "entrance", "gate", "emergency", "stair"),
+    "emergency": ("emergency", "trauma", "casualty", "first aid", "exit", "entrance"),
     "washroom": ("washroom", "restroom", "toilet", "wc"),
     "restroom": ("washroom", "restroom", "toilet", "wc"),
-    "lift": ("lift", "elevator"),
-    "pharmacy": ("pharmacy", "chemist", "medicine"),
-    "helpdesk": ("reception", "help", "desk", "enquiry", "billing", "office"),
+    "lift": ("lift", "elevator", "stair", "stairs"),
+    "stairs": ("stair", "stairs", "lift", "elevator"),
+    "water": ("water", "cooler", "drinking", "washroom", "junction", "balcony", "mess", "cafeteria", "lobby"),
+    "canteen": ("canteen", "mess", "cafeteria", "cafe", "food", "dining", "study", "balcony", "courtyard", "lobby"),
+    "pharmacy": ("pharmacy", "chemist", "medicine", "dispensary"),
+    "helpdesk": ("reception", "help", "desk", "enquiry", "billing", "office", "warden", "lobby", "entrance", "junction", "hod", "cabin"),
 }
 
 

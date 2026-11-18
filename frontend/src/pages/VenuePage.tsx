@@ -131,11 +131,16 @@ export const VenuePage: React.FC = () => {
   const [searching, setSearching] = useState(false);
   const [listening, setListening] = useState(false);
 
-  // Twin & Places State
-  const [twinMode, setTwinMode] = useState<'3d' | '2d'>('3d');
+  // Twin & Places State (default 2D on mobile phones for instant zero-lag startup)
+  const [twinMode, setTwinMode] = useState<'3d' | '2d'>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 768 ? '2d' : '3d',
+  );
   const [selectedLevel, setSelectedLevel] = useState<number | 'all'>('all');
   const [inspectedNode, setInspectedNode] = useState<GNode | null>(null);
   const [activeCategory, setActiveCategory] = useState<string>('all');
+  const [showAllPlaces, setShowAllPlaces] = useState(false);
+  const [doorPadQuery, setDoorPadQuery] = useState('');
+  const [showDoorKeypad, setShowDoorKeypad] = useState(false);
   const [failedPhotoUrls, setFailedPhotoUrls] = useState<Set<string>>(() => new Set());
   const markPhotoFailed = (rawUrl: string) => {
     setFailedPhotoUrls((prev) => {
@@ -261,6 +266,73 @@ export const VenuePage: React.FC = () => {
     if (activeCategory === 'all') return placeNodes;
     return placeNodes.filter((n) => n.category === activeCategory);
   }, [placeNodes, activeCategory]);
+
+  const doorPadMatches = useMemo(() => {
+    const q = doorPadQuery.trim().toLowerCase();
+    if (!q) return [];
+    return placeNodes
+      .filter((n) => `${n.name} ${n.keywords}`.toLowerCase().includes(q))
+      .slice(0, 4);
+  }, [placeNodes, doorPadQuery]);
+
+  const guidedVisitorTrails = useMemo(() => {
+    if (placeNodes.length < 3) return [];
+    const findMatch = (terms: string[], excludeIds: Set<string>) =>
+      placeNodes.find((n) => {
+        if (excludeIds.has(n.id)) return false;
+        const blob = `${n.name} ${n.kind} ${n.category ?? ''} ${n.keywords}`.toLowerCase();
+        return terms.some((t) => blob.includes(t));
+      });
+
+    const trails: { id: string; title: string; badge: string; stops: GNode[] }[] = [];
+    const startN = entranceNode ?? placeNodes[0];
+
+    if (venue?.type === 'hospital') {
+      const s1 = findMatch(['reception', 'registration', 'triage', 'opd'], new Set([startN.id]));
+      const s2 = findMatch(['x-ray', 'lab', 'radiology', 'cardiology', 'diagnostics', 'clinic'], new Set([startN.id, s1?.id ?? '']));
+      const s3 = findMatch(['pharmacy', 'billing', 'dispensary', 'cafeteria'], new Set([startN.id, s1?.id ?? '', s2?.id ?? '']));
+      const list = [startN, s1, s2, s3].filter((x): x is GNode => Boolean(x));
+      if (list.length >= 3) {
+        trails.push({
+          id: 'opd-trail',
+          title: '🏥 New Patient OPD → Lab → Pharmacy Trail',
+          badge: `${list.length} Stops`,
+          stops: list,
+        });
+      }
+    } else {
+      const s1 = findMatch(['lobby', 'junction', 'office', 'warden', 'reception', '101', '301', '001'], new Set([startN.id]));
+      const s2 = findMatch(['309', '201', 'lab', 'library', 'mess', 'study', 'balcony'], new Set([startN.id, s1?.id ?? '']));
+      const s3 = findMatch(['318', 'washroom', 'cafeteria', 'canteen', 'courtyard', '118', '018'], new Set([startN.id, s1?.id ?? '', s2?.id ?? '']));
+      const list = [startN, s1, s2, s3].filter((x): x is GNode => Boolean(x));
+      if (list.length >= 3) {
+        trails.push({
+          id: 'campus-checkin',
+          title: '🎓 Visitor & Parent Check-In Guided Trail',
+          badge: `${list.length} Stops`,
+          stops: list,
+        });
+      }
+      const floorRooms = placeNodes.filter((n) => /\d{3}/.test(n.name));
+      if (floorRooms.length >= 3) {
+        const wingTour = [
+          startN,
+          floorRooms[0],
+          floorRooms[Math.floor(floorRooms.length / 2)],
+          floorRooms[floorRooms.length - 1],
+        ].filter((v, idx, arr) => arr.findIndex((x) => x.id === v.id) === idx);
+        if (wingTour.length >= 3) {
+          trails.push({
+            id: 'wing-tour',
+            title: '🏠 Complete Floor Wing-A to Wing-B Tour',
+            badge: `${wingTour.length} Stops`,
+            stops: wingTour,
+          });
+        }
+      }
+    }
+    return trails;
+  }, [placeNodes, entranceNode, venue?.type]);
 
   const exampleQueries = useMemo(() => {
     if (!venue) return ['nearest washroom', 'reception'];
@@ -469,15 +541,17 @@ export const VenuePage: React.FC = () => {
     ...(venue.type === 'hospital'
       ? [{ kind: 'emergency', label: 'Emergency Ward', emoji: '🏥', danger: true }]
       : []),
-    { kind: 'washroom', label: 'Nearest Washroom', emoji: '🚻', danger: false },
-    { kind: 'lift', label: 'Nearest Lift', emoji: '🛗', danger: false },
+    { kind: 'washroom', label: 'Washroom', emoji: '🚻', danger: false },
+    { kind: 'lift', label: 'Lift / Stairs', emoji: '🛗', danger: false },
+    { kind: 'water', label: 'Drinking Water', emoji: '💧', danger: false },
     venue.type === 'hospital'
       ? { kind: 'pharmacy', label: 'Pharmacy', emoji: '💊', danger: false }
-      : { kind: 'helpdesk', label: 'Help Desk / Reception', emoji: '🛎️', danger: false },
+      : { kind: 'helpdesk', label: 'Warden / Help Desk', emoji: '👔', danger: false },
+    { kind: 'canteen', label: 'Mess / Canteen', emoji: '🍽️', danger: false },
   ];
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 pb-24">
+    <div className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-900 pb-24">
       {/* =================================================================== */}
       {/* STICKY TOP VENUE HUB BAR                                            */}
       {/* =================================================================== */}
@@ -789,6 +863,114 @@ export const VenuePage: React.FC = () => {
                   {visitorLoc ? 'Re-check Location via Photo' : 'Upload / Capture Photo'}
                 </button>
 
+                {/* 3-Second Quick Door Number Pad (Zero-Camera Instant Spot Lock) */}
+                <div className="rounded-2xl bg-white/[0.06] p-3 ring-1 ring-white/15 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-extrabold uppercase tracking-wider text-cyan-300">
+                      🔢 3-Sec Door Number Locator
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowDoorKeypad((v) => !v)}
+                      className="rounded-lg bg-white/10 px-2 py-0.5 text-[10px] font-bold text-cyan-200 hover:bg-white/20 transition"
+                    >
+                      {showDoorKeypad ? 'Hide Keypad' : '0–9 Keypad'}
+                    </button>
+                  </div>
+
+                  <div className="relative flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={doorPadQuery}
+                      onChange={(e) => setDoorPadQuery(e.target.value)}
+                      placeholder="Type nearby door # (e.g. 309, 201)..."
+                      className="w-full rounded-xl bg-slate-950/70 px-3 py-2 text-xs font-bold text-white ring-1 ring-white/15 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-cyan-400"
+                    />
+                    {doorPadQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setDoorPadQuery('')}
+                        className="rounded-lg bg-white/10 p-1.5 text-slate-300 hover:text-white"
+                        title="Clear number"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+
+                  {showDoorKeypad && (
+                    <div className="grid grid-cols-6 gap-1 pt-0.5">
+                      {['1', '2', '3', '4', '5', '6', '7', '8', '9', '0'].map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setDoorPadQuery((prev) => (prev + d).slice(0, 6))}
+                          className="rounded-lg bg-white/10 py-1.5 text-xs font-extrabold text-white hover:bg-cyan-500 hover:text-slate-950 active:scale-95 transition"
+                        >
+                          {d}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => setDoorPadQuery((prev) => prev.slice(0, -1))}
+                        className="col-span-2 rounded-lg bg-rose-500/20 py-1.5 text-xs font-bold text-rose-200 hover:bg-rose-500/35 transition"
+                      >
+                        ⌫ Back
+                      </button>
+                    </div>
+                  )}
+
+                  {doorPadMatches.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      {doorPadMatches.map((m) => (
+                        <div
+                          key={m.id}
+                          className="flex items-center justify-between gap-2 rounded-xl bg-slate-950/85 px-2.5 py-2 text-xs ring-1 ring-cyan-400/30"
+                        >
+                          <div className="min-w-0">
+                            <div className="font-extrabold text-white truncate">{m.name}</div>
+                            <div className="text-[10px] text-cyan-300/80 truncate">
+                              {formatLevel(m.level, m.floor_name)}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setVisitorLoc({
+                                  nodeId: m.id,
+                                  name: m.name,
+                                  buildingName: m.building_name,
+                                  level: m.level,
+                                  floorName: m.floor_name,
+                                  headingDeg: null,
+                                  source: 'manual',
+                                  updatedAt: Date.now(),
+                                });
+                                setDoorPadQuery('');
+                              }}
+                              className="rounded-lg bg-emerald-500 px-2 py-1 text-[10px] font-extrabold text-slate-950 hover:bg-emerald-400 transition"
+                            >
+                              📍 I'm Here
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDoorPadQuery('');
+                                handleNavigateToDestination(m.id, m.name);
+                              }}
+                              className="rounded-lg bg-cyan-500/20 px-2 py-1 text-[10px] font-bold text-cyan-200 ring-1 ring-cyan-400/40 hover:bg-cyan-500 hover:text-slate-950 transition"
+                            >
+                              🚶 Route
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {/* Manual Start Selector */}
                 <div className="flex items-center gap-2 pt-1">
                   <select
@@ -1040,6 +1222,38 @@ export const VenuePage: React.FC = () => {
           {nearestNotice && (
             <div className="rounded-xl bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-900 ring-1 ring-amber-200">
               {nearestNotice}
+            </div>
+          )}
+
+          {/* 1-TAP CURATED VISITOR GUIDED TRAILS */}
+          {guidedVisitorTrails.length > 0 && (
+            <div className="rounded-2xl bg-gradient-to-r from-indigo-950 via-slate-900 to-cyan-950 p-3.5 text-white shadow-soft ring-1 ring-white/10 flex flex-wrap items-center justify-between gap-2.5">
+              <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-cyan-300">
+                <ListChecks className="h-4 w-4 text-emerald-400" />
+                1-Tap Guided Visitor Trails:
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {guidedVisitorTrails.map((trail) => (
+                  <button
+                    key={trail.id}
+                    type="button"
+                    onClick={() => {
+                      const stopIds = trail.stops.map((s) => s.id);
+                      navigate(
+                        `/v/${slug}/route?from=${encodeURIComponent(stopIds[0])}&to=${encodeURIComponent(
+                          stopIds[stopIds.length - 1],
+                        )}&stops=${encodeURIComponent(stopIds.join(','))}`,
+                      );
+                    }}
+                    className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-3 py-1.5 text-xs font-bold text-white ring-1 ring-white/15 hover:bg-cyan-500 hover:text-slate-950 transition"
+                  >
+                    <span>{trail.title}</span>
+                    <span className="rounded-md bg-emerald-400/20 px-1.5 py-0.5 text-[10px] font-extrabold text-emerald-300">
+                      {trail.badge}
+                    </span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -1366,9 +1580,12 @@ export const VenuePage: React.FC = () => {
             ))}
           </div>
 
-          {/* Places Grid */}
+          {/* Places Grid (Paginated on Mobile for 60fps Smoothness) */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {filteredPlaces.map((place) => {
+            {(showAllPlaces || activeCategory !== 'all'
+              ? filteredPlaces
+              : filteredPlaces.slice(0, 16)
+            ).map((place) => {
               const isCurrentLoc = visitorLoc?.nodeId === place.id;
               const inTrip = tripStops.some((s) => s.id === place.id);
               return (
@@ -1446,6 +1663,19 @@ export const VenuePage: React.FC = () => {
               );
             })}
           </div>
+
+          {!showAllPlaces && activeCategory === 'all' && filteredPlaces.length > 16 && (
+            <div className="pt-2 text-center">
+              <button
+                type="button"
+                onClick={() => setShowAllPlaces(true)}
+                className="inline-flex items-center gap-2 rounded-2xl bg-slate-900 px-5 py-2.5 text-xs font-extrabold text-white shadow-md hover:bg-indigo-600 transition"
+              >
+                <Layers className="h-3.5 w-3.5 text-cyan-400" />
+                Show All {filteredPlaces.length} Rooms & Places (+{filteredPlaces.length - 16} more)
+              </button>
+            </div>
+          )}
         </section>
       </main>
 

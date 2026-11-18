@@ -159,7 +159,7 @@ body {
   animation: scan-beam 2.2s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
-/* Aurora Mesh Drift */
+/* Aurora Mesh Drift (disabled on mobile GPUs to eliminate compositor lag) */
 @keyframes aurora-drift {
   0%, 100% {
     transform: translate3d(0, 0, 0) scale(1);
@@ -168,8 +168,15 @@ body {
     transform: translate3d(28px, -22px, 0) scale(1.08);
   }
 }
-.aurora-orb {
-  animation: aurora-drift 11s ease-in-out infinite;
+@media (min-width: 768px) and (prefers-reduced-motion: no-preference) {
+  .aurora-orb {
+    animation: aurora-drift 11s ease-in-out infinite;
+  }
+}
+@media (max-width: 767px) {
+  .aurora-orb {
+    display: none;
+  }
 }
 
 /* 3D Perspective Street-View Chevron Pulse */

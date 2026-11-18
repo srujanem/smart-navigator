@@ -333,12 +333,22 @@ export function computeOfflineNearestRoute(
   profile: RouteProfile = 'walk',
 ): Route {
   const kindLow = targetKind.toLowerCase();
+  const matchMap: Record<string, string[]> = {
+    exit: ['exit', 'entrance', 'gate', 'emergency', 'stair'],
+    emergency: ['emergency', 'trauma', 'casualty', 'first aid', 'exit', 'entrance'],
+    washroom: ['washroom', 'restroom', 'toilet', 'wc'],
+    lift: ['lift', 'elevator', 'stair', 'stairs'],
+    stairs: ['stair', 'stairs', 'lift', 'elevator'],
+    water: ['water', 'cooler', 'drinking', 'washroom', 'junction', 'balcony', 'mess', 'cafeteria', 'lobby'],
+    canteen: ['canteen', 'mess', 'cafeteria', 'cafe', 'food', 'dining', 'study', 'balcony', 'courtyard', 'lobby'],
+    pharmacy: ['pharmacy', 'chemist', 'medicine', 'dispensary'],
+    helpdesk: ['reception', 'help', 'desk', 'enquiry', 'billing', 'office', 'warden', 'lobby', 'entrance', 'junction', 'hod', 'cabin'],
+  };
+  const terms = matchMap[kindLow] ?? [kindLow];
   const candidates = graph.nodes.filter((n) => {
+    if (n.id === fromNode && graph.nodes.length > 1) return false;
     const blob = `${n.kind} ${n.category ?? ''} ${n.name} ${n.keywords}`.toLowerCase();
-    if (kindLow === 'exit') return blob.includes('exit') || blob.includes('entrance') || blob.includes('gate');
-    if (kindLow === 'washroom') return blob.includes('washroom') || blob.includes('restroom') || blob.includes('toilet');
-    if (kindLow === 'lift') return blob.includes('lift') || blob.includes('elevator');
-    return blob.includes(kindLow);
+    return terms.some((t) => blob.includes(t));
   });
 
   let best: Route | null = null;
