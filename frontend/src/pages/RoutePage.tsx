@@ -2288,21 +2288,21 @@ export const RoutePage: React.FC = () => {
               <div className="rounded-2xl bg-slate-50 p-3.5 ring-1 ring-slate-200">
                 <div className="text-[11px] font-bold uppercase text-slate-400">English</div>
                 <div className="mt-0.5 font-extrabold text-slate-900 text-base">
-                  "Excuse me, could you please point me towards {destNode?.name || 'this room'} ({formatLevel(destNode?.level ?? 0)})?"
+                  "Excuse me, could you please point me towards {destNode?.name || 'this room'} ({formatLevel(destNode?.level ?? 0, destNode?.floor_name)})?"
                 </div>
               </div>
 
               <div className="rounded-2xl bg-indigo-50/70 p-3.5 ring-1 ring-indigo-200">
                 <div className="text-[11px] font-bold uppercase text-indigo-600">ಕನ್ನಡ (Kannada)</div>
                 <div className="mt-0.5 font-extrabold text-slate-900 text-base">
-                  "ದಯವಿಟ್ಟು ನನಗೆ {destNode?.name || 'ಈ ಸ್ಥಳ'} ({formatLevel(destNode?.level ?? 0)}) ಕಡೆಗೆ ದಾರಿ ತೋರಿಸಿ."
+                  "ದಯವಿಟ್ಟು ನನಗೆ {destNode?.name || 'ಈ ಸ್ಥಳ'} ({formatLevel(destNode?.level ?? 0, destNode?.floor_name)}) ಕಡೆಗೆ ದಾರಿ ತೋರಿಸಿ."
                 </div>
               </div>
 
               <div className="rounded-2xl bg-emerald-50/70 p-3.5 ring-1 ring-emerald-200">
                 <div className="text-[11px] font-bold uppercase text-emerald-700">हिन्दी (Hindi)</div>
                 <div className="mt-0.5 font-extrabold text-slate-900 text-base">
-                  "कृपया मुझे {destNode?.name || 'इस जगह'} ({formatLevel(destNode?.level ?? 0)}) का रास्ता बताएं।"
+                  "कृपया मुझे {destNode?.name || 'इस जगह'} ({formatLevel(destNode?.level ?? 0, destNode?.floor_name)}) का रास्ता बताएं।"
                 </div>
               </div>
             </div>
@@ -2314,7 +2314,7 @@ export const RoutePage: React.FC = () => {
                   if ('speechSynthesis' in window) {
                     window.speechSynthesis.cancel();
                     const u = new SpeechSynthesisUtterance(
-                      `Excuse me, please point me towards ${destNode?.name || 'my destination'} on ${formatLevel(destNode?.level ?? 0)}.`,
+                      `Excuse me, please point me towards ${destNode?.name || 'my destination'} on ${formatLevel(destNode?.level ?? 0, destNode?.floor_name)}.`,
                     );
                     u.lang = 'en-IN';
                     window.speechSynthesis.speak(u);
