@@ -935,27 +935,22 @@ export async function uploadAdminPhotos(
   files: File[],
   headingDeg?: number | null,
 ): Promise<UploadPhotosResponse> {
-  const readyFiles: File[] = [];
-  for (const f of files) {
-    if (f.type.startsWith('image/')) {
-      const opt = await compressImageForUpload(f, 1600, 0.88);
-      readyFiles.push(opt);
-    } else {
-      readyFiles.push(f);
-    }
-  }
-
   const BATCH_SIZE = 4;
   const merged: UploadPhotosResponse = { accepted: [], rejected: [] };
-  for (let i = 0; i < readyFiles.length; i += BATCH_SIZE) {
-    const chunk = readyFiles.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < files.length; i += BATCH_SIZE) {
+    const rawChunk = files.slice(i, i + BATCH_SIZE);
     const fd = new FormData();
     fd.append('node_id', nodeId);
     if (headingDeg !== undefined && headingDeg !== null) {
       fd.append('heading_deg', String(headingDeg));
     }
-    for (const cf of chunk) {
-      fd.append('files', cf);
+    for (const f of rawChunk) {
+      if (f.type.startsWith('image/')) {
+        const opt = await compressImageForUpload(f, 1600, 0.88);
+        fd.append('files', opt);
+      } else {
+        fd.append('files', f);
+      }
     }
     const res = await request<UploadPhotosResponse>(
       `/api/admin/venues/${encodeURIComponent(slug)}/photos`,
@@ -980,32 +975,8 @@ export async function autoMapAdminDataset(
     onProgressStage?: (stageText: string) => void;
   },
 ): Promise<AutoMapDatasetResponse> {
-  const readyFiles: File[] = [];
-  for (const f of options.files) {
-    const ext = f.name.split('.').pop()?.toLowerCase() || '';
-    const isVid =
-      f.type.startsWith('video/') ||
-      ['mp4', 'webm', 'mov', 'mkv', 'avi'].includes(ext);
-    if (isVid) {
-      options.onProgressStage?.(
-        `Slicing 4K/HD video "${f.name}" into lightweight WebP keyframes on device...`,
-      );
-      const frames = await extractVideoKeyframesInBrowser(f, 24, 1600);
-      readyFiles.push(...frames);
-    } else if (f.type.startsWith('image/')) {
-      options.onProgressStage?.(
-        `Compressing "${f.name}" to 1600px WebP on device...`,
-      );
-      const opt = await compressImageForUpload(f, 1600, 0.88);
-      readyFiles.push(opt);
-    } else {
-      readyFiles.push(f);
-    }
-  }
-
-  // Send in fast micro-batches of 4 frames so large 20-50 photo/video uploads never hit proxy timeouts
+  // Streaming low-RAM pipeline: compress & upload 4 frames at a time (safe for 150+ phone photos!)
   const BATCH_SIZE = 4;
-  const totalBatches = Math.max(1, Math.ceil(readyFiles.length / BATCH_SIZE));
   const merged: AutoMapDatasetResponse = {
     accepted: [],
     rejected: [],
@@ -1017,44 +988,108 @@ export async function autoMapAdminDataset(
   };
   const updatedNodeIds = new Set<string>();
 
-  for (let b = 0; b < totalBatches; b++) {
-    const chunk = readyFiles.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
-    if (chunk.length === 0) continue;
-    const isLastBatch = b === totalBatches - 1;
-    const processedSoFar = Math.min(readyFiles.length, (b + 1) * BATCH_SIZE);
-    options.onProgressStage?.(
-      totalBatches > 1
-        ? `Uploading & AI-mapping batch ${b + 1}/${totalBatches} (${processedSoFar} of ${readyFiles.length} frames)...`
-        : `Uploading ${readyFiles.length} optimized frame(s) & running AI Route/OCR Auto-Mapper...`,
-    );
+  const sendBatchWithRetry = async (
+    chunk: File[],
+    isLastBatch: boolean,
+    label: string,
+  ): Promise<void> => {
+    let lastErr: unknown = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        if (attempt > 1) {
+          options.onProgressStage?.(`${label} (retry ${attempt}/3)...`);
+          await new Promise((r) => setTimeout(r, 1200 * attempt));
+        } else {
+          options.onProgressStage?.(label);
+        }
+        const fd = new FormData();
+        fd.append('mode', options.mode);
+        if (options.fromNodeId) fd.append('from_node_id', options.fromNodeId);
+        if (options.toNodeId) fd.append('to_node_id', options.toNodeId);
+        if (options.levelFilter !== undefined && options.levelFilter !== null) {
+          fd.append('level_filter', String(options.levelFilter));
+        }
+        if (options.fallbackNodeId) {
+          fd.append('fallback_node_id', options.fallbackNodeId);
+        }
+        fd.append('rebuild_index', isLastBatch ? 'true' : 'false');
+        for (const rf of chunk) {
+          fd.append('files', rf);
+        }
 
-    const fd = new FormData();
-    fd.append('mode', options.mode);
-    if (options.fromNodeId) fd.append('from_node_id', options.fromNodeId);
-    if (options.toNodeId) fd.append('to_node_id', options.toNodeId);
-    if (options.levelFilter !== undefined && options.levelFilter !== null) {
-      fd.append('level_filter', String(options.levelFilter));
+        const res = await request<AutoMapDatasetResponse>(
+          `/api/admin/venues/${encodeURIComponent(slug)}/dataset/auto-map`,
+          { method: 'POST', body: fd },
+          true,
+        );
+        merged.accepted.push(...res.accepted);
+        merged.rejected.push(...res.rejected);
+        res.accepted.forEach((a) => updatedNodeIds.add(a.node_id));
+        merged.edges_created = (merged.edges_created || 0) + (res.edges_created || 0);
+        merged.raw_mb = +(merged.raw_mb + (res.raw_mb || 0)).toFixed(2);
+        merged.stored_mb = +(merged.stored_mb + (res.stored_mb || 0)).toFixed(2);
+        merged.space_saved_mb = +(merged.space_saved_mb + (res.space_saved_mb || 0)).toFixed(2);
+        return;
+      } catch (err) {
+        lastErr = err;
+      }
     }
-    if (options.fallbackNodeId) {
-      fd.append('fallback_node_id', options.fallbackNodeId);
-    }
-    fd.append('rebuild_index', isLastBatch ? 'true' : 'false');
+    // If a single batch still fails after 3 attempts, record rejected filenames and keep saving the rest
+    const msg = lastErr instanceof Error ? lastErr.message : 'Network error';
     for (const rf of chunk) {
-      fd.append('files', rf);
+      merged.rejected.push({ filename: rf.name, reason: `Upload failed after retries (${msg})` });
     }
+  };
 
-    const res = await request<AutoMapDatasetResponse>(
-      `/api/admin/venues/${encodeURIComponent(slug)}/dataset/auto-map`,
-      { method: 'POST', body: fd },
+  let pendingChunk: File[] = [];
+  let processedInput = 0;
+  const totalInputs = options.files.length;
+  let batchNum = 0;
+  const estBatches = Math.max(1, Math.ceil(totalInputs / BATCH_SIZE));
+
+  for (let i = 0; i < totalInputs; i++) {
+    const f = options.files[i];
+    const ext = f.name.split('.').pop()?.toLowerCase() || '';
+    const isVid =
+      f.type.startsWith('video/') ||
+      ['mp4', 'webm', 'mov', 'mkv', 'avi'].includes(ext);
+
+    if (isVid) {
+      options.onProgressStage?.(
+        `Slicing video "${f.name}" into sharp WebP keyframes on device...`,
+      );
+      const vidFrames = await extractVideoKeyframesInBrowser(f, 24, 1600);
+      pendingChunk.push(...vidFrames);
+    } else if (f.type.startsWith('image/')) {
+      options.onProgressStage?.(
+        `Preparing photo ${i + 1}/${totalInputs} (batch ${batchNum + 1}/${estBatches})...`,
+      );
+      const opt = await compressImageForUpload(f, 1600, 0.86);
+      pendingChunk.push(opt);
+    } else {
+      pendingChunk.push(f);
+    }
+    processedInput++;
+
+    while (pendingChunk.length >= BATCH_SIZE) {
+      const toSend = pendingChunk.splice(0, BATCH_SIZE);
+      batchNum++;
+      const isFinal = i === totalInputs - 1 && pendingChunk.length === 0;
+      await sendBatchWithRetry(
+        toSend,
+        isFinal,
+        `Uploading & AI-mapping batch ${batchNum}/${Math.max(batchNum, estBatches)} (${processedInput}/${totalInputs} files)...`,
+      );
+    }
+  }
+
+  if (pendingChunk.length > 0) {
+    batchNum++;
+    await sendBatchWithRetry(
+      pendingChunk,
       true,
+      `Finalizing batch ${batchNum}/${batchNum} & building 2D/3D Floor Model...`,
     );
-    merged.accepted.push(...res.accepted);
-    merged.rejected.push(...res.rejected);
-    res.accepted.forEach((a) => updatedNodeIds.add(a.node_id));
-    merged.edges_created = (merged.edges_created || 0) + (res.edges_created || 0);
-    merged.raw_mb = +(merged.raw_mb + (res.raw_mb || 0)).toFixed(2);
-    merged.stored_mb = +(merged.stored_mb + (res.stored_mb || 0)).toFixed(2);
-    merged.space_saved_mb = +(merged.space_saved_mb + (res.space_saved_mb || 0)).toFixed(2);
   }
 
   merged.nodes_updated = updatedNodeIds.size;
