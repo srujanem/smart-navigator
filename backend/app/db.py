@@ -1,9 +1,21 @@
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlmodel import SQLModel, Session, create_engine
 
 from .config import DB_PATH
 
-engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
+engine = create_engine(
+    f"sqlite:///{DB_PATH}",
+    connect_args={"check_same_thread": False, "timeout": 30},
+)
+
+
+@event.listens_for(engine, "connect")
+def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=30000")
+    cursor.close()
 
 _MIGRATIONS: dict[str, list[tuple[str, str]]] = {
     "venue": [
