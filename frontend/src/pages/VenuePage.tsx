@@ -16,6 +16,7 @@ import {
   Check,
   CheckCircle2,
   Compass,
+  Hash,
   Layers,
   ListChecks,
   Loader2,
@@ -477,10 +478,10 @@ export const VenuePage: React.FC = () => {
       {/* =================================================================== */}
       {/* STICKY TOP VENUE HUB BAR                                            */}
       {/* =================================================================== */}
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#070B18] text-white">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6 lg:px-8 py-3">
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#070B18]/95 backdrop-blur-md text-white">
+        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2.5 sm:gap-3 px-3.5 sm:px-6 lg:px-8 py-2.5 sm:py-3">
           {/* Left: Back + Venue Identity */}
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
             <Link
               to="/venues"
               className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.07] text-slate-300 ring-1 ring-white/10 hover:bg-white/15 hover:text-white transition"
@@ -490,14 +491,14 @@ export const VenuePage: React.FC = () => {
             </Link>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h1 className="font-display text-base sm:text-lg font-extrabold truncate">
+                <h1 className="font-display text-sm sm:text-lg font-extrabold truncate">
                   {venue.name}
                 </h1>
                 <div className="hidden sm:block shrink-0">
                   <VenueTypeBadge type={venue.type} dark />
                 </div>
                 {venue.owner_name && (
-                  <span className="hidden lg:inline-flex items-center gap-1 rounded-md bg-white/[0.07] px-2 py-0.5 text-[10px] font-semibold text-cyan-300 ring-1 ring-white/10">
+                  <span className="hidden lg:inline-flex items-center gap-1 rounded-md bg-white/[0.07] px-2 py-0.5 text-[10px] font-semibold text-cyan-300 ring-1 ring-white/10 shrink-0">
                     <ShieldCheck className="h-3 w-3 text-emerald-400" />
                     Mapped by {venue.owner_name}
                   </span>
@@ -510,7 +511,7 @@ export const VenuePage: React.FC = () => {
           </div>
 
           {/* Right: Current Location Pill + Quick Links + Emergency CTA */}
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {/* Visitor Current Location Pill */}
             <button
               type="button"
@@ -519,7 +520,7 @@ export const VenuePage: React.FC = () => {
                 setDroppedFile(null);
                 setLocateOpen(true);
               }}
-              className={`inline-flex items-center gap-2 rounded-xl px-3 py-1.5 text-xs font-semibold transition ring-1 ${
+              className={`inline-flex items-center gap-1.5 sm:gap-2 rounded-xl px-2.5 sm:px-3 py-1.5 text-xs font-semibold transition ring-1 ${
                 visitorLoc
                   ? 'bg-emerald-500/15 text-emerald-200 ring-emerald-400/35 hover:bg-emerald-500/25'
                   : 'bg-amber-500/15 text-amber-200 ring-amber-400/35 hover:bg-amber-500/25'
@@ -527,23 +528,25 @@ export const VenuePage: React.FC = () => {
             >
               {visitorLoc ? (
                 <>
-                  <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span className="max-w-[160px] truncate">
-                    At: {visitorLoc.name}
+                  <span className="h-2 w-2 rounded-full bg-emerald-400 shrink-0" />
+                  <span className="max-w-[96px] sm:max-w-[160px] truncate">
+                    {visitorLoc.name}
                   </span>
-                  <span className="text-[10px] underline opacity-80">Change</span>
+                  <span className="hidden sm:inline text-[10px] underline opacity-80">Change</span>
                 </>
               ) : (
                 <>
-                  <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
-                  <span>Location not set · Upload photo</span>
+                  <Camera className="h-3.5 w-3.5 text-amber-300 shrink-0" />
+                  <span className="sm:hidden">Set Spot</span>
+                  <span className="hidden sm:inline">Location not set · Upload photo</span>
                 </>
               )}
             </button>
 
             <Link
               to={`/v/${slug}/people`}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-white/[0.07] px-3 py-1.5 text-xs font-semibold text-slate-200 ring-1 ring-white/10 hover:bg-white/15 hover:text-white transition"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-white/[0.07] px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-200 ring-1 ring-white/10 hover:bg-white/15 hover:text-white transition"
+              title={venue.type === 'hospital' ? 'Doctors Directory' : 'People Directory'}
             >
               <Users className="h-3.5 w-3.5 text-cyan-400" />
               <span className="hidden sm:inline">
@@ -562,11 +565,11 @@ export const VenuePage: React.FC = () => {
             <button
               type="button"
               onClick={handleEmergencyRoute}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-1.5 text-xs font-extrabold text-white shadow-lg shadow-rose-600/35 ring-1 ring-rose-400/50 hover:bg-rose-500 transition animate-pulse"
-              title="One-Click Code Blue / Nearest Emergency Exit Route"
+              className="hidden sm:inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3.5 py-1.5 text-xs font-extrabold text-white shadow-md shadow-rose-600/25 ring-1 ring-rose-400/50 hover:bg-rose-500 transition"
+              title="One-Click Nearest Emergency Exit Route"
             >
-              <Siren className="h-4 w-4" />
-              🚨 Emergency Exit
+              <Siren className="h-3.5 w-3.5" />
+              Emergency Exit
             </button>
           </div>
         </div>
@@ -1535,6 +1538,45 @@ export const VenuePage: React.FC = () => {
           )}
         </section>
       </main>
+
+      {/* MOBILE THUMB-FRIENDLY BOTTOM QUICK ACTION BAR */}
+      {tripStops.length === 0 && (
+        <div className="sm:hidden fixed bottom-0 inset-x-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur-md px-3 pt-2 safe-bottom shadow-[0_-4px_20px_rgba(15,23,42,0.08)]">
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setQueuedDest(null);
+                setDroppedFile(null);
+                setLocateOpen(true);
+              }}
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 px-2.5 py-2.5 text-xs font-extrabold text-white shadow-sm active:scale-[0.98]"
+            >
+              <Camera className="h-4 w-4 shrink-0" />
+              <span>Snap Spot</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowDoorKeypad((prev) => !prev);
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-100 px-2.5 py-2.5 text-xs font-extrabold text-slate-800 ring-1 ring-slate-200 active:scale-[0.98]"
+            >
+              <Hash className="h-4 w-4 shrink-0 text-indigo-600" />
+              <span>Door #</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleEmergencyRoute}
+              className="flex items-center justify-center gap-1.5 rounded-xl bg-rose-600 px-2.5 py-2.5 text-xs font-extrabold text-white shadow-sm active:scale-[0.98]"
+            >
+              <Siren className="h-4 w-4 shrink-0" />
+              <span>Emergency</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* FLOATING MULTI-STOP VISIT CHECKLIST DRAWER */}
       {tripStops.length > 0 && (
