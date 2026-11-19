@@ -1536,46 +1536,86 @@ export const RoutePage: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* AR Turn Chevrons */}
+                      {/* AR Turn Chevrons / Floor-Change Graphic / Arrival Celebration */}
                       <div className="pointer-events-none relative z-10 flex items-center justify-center mb-6">
-                        {activeStep?.icon === 'arrive' ? (
-                          <div className="flex flex-col items-center gap-1 rounded-2xl bg-emerald-500/30 px-5 py-2.5 ring-2 ring-emerald-400 shadow-lg">
-                            <Flag className="h-7 w-7 text-emerald-300" />
-                            <span className="text-xs font-extrabold uppercase tracking-widest text-emerald-100">
-                              Destination Reached
+                        {activeStep?.icon === 'arrive' || activeStepIdx === route.steps.length - 1 ? (
+                          <div className="arrival-pop relative flex flex-col items-center gap-1.5 rounded-3xl bg-emerald-950/85 px-6 py-4 ring-2 ring-emerald-400 shadow-[0_0_32px_rgba(16,185,129,0.45)] backdrop-blur-md">
+                            <span className="sparkle-float-1 absolute -top-2 -left-2 text-base">✨</span>
+                            <span className="sparkle-float-2 absolute -top-2 -right-2 text-base">🎉</span>
+                            <span className="sparkle-float-3 absolute -bottom-2 right-3 text-sm">✨</span>
+                            <svg viewBox="0 0 60 60" className="h-12 w-12">
+                              <circle
+                                cx="30"
+                                cy="30"
+                                r="24"
+                                fill="rgba(16,185,129,0.18)"
+                                stroke="#34d399"
+                                strokeWidth="3.5"
+                                className="arrival-ring-draw"
+                              />
+                              <path
+                                d="M19 31 L27 39 L42 22"
+                                fill="none"
+                                stroke="#ffffff"
+                                strokeWidth="4"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                            <span className="text-xs font-extrabold uppercase tracking-widest text-emerald-200">
+                              You Have Arrived!
+                            </span>
+                            <span className="text-xs font-bold text-white">
+                              {activeStep?.name}
                             </span>
                           </div>
                         ) : activeStep?.icon === 'lift' ||
                           activeStep?.icon === 'up' ||
                           activeStep?.icon === 'down' ? (
-                          <div className="flex items-center gap-2.5 rounded-2xl bg-amber-500/30 px-5 py-2.5 ring-2 ring-amber-400 shadow-lg">
-                            {activeStep?.icon === 'down' ? (
-                              <ArrowDown className="h-6 w-6 text-amber-300 animate-bounce" />
-                            ) : (
-                              <ArrowUp className="h-6 w-6 text-amber-300 animate-bounce" />
-                            )}
-                            <span className="text-xs font-extrabold uppercase tracking-wider text-amber-100">
-                              {activeStep?.icon === 'lift'
-                                ? `Take Lift · ${formatLevel(activeStep.level)}`
-                                : `Take Stairs · ${formatLevel(activeStep.level)}`}
-                            </span>
+                          <div className="flex items-center gap-3 rounded-2xl bg-slate-950/85 px-5 py-3 ring-2 ring-amber-400/90 shadow-[0_0_24px_rgba(245,158,11,0.35)] backdrop-blur-md">
+                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/25 ring-1 ring-amber-300/60">
+                              {activeStep?.icon === 'down' ? (
+                                <ArrowDown className="h-5 w-5 text-amber-300 animate-bounce" />
+                              ) : (
+                                <ArrowUp className="h-5 w-5 text-amber-300 animate-bounce" />
+                              )}
+                            </div>
+                            <div className="text-left">
+                              <div className="text-[10px] font-extrabold uppercase tracking-wider text-amber-300">
+                                {activeStep?.icon === 'lift' ? '🛗 Elevator Transition' : '🪜 Staircase Transition'}
+                              </div>
+                              <div className="text-xs font-extrabold text-white">
+                                {activeStepIdx > 0 && route.steps[activeStepIdx - 1]?.level !== activeStep.level
+                                  ? `${formatLevel(route.steps[activeStepIdx - 1].level)} → ${formatLevel(activeStep.level)}`
+                                  : `Go to ${formatLevel(activeStep.level)}`}
+                              </div>
+                            </div>
                           </div>
                         ) : (
-                          <div
-                            style={{
-                              transform: `perspective(420px) rotateX(54deg) rotateZ(${
-                                activeStep?.icon === 'left'
-                                  ? '-38deg'
-                                  : activeStep?.icon === 'right'
-                                    ? '38deg'
-                                    : '0deg'
-                              })`,
-                            }}
-                            className="flex flex-col items-center -space-y-3"
-                          >
-                            <ChevronUp className="h-10 w-10 text-cyan-300 stroke-[3]" />
-                            <ChevronUp className="h-11 w-11 text-cyan-300 stroke-[3]" />
-                            <ChevronUp className="h-12 w-12 text-white stroke-[3.2]" />
+                          <div className="flex flex-col items-center gap-2">
+                            <div
+                              style={{
+                                transform: `perspective(420px) rotateX(56deg) rotateZ(${
+                                  activeStep?.icon === 'left'
+                                    ? '-40deg'
+                                    : activeStep?.icon === 'right'
+                                      ? '40deg'
+                                      : '0deg'
+                                })`,
+                              }}
+                              className="flex flex-col items-center -space-y-3.5 drop-shadow-[0_0_14px_rgba(34,211,238,0.85)]"
+                            >
+                              <ChevronUp className="h-11 w-11 text-cyan-300 stroke-[3.2] street-chevron-3" />
+                              <ChevronUp className="h-12 w-12 text-cyan-200 stroke-[3.2] street-chevron-2" />
+                              <ChevronUp className="h-14 w-14 text-white stroke-[3.4] street-chevron-1" />
+                            </div>
+                            <span className="rounded-full bg-slate-950/80 px-3 py-1 text-[10px] font-extrabold uppercase tracking-widest text-cyan-300 ring-1 ring-cyan-400/40 backdrop-blur-md">
+                              {activeStep?.icon === 'left'
+                                ? '← Turn Left Ahead'
+                                : activeStep?.icon === 'right'
+                                  ? 'Turn Right Ahead →'
+                                  : '↑ Continue Straight'}
+                            </span>
                           </div>
                         )}
                       </div>
@@ -1742,6 +1782,7 @@ export const RoutePage: React.FC = () => {
                         endNodeId={route.to_node}
                         routePath={activePath}
                         walkerNodeId={activeStep?.node_id}
+                        headingDeg={compassHeading}
                         onSelectNode={(n) => {
                           const idx = route.steps.findIndex(
                             (s) => s.node_id === n.id,
@@ -1894,10 +1935,55 @@ export const RoutePage: React.FC = () => {
                 </div>
               )}
 
+              {activeStepIdx === route.steps.length - 1 && activeStep && (
+                <div className="arrival-pop relative overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 p-4 text-white shadow-lg ring-1 ring-emerald-300/50">
+                  <div className="flex items-center gap-3.5">
+                    <div className="relative flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-white/15 ring-1 ring-white/30">
+                      <svg viewBox="0 0 48 48" className="h-9 w-9">
+                        <circle
+                          cx="24"
+                          cy="24"
+                          r="19"
+                          fill="none"
+                          stroke="#a7f3d0"
+                          strokeWidth="3"
+                          className="arrival-ring-draw"
+                        />
+                        <path
+                          d="M15 24.5 L21.5 31 L34 18"
+                          fill="none"
+                          stroke="#ffffff"
+                          strokeWidth="3.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-100">
+                        ✨ Destination Reached
+                      </div>
+                      <div className="font-display text-base font-extrabold truncate">
+                        Welcome to {activeStep.name}!
+                      </div>
+                      <div className="text-xs text-emerald-50/90">
+                        {formatLevel(activeStep.level)} · {Math.round(route.distance_m)}m walked
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2.5 lg:max-h-[calc(100dvh-14.5rem)] lg:overflow-y-auto lg:pr-1.5 thin-scrollbar smooth-scroll">
                 {route.steps.map((step, idx) => {
                   const isActive = idx === activeStepIdx;
                   const isLast = idx === route.steps.length - 1;
+                  const prevStep = idx > 0 ? route.steps[idx - 1] : null;
+                  const isFloorChange =
+                    (prevStep && prevStep.level !== step.level) ||
+                    step.icon === 'lift' ||
+                    step.icon === 'up' ||
+                    step.icon === 'down';
                   return (
                     <div
                       key={`${step.index}-${step.node_id}`}
@@ -1908,6 +1994,22 @@ export const RoutePage: React.FC = () => {
                           : 'bg-white/90 ring-1 ring-slate-200/80 hover:bg-white hover:ring-slate-300'
                       }`}
                     >
+                      {isFloorChange && (
+                        <div className="mb-2.5 flex items-center justify-between gap-2 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 px-3 py-1.5 text-[11px] font-extrabold text-amber-900 ring-1 ring-amber-200/90">
+                          <span className="inline-flex items-center gap-1.5">
+                            <span>{step.icon === 'lift' ? '🛗' : '🪜'}</span>
+                            <span>
+                              Floor Change:{' '}
+                              {prevStep && prevStep.level !== step.level
+                                ? `${formatLevel(prevStep.level)} → ${formatLevel(step.level)}`
+                                : formatLevel(step.level)}
+                            </span>
+                          </span>
+                          <span className="rounded-md bg-amber-500/20 px-1.5 py-0.5 text-[10px] text-amber-800">
+                            {step.icon === 'lift' ? 'Elevator' : 'Stairs'}
+                          </span>
+                        </div>
+                      )}
                       <div className="flex items-start gap-3.5">
                         <div
                           className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ring-1 ${

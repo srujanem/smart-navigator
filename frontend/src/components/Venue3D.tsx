@@ -558,6 +558,28 @@ const SceneContent: React.FC<
         position={[0, baseFloorY - 2.2, 0]}
       />
 
+      {/* 3D Architectural Ground Compass Rose (Zero-Lag Orientation Ring + North Pointer) */}
+      <group position={[0, baseFloorY - 2.12, 0]}>
+        <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[32.5, 33.1, 64]} />
+          <meshBasicMaterial
+            color={daylight ? '#0284c7' : '#38bdf8'}
+            transparent
+            opacity={daylight ? 0.25 : 0.22}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+        {/* Glowing North Pointer Cone */}
+        <mesh position={[0, 0.25, -34.6]} rotation={[-Math.PI / 2, 0, 0]}>
+          <coneGeometry args={[1.15, 2.8, 3]} />
+          <meshStandardMaterial
+            color="#38bdf8"
+            emissive="#0284c7"
+            emissiveIntensity={1.2}
+          />
+        </mesh>
+      </group>
+
       {/* Architectural Buildings: Slabs + Glass Curtain Walls + Structural Columns */}
       {venue.buildings.map((b: Building) => {
         const sortedFloors = [...b.floors].sort((x, y) => x.level - y.level);
@@ -872,8 +894,63 @@ const SceneContent: React.FC<
                   transparent
                   opacity={isSelected || inRoute ? 0.85 : 0.45}
                 />
+                {/* Sleek 3D Architectural Doorway Portal Accent */}
+                {(isSelected || inRoute || isStart || isEnd) && (
+                  <mesh position={[0, -roomBoxH * 0.12, roomBoxD / 2 + 0.04]}>
+                    <boxGeometry args={[0.72, roomBoxH * 0.72, 0.08]} />
+                    <meshStandardMaterial
+                      color={color}
+                      emissive={color}
+                      emissiveIntensity={0.85}
+                      transparent
+                      opacity={0.78}
+                    />
+                  </mesh>
+                )}
               </group>
             )}
+
+            {/* Distinct Low-Poly 3D Floating Facility Landmark Beacons */}
+            {levelMatch && !isStart && !isEnd && (() => {
+              const nk = node.kind.toLowerCase();
+              if (nk.includes('emergency') || nk.includes('exit')) {
+                return (
+                  <mesh position={[0, 2.55, 0]}>
+                    <octahedronGeometry args={[0.42, 0]} />
+                    <meshStandardMaterial
+                      color="#fb7185"
+                      emissive="#e11d48"
+                      emissiveIntensity={1.35}
+                    />
+                  </mesh>
+                );
+              }
+              if (nk.includes('washroom') || nk.includes('toilet')) {
+                return (
+                  <mesh position={[0, 2.35, 0]} rotation={[Math.PI / 4, 0, 0]}>
+                    <torusGeometry args={[0.36, 0.11, 10, 22]} />
+                    <meshStandardMaterial
+                      color="#c084fc"
+                      emissive="#9333ea"
+                      emissiveIntensity={1.15}
+                    />
+                  </mesh>
+                );
+              }
+              if (nk.includes('lift') || nk.includes('elevator')) {
+                return (
+                  <mesh position={[0, 2.45, 0]}>
+                    <octahedronGeometry args={[0.38, 0]} />
+                    <meshStandardMaterial
+                      color="#22d3ee"
+                      emissive="#0891b2"
+                      emissiveIntensity={1.2}
+                    />
+                  </mesh>
+                );
+              }
+              return null;
+            })()}
 
             {/* 3D Facility Radar Highlight Beam */}
             {isRadarMatch && (

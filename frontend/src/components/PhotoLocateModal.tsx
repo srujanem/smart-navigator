@@ -650,16 +650,17 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                         alt="Uploaded query"
                         className="h-full w-full object-cover hdr-photo"
                       />
-                      <div className="absolute inset-0 bg-gradient-to-b from-cyan-400/15 via-transparent to-indigo-500/20" />
-                      {/* Sweeping AI Laser Scan Beam */}
-                      <div className="ai-scan-beam" />
+                      <div className="pointer-events-none absolute inset-0 ai-hud-grid opacity-55" />
+                      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-cyan-400/15 via-transparent to-indigo-500/25" />
+                      {/* Sweeping Glowing AI Laser Scan Beam */}
+                      <div className="ai-scan-beam pointer-events-none absolute inset-x-0 h-1 bg-gradient-to-r from-transparent via-cyan-300 to-transparent shadow-[0_0_18px_rgba(34,211,238,0.95)]" />
                       {/* Corner Viewfinder Brackets */}
-                      <span className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 border-l-2 border-t-2 border-cyan-300" />
-                      <span className="pointer-events-none absolute right-2 top-2 h-3.5 w-3.5 border-r-2 border-t-2 border-cyan-300" />
-                      <span className="pointer-events-none absolute left-2 bottom-2 h-3.5 w-3.5 border-l-2 border-b-2 border-cyan-300" />
-                      <span className="pointer-events-none absolute right-2 bottom-2 h-3.5 w-3.5 border-r-2 border-b-2 border-cyan-300" />
-                      <span className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 rounded bg-slate-950/80 px-2 py-0.5 text-[9px] font-mono font-bold tracking-wider text-cyan-300">
-                        SCANNING KEYPOINTS
+                      <span className="pointer-events-none absolute left-2 top-2 h-4 w-4 border-l-2 border-t-2 border-cyan-300 rounded-tl-sm" />
+                      <span className="pointer-events-none absolute right-2 top-2 h-4 w-4 border-r-2 border-t-2 border-cyan-300 rounded-tr-sm" />
+                      <span className="pointer-events-none absolute left-2 bottom-2 h-4 w-4 border-l-2 border-b-2 border-cyan-300 rounded-bl-sm" />
+                      <span className="pointer-events-none absolute right-2 bottom-2 h-4 w-4 border-r-2 border-b-2 border-cyan-300 rounded-br-sm" />
+                      <span className="pointer-events-none absolute bottom-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-950/85 px-2.5 py-0.5 text-[9px] font-mono font-bold tracking-wider text-cyan-300 ring-1 ring-cyan-400/40">
+                        DINOv2 + OCR SCAN
                       </span>
                     </div>
                   )}
@@ -909,25 +910,34 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                           alt="Your uploaded photo"
                           className="h-full w-full object-cover hdr-photo"
                         />
-                        {/* Glowing OCR Bounding Boxes */}
+                        {/* Smart AI Viewfinder Corner Brackets */}
+                        <span className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 border-l-2 border-t-2 border-cyan-300/75" />
+                        <span className="pointer-events-none absolute right-2 top-2 h-3.5 w-3.5 border-r-2 border-t-2 border-cyan-300/75" />
+                        <span className="pointer-events-none absolute left-2 bottom-2 h-3.5 w-3.5 border-l-2 border-b-2 border-cyan-300/75" />
+                        <span className="pointer-events-none absolute right-2 bottom-2 h-3.5 w-3.5 border-r-2 border-b-2 border-cyan-300/75" />
+
+                        {/* Glowing OCR Signboard Plaque Boxes + Confidence Tag */}
                         {showAiOverlay &&
                           ocrBoxes.map((b, i) => (
                             <div
                               key={i}
                               style={{
-                                left: `${Math.max(0, Math.min(95, b.x * 100))}%`,
-                                top: `${Math.max(0, Math.min(92, b.y * 100))}%`,
-                                width: `${Math.max(4, Math.min(100 - b.x * 100, b.w * 100))}%`,
-                                height: `${Math.max(6, Math.min(100 - b.y * 100, b.h * 100))}%`,
+                                left: `${Math.max(0, Math.min(94, b.x * 100))}%`,
+                                top: `${Math.max(0, Math.min(90, b.y * 100))}%`,
+                                width: `${Math.max(5, Math.min(100 - b.x * 100, b.w * 100))}%`,
+                                height: `${Math.max(7, Math.min(100 - b.y * 100, b.h * 100))}%`,
                               }}
-                              className="pointer-events-none absolute rounded border-2 border-cyan-400 bg-cyan-400/15 shadow-[0_0_12px_rgba(34,211,238,0.65)]"
+                              className="pointer-events-none absolute rounded-md border-2 border-emerald-400 bg-emerald-400/15 shadow-[0_0_16px_rgba(52,211,153,0.75)]"
                             >
                               <span
-                                className={`absolute left-0 whitespace-nowrap max-w-[140px] truncate rounded bg-cyan-400 px-1 py-0.2 text-[9px] font-extrabold text-slate-950 z-10 ${
-                                  b.y < 0.08 ? 'top-1' : '-top-4'
+                                className={`absolute left-0 inline-flex items-center gap-1 whitespace-nowrap max-w-[160px] truncate rounded-md bg-emerald-400 px-1.5 py-0.5 text-[9px] font-extrabold text-slate-950 shadow-sm z-10 ${
+                                  b.y < 0.1 ? 'top-1' : '-top-5'
                                 }`}
                               >
-                                {b.text}
+                                <span>{b.text}</span>
+                                <span className="opacity-75">
+                                  {Math.round((b.confidence || 0.9) * 100)}%
+                                </span>
                               </span>
                             </div>
                           ))}

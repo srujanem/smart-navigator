@@ -221,3 +221,109 @@ body {
     linear-gradient(90deg, rgba(15, 23, 42, 0.04) 1px, transparent 1px);
   background-size: 36px 36px;
 }
+
+/* Shimmer Skeleton Placeholders (Zero-Lag GPU Composited) */
+@keyframes shimmer-sweep {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(226, 232, 240, 0.75) 25%,
+    rgba(241, 245, 249, 0.98) 50%,
+    rgba(226, 232, 240, 0.75) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-sweep 1.5s ease-in-out infinite;
+}
+.skeleton-shimmer-dark {
+  background: linear-gradient(
+    90deg,
+    rgba(30, 41, 59, 0.7) 25%,
+    rgba(51, 65, 85, 0.85) 50%,
+    rgba(30, 41, 59, 0.7) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer-sweep 1.5s ease-in-out infinite;
+}
+
+/* Google-Maps-Style 2D Floorplan Radar Pulse */
+@keyframes radar-ping-svg {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.72;
+  }
+  75%, 100% {
+    transform: scale(2.45);
+    opacity: 0;
+  }
+}
+.radar-ping-svg {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: radar-ping-svg 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* Arrival Celebration Checkmark Ring & Sparkle Pop */
+@keyframes arrival-ring-draw {
+  0% {
+    stroke-dashoffset: 160;
+    opacity: 0.3;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+@keyframes arrival-pop {
+  0% {
+    transform: scale(0.75);
+    opacity: 0;
+  }
+  65% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes sparkle-float {
+  0%, 100% {
+    transform: translateY(0) scale(0.85);
+    opacity: 0.55;
+  }
+  50% {
+    transform: translateY(-5px) scale(1.15);
+    opacity: 1;
+  }
+}
+.arrival-ring-draw {
+  stroke-dasharray: 160;
+  animation: arrival-ring-draw 0.85s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.arrival-pop {
+  animation: arrival-pop 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.sparkle-float-1 {
+  animation: sparkle-float 1.8s ease-in-out infinite;
+}
+.sparkle-float-2 {
+  animation: sparkle-float 2.1s ease-in-out 0.35s infinite;
+}
+.sparkle-float-3 {
+  animation: sparkle-float 1.9s ease-in-out 0.7s infinite;
+}
+
+/* AI Viewfinder Scanline Grid */
+.ai-hud-grid {
+  background-image: linear-gradient(rgba(34, 211, 238, 0.14) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.14) 1px, transparent 1px);
+  background-size: 20px 20px;
+}

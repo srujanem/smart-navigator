@@ -71,3 +71,65 @@ export const Skeleton3D: React.FC<{ label?: string; dark?: boolean }> = ({
     </div>
   );
 };
+
+export const VenuesGridSkeleton: React.FC = () => {
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          className="overflow-hidden rounded-3xl bg-white ring-1 ring-slate-200/80 shadow-soft"
+        >
+          <div className="h-44 w-full skeleton-shimmer" />
+          <div className="p-5 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="h-5 w-40 rounded-lg skeleton-shimmer" />
+              <div className="h-5 w-16 rounded-full skeleton-shimmer" />
+            </div>
+            <div className="h-3.5 w-3/4 rounded-md skeleton-shimmer" />
+            <div className="grid grid-cols-3 gap-2 pt-2">
+              <div className="h-12 rounded-xl skeleton-shimmer" />
+              <div className="h-12 rounded-xl skeleton-shimmer" />
+              <div className="h-12 rounded-xl skeleton-shimmer" />
+            </div>
+            <div className="h-10 w-full rounded-xl skeleton-shimmer" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+export const VenueHubSkeleton: React.FC = () => {
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <div className="h-16 w-full bg-[#070B18] border-b border-white/10 px-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-xl skeleton-shimmer-dark" />
+          <div className="space-y-1.5">
+            <div className="h-4 w-44 rounded skeleton-shimmer-dark" />
+            <div className="h-3 w-28 rounded skeleton-shimmer-dark" />
+          </div>
+        </div>
+        <div className="h-8 w-28 rounded-xl skeleton-shimmer-dark" />
+      </div>
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+          <div className="lg:col-span-5 h-56 rounded-3xl skeleton-shimmer-dark" />
+          <div className="lg:col-span-7 h-56 rounded-3xl bg-white p-5 ring-1 ring-slate-200/80 space-y-4">
+            <div className="h-5 w-48 rounded-lg skeleton-shimmer" />
+            <div className="h-12 w-full rounded-2xl skeleton-shimmer" />
+            <div className="flex gap-2">
+              <div className="h-7 w-24 rounded-full skeleton-shimmer" />
+              <div className="h-7 w-28 rounded-full skeleton-shimmer" />
+              <div className="h-7 w-20 rounded-full skeleton-shimmer" />
+            </div>
+          </div>
+        </div>
+        <div className="h-[460px] w-full rounded-3xl bg-white ring-1 ring-slate-200/80 p-4">
+          <div className="h-full w-full rounded-2xl skeleton-shimmer" />
+        </div>
+      </div>
+    </div>
+  );
+};

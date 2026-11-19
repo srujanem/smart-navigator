@@ -14,6 +14,7 @@ export interface FloorPlan2DProps {
   endNodeId?: string | null;
   routePath?: string[];
   walkerNodeId?: string | null;
+  headingDeg?: number | null;
   coverageByNode?: Record<string, CoverageLevel>;
   selectedEdgeId?: string | null;
   onSelectNode?: (node: GNode) => void;
@@ -26,6 +27,75 @@ export interface FloorPlan2DProps {
   onNodeDragEnd?: (node: GNode, x: number, y: number) => void;
 }
 
+function getRoomZoneTheme(
+  n: GNode,
+  dark: boolean,
+): { fill: string; stroke: string; badge: string; glyph: string } {
+  const k = `${n.kind} ${n.category}`.toLowerCase();
+  if (k.includes('emergency') || k.includes('exit')) {
+    return {
+      fill: dark ? 'rgba(244, 63, 94, 0.14)' : 'rgba(255, 228, 230, 0.85)',
+      stroke: dark ? '#fb7185' : '#f43f5e',
+      badge: '#e11d48',
+      glyph: '!',
+    };
+  }
+  if (k.includes('entrance') || k.includes('reception') || k.includes('lobby')) {
+    return {
+      fill: dark ? 'rgba(16, 185, 129, 0.14)' : 'rgba(209, 250, 229, 0.82)',
+      stroke: dark ? '#34d399' : '#10b981',
+      badge: '#059669',
+      glyph: 'E',
+    };
+  }
+  if (k.includes('lift') || k.includes('elevator')) {
+    return {
+      fill: dark ? 'rgba(6, 182, 212, 0.16)' : 'rgba(207, 250, 254, 0.88)',
+      stroke: dark ? '#22d3ee' : '#06b6d4',
+      badge: '#0891b2',
+      glyph: '↕',
+    };
+  }
+  if (k.includes('stair')) {
+    return {
+      fill: dark ? 'rgba(245, 158, 11, 0.16)' : 'rgba(254, 243, 199, 0.88)',
+      stroke: dark ? '#fbbf24' : '#f59e0b',
+      badge: '#d97706',
+      glyph: '≡',
+    };
+  }
+  if (k.includes('washroom') || k.includes('toilet') || k.includes('restroom')) {
+    return {
+      fill: dark ? 'rgba(168, 85, 247, 0.15)' : 'rgba(243, 232, 255, 0.86)',
+      stroke: dark ? '#c084fc' : '#a855f7',
+      badge: '#9333ea',
+      glyph: 'W',
+    };
+  }
+  if (k.includes('cafe') || k.includes('mess') || k.includes('food')) {
+    return {
+      fill: dark ? 'rgba(249, 115, 22, 0.14)' : 'rgba(255, 237, 213, 0.86)',
+      stroke: dark ? '#fb923c' : '#f97316',
+      badge: '#ea580c',
+      glyph: '☕',
+    };
+  }
+  if (k.includes('pharmacy') || k.includes('lab') || k.includes('medical') || k.includes('ward')) {
+    return {
+      fill: dark ? 'rgba(20, 184, 166, 0.14)' : 'rgba(204, 251, 241, 0.82)',
+      stroke: dark ? '#2dd4bf' : '#14b8a6',
+      badge: '#0d9488',
+      glyph: '+',
+    };
+  }
+  return {
+    fill: dark ? 'rgba(56, 189, 248, 0.11)' : 'rgba(238, 242, 255, 0.82)',
+    stroke: dark ? '#38bdf8' : '#818cf8',
+    badge: '#4f46e5',
+    glyph: '',
+  };
+}
+
 export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
   venue,
   graph,
@@ -36,6 +106,7 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
   endNodeId,
   routePath = [],
   walkerNodeId,
+  headingDeg = null,
   coverageByNode,
   selectedEdgeId,
   onSelectNode,
@@ -205,6 +276,33 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
   const connectSourceNode = connectFromNodeId
     ? nodeMap.get(connectFromNodeId) ?? null
     : null;
+
+  // Compute facing view-cone angle (degrees where 0° = North / -Y) for the Google-Maps-style "You Are Here" cone
+  const activeRadarNodeId = walkerNodeId || startNodeId || null;
+  const facingAngleDeg = useMemo(() => {
+    if (typeof headingDeg === 'number' && Number.isFinite(headingDeg)) {
+      return headingDeg;
+    }
+    if (activeRadarNodeId && routePath.length >= 2) {
+      const idx = routePath.indexOf(activeRadarNodeId);
+      const nextId =
+        idx >= 0 && idx < routePath.length - 1
+          ? routePath[idx + 1]
+          : idx > 0
+            ? routePath[idx - 1]
+            : null;
+      const curN = nodeMap.get(activeRadarNodeId);
+      const nxtN = nextId ? nodeMap.get(nextId) : null;
+      if (curN && nxtN && curN.level === nxtN.level) {
+        const dx = nxtN.x - curN.x;
+        const dy = nxtN.y - curN.y;
+        if (Math.hypot(dx, dy) > 0.05) {
+          return (Math.atan2(dx, -dy) * 180) / Math.PI;
+        }
+      }
+    }
+    return 0;
+  }, [headingDeg, activeRadarNodeId, routePath, nodeMap]);
 
   return (
     <div
@@ -410,21 +508,64 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
             transformOrigin: 'center center',
           }}
         >
+          <defs>
+            {/* Google-Maps-Style Facing View Cone Gradient */}
+            <radialGradient id="viewConeGrad" cx="50%" cy="100%" r="100%">
+              <stop offset="0%" stopColor="#0ea5e9" stopOpacity="0.45" />
+              <stop offset="65%" stopColor="#38bdf8" stopOpacity="0.16" />
+              <stop offset="100%" stopColor="#38bdf8" stopOpacity="0" />
+            </radialGradient>
+            {/* Admin Studio Coverage Heatmap Radial Glows */}
+            <radialGradient id="covGoodGrad" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#10b981" stopOpacity="0.34" />
+              <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="covLowGrad" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.34" />
+              <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="covNoneGrad" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#f43f5e" stopOpacity="0.34" />
+              <stop offset="100%" stopColor="#f43f5e" stopOpacity="0" />
+            </radialGradient>
+          </defs>
+
           {/* Building Footprints + Optional Uploaded Floorplan Blueprint Image */}
           {floorBuildings.map((b) => {
             const fl = b.floors.find((f) => f.level === selectedLevel);
             return (
               <g key={b.id}>
+                {/* Subtle Architectural Floorplate Drop-Shadow */}
+                <rect
+                  x={b.x + unit * 0.45}
+                  y={b.y + unit * 0.55}
+                  width={b.w}
+                  height={b.d}
+                  rx={unit * 1.35}
+                  fill={dark ? '#020617' : '#cbd5e1'}
+                  opacity={dark ? 0.55 : 0.4}
+                />
                 <rect
                   x={b.x}
                   y={b.y}
                   width={b.w}
                   height={b.d}
-                  rx={unit * 1.2}
-                  fill={dark ? '#111c38' : '#ffffff'}
+                  rx={unit * 1.25}
+                  fill={dark ? '#0f172a' : '#ffffff'}
                   stroke={dark ? '#38bdf8' : '#94a3b8'}
-                  strokeOpacity={dark ? 0.45 : 0.65}
-                  strokeWidth={unit * 0.35}
+                  strokeOpacity={dark ? 0.48 : 0.72}
+                  strokeWidth={unit * 0.4}
+                />
+                {/* Inner Architectural Wall Frame */}
+                <rect
+                  x={b.x + unit * 0.6}
+                  y={b.y + unit * 0.6}
+                  width={Math.max(0, b.w - unit * 1.2)}
+                  height={Math.max(0, b.d - unit * 1.2)}
+                  rx={unit * 0.9}
+                  fill="none"
+                  stroke={dark ? '#1e293b' : '#e2e8f0'}
+                  strokeWidth={unit * 0.18}
                 />
                 {fl?.blueprint_url && (
                   <image
@@ -438,17 +579,118 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
                   />
                 )}
                 <text
-                  x={b.x + unit * 1.4}
-                  y={b.y + unit * 2.5}
+                  x={b.x + unit * 1.5}
+                  y={b.y + unit * 2.6}
                   fill={dark ? '#93c5fd' : '#475569'}
-                  fontSize={unit * 1.8}
-                  fontWeight={700}
+                  fontSize={unit * 1.75}
+                  fontWeight={800}
                 >
                   {b.name} {fl ? `· ${fl.name}` : ''}
                 </text>
               </g>
             );
           })}
+
+          {/* Architectural Wide Hallway Corridor Strips (Background Layer) */}
+          {floorEdges.map((e) => {
+            if (e.closed) return null;
+            const sRaw = nodeMap.get(e.source);
+            const tRaw = nodeMap.get(e.target);
+            if (!sRaw || !tRaw) return null;
+            const sx = draggingNode && draggingNode.node.id === sRaw.id ? draggingNode.x : sRaw.x;
+            const sy = draggingNode && draggingNode.node.id === sRaw.id ? draggingNode.y : sRaw.y;
+            const tx = draggingNode && draggingNode.node.id === tRaw.id ? draggingNode.x : tRaw.x;
+            const ty = draggingNode && draggingNode.node.id === tRaw.id ? draggingNode.y : tRaw.y;
+            return (
+              <line
+                key={`cor-${e.id}`}
+                x1={sx}
+                y1={sy}
+                x2={tx}
+                y2={ty}
+                stroke={dark ? '#1e293b' : '#f1f5f9'}
+                strokeWidth={unit * 2.9}
+                strokeLinecap="round"
+                pointerEvents="none"
+              />
+            );
+          })}
+
+          {/* Color-Coded Architectural Room Zone Blocks & Walls */}
+          {floorNodes.map((n) => {
+            if (!n.is_place) return null;
+            const drawX = draggingNode && draggingNode.node.id === n.id ? draggingNode.x : n.x;
+            const drawY = draggingNode && draggingNode.node.id === n.id ? draggingNode.y : n.y;
+            const zone = getRoomZoneTheme(n, dark);
+            const kLow = n.kind.toLowerCase();
+            const isLarge =
+              kLow.includes('lobby') ||
+              kLow.includes('entrance') ||
+              kLow.includes('ward') ||
+              kLow.includes('cafe') ||
+              kLow.includes('mess');
+            const rw = isLarge ? unit * 6.8 : unit * 5.2;
+            const rh = isLarge ? unit * 4.6 : unit * 3.8;
+            const isHighlighted =
+              n.id === startNodeId ||
+              n.id === endNodeId ||
+              n.id === selectedNodeId ||
+              routeNodeSet.has(n.id);
+
+            return (
+              <g
+                key={`zone-${n.id}`}
+                transform={`translate(${drawX}, ${drawY})`}
+                pointerEvents="none"
+              >
+                <rect
+                  x={-rw / 2}
+                  y={-rh / 2}
+                  width={rw}
+                  height={rh}
+                  rx={unit * 0.72}
+                  fill={zone.fill}
+                  stroke={zone.stroke}
+                  strokeOpacity={isHighlighted ? 0.92 : 0.45}
+                  strokeWidth={isHighlighted ? unit * 0.3 : unit * 0.2}
+                />
+                {/* Top Zone Accent Bar */}
+                <rect
+                  x={-rw / 2 + unit * 0.6}
+                  y={-rh / 2}
+                  width={rw - unit * 1.2}
+                  height={unit * 0.32}
+                  rx={unit * 0.16}
+                  fill={zone.stroke}
+                  opacity={0.75}
+                />
+              </g>
+            );
+          })}
+
+          {/* Admin Coverage Heatmap Glow Overlay (Only when coverageByNode is active) */}
+          {coverageByNode &&
+            floorNodes.map((n) => {
+              const cov = coverageByNode[n.id] ?? 'none';
+              const drawX = draggingNode && draggingNode.node.id === n.id ? draggingNode.x : n.x;
+              const drawY = draggingNode && draggingNode.node.id === n.id ? draggingNode.y : n.y;
+              const gradId =
+                cov === 'good'
+                  ? 'url(#covGoodGrad)'
+                  : cov === 'low'
+                    ? 'url(#covLowGrad)'
+                    : 'url(#covNoneGrad)';
+              return (
+                <circle
+                  key={`heat-${n.id}`}
+                  cx={drawX}
+                  cy={drawY}
+                  r={unit * 4.8}
+                  fill={gradId}
+                  pointerEvents="none"
+                />
+              );
+            })}
 
           {/* Corridor & Transition Edges */}
           {floorEdges.map((e) => {
@@ -502,16 +744,16 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
                           ? '#475569'
                           : '#cbd5e1'
                   }
-                  strokeWidth={e.closed || isSelectedEdge ? unit * 0.75 : unit * 0.45}
+                  strokeWidth={e.closed || isSelectedEdge ? unit * 0.75 : unit * 0.42}
                   strokeDasharray={e.closed ? `${unit * 1.1} ${unit * 0.8}` : undefined}
                   strokeLinecap="round"
                 />
                 {e.closed && (
                   <g transform={`translate(${mx}, ${my})`}>
-                    <circle r={unit * 1.1} fill="#ef4444" />
+                    <circle r={unit * 1.15} fill="#ef4444" />
                     <text
                       textAnchor="middle"
-                      dy={unit * 0.4}
+                      dy={unit * 0.42}
                       fill="#ffffff"
                       fontSize={unit * 1.2}
                       fontWeight={800}
@@ -541,39 +783,69 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
               />
             )}
 
-          {/* Active Route Segments on This Floor */}
-          {floorRouteSegments.map((seg, idx) => (
-            <g key={idx}>
-              <line
-                x1={seg.x1}
-                y1={seg.y1}
-                x2={seg.x2}
-                y2={seg.y2}
-                stroke="#06b6d4"
-                strokeOpacity={0.28}
-                strokeWidth={unit * 1.8}
-                strokeLinecap="round"
-              />
-              <line
-                x1={seg.x1}
-                y1={seg.y1}
-                x2={seg.x2}
-                y2={seg.y2}
-                stroke="#0ea5e9"
-                strokeWidth={unit * 0.85}
-                strokeDasharray={`${unit * 1.4} ${unit * 0.9}`}
-                strokeLinecap="round"
-                className="route-dash"
-              />
-            </g>
-          ))}
+          {/* Active Route Segments + Animated Directional Flow Chevrons */}
+          {floorRouteSegments.map((seg, idx) => {
+            const dx = seg.x2 - seg.x1;
+            const dy = seg.y2 - seg.y1;
+            const len = Math.hypot(dx, dy);
+            const angDeg = (Math.atan2(dy, dx) * 180) / Math.PI;
+            const midX = (seg.x1 + seg.x2) / 2;
+            const midY = (seg.y1 + seg.y2) / 2;
+            return (
+              <g key={idx}>
+                <line
+                  x1={seg.x1}
+                  y1={seg.y1}
+                  x2={seg.x2}
+                  y2={seg.y2}
+                  stroke="#06b6d4"
+                  strokeOpacity={0.28}
+                  strokeWidth={unit * 2.1}
+                  strokeLinecap="round"
+                />
+                <line
+                  x1={seg.x1}
+                  y1={seg.y1}
+                  x2={seg.x2}
+                  y2={seg.y2}
+                  stroke="#0ea5e9"
+                  strokeWidth={unit * 0.9}
+                  strokeDasharray={`${unit * 1.5} ${unit * 0.95}`}
+                  strokeLinecap="round"
+                  className="route-dash"
+                />
+                {/* Crisp Directional Chevron Indicator at Segment Midpoint */}
+                {len > unit * 3.5 && (
+                  <g transform={`translate(${midX}, ${midY}) rotate(${angDeg})`}>
+                    <path
+                      d={`M ${-unit * 0.65} ${-unit * 0.65} L ${unit * 0.55} 0 L ${-unit * 0.65} ${unit * 0.65}`}
+                      fill="none"
+                      stroke="#ffffff"
+                      strokeWidth={unit * 0.42}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d={`M ${-unit * 0.65} ${-unit * 0.65} L ${unit * 0.55} 0 L ${-unit * 0.65} ${unit * 0.65}`}
+                      fill="none"
+                      stroke="#0284c7"
+                      strokeWidth={unit * 0.22}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </g>
+                )}
+              </g>
+            );
+          })}
 
-          {/* Floor Nodes */}
+          {/* Floor Nodes + Google-Maps Radar Pulse & Facing View Cone */}
           {floorNodes.map((n) => {
             const isStart = n.id === startNodeId;
             const isEnd = n.id === endNodeId;
             const isSelected = n.id === selectedNodeId || n.id === connectFromNodeId;
             const isWalker = n.id === walkerNodeId;
+            const isRadarAnchor = n.id === activeRadarNodeId && !coverageByNode;
             const inRoute = routeNodeSet.has(n.id);
 
             const drawX =
@@ -587,7 +859,7 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
                   key={n.id}
                   cx={drawX}
                   cy={drawY}
-                  r={unit * 0.45}
+                  r={unit * 0.42}
                   fill={dark ? '#475569' : '#94a3b8'}
                   opacity={0.55}
                 />
@@ -595,12 +867,20 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
             }
 
             const fill = fillForNode(n);
+            const zone = getRoomZoneTheme(n, dark);
             const r =
-              isStart || isEnd || isSelected
-                ? unit * 1.45
+              isStart || isEnd || isSelected || isWalker
+                ? unit * 1.48
                 : n.is_place
-                  ? unit * 1.05
+                  ? unit * 1.08
                   : unit * 0.78;
+            const showText = n.is_place || isStart || isEnd || isSelected || isEditing;
+            const labelW = Math.max(unit * 4.5, n.name.length * unit * 0.74 + unit * 1.4);
+            const pinGlyph = isEnd
+              ? '★'
+              : isStart || isWalker
+                ? '●'
+                : zone.glyph;
 
             return (
               <g
@@ -625,29 +905,77 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
                   cursor: editorMode === 'select' && onNodeDragEnd ? 'move' : 'pointer',
                 }}
               >
+                {/* Google-Maps-Style Directional Facing View Cone + Animated Radar Ripple */}
+                {isRadarAnchor && (
+                  <>
+                    <g transform={`rotate(${facingAngleDeg})`} pointerEvents="none">
+                      <path
+                        d={`M 0 0 L ${-unit * 3.1} ${-unit * 6.4} A ${unit * 7.1} ${unit * 7.1} 0 0 1 ${unit * 3.1} ${-unit * 6.4} Z`}
+                        fill="url(#viewConeGrad)"
+                      />
+                    </g>
+                    <circle
+                      r={r * 1.45}
+                      fill="#0ea5e9"
+                      className="radar-ping-svg"
+                      pointerEvents="none"
+                    />
+                  </>
+                )}
+
                 {(isStart || isEnd || isSelected || isWalker) && (
                   <circle
                     r={r * 1.85}
                     fill={isWalker ? '#22d3ee' : fill}
-                    opacity={0.25}
+                    opacity={0.22}
                   />
                 )}
                 <circle
                   r={r}
                   fill={fill}
                   stroke={dark ? '#0f172a' : '#ffffff'}
-                  strokeWidth={unit * 0.3}
+                  strokeWidth={unit * 0.34}
                 />
-                {(n.is_place || isStart || isEnd || isSelected || isEditing) && (
+                {pinGlyph && (
                   <text
-                    y={r + unit * 1.55}
                     textAnchor="middle"
-                    fill={dark ? '#e2e8f0' : '#1e293b'}
-                    fontSize={unit * 1.32}
-                    fontWeight={isStart || isEnd || isSelected ? 700 : 600}
+                    dy={unit * 0.38}
+                    fill="#ffffff"
+                    fontSize={r * 0.92}
+                    fontWeight={800}
+                    pointerEvents="none"
                   >
-                    {n.name}
+                    {pinGlyph}
                   </text>
+                )}
+                {showText && (
+                  <g transform={`translate(0, ${r + unit * 1.35})`} pointerEvents="none">
+                    <rect
+                      x={-labelW / 2}
+                      y={-unit * 1.05}
+                      width={labelW}
+                      height={unit * 1.95}
+                      rx={unit * 0.65}
+                      fill={dark ? 'rgba(15, 23, 42, 0.86)' : 'rgba(255, 255, 255, 0.92)'}
+                      stroke={
+                        isStart || isEnd || isSelected
+                          ? fill
+                          : dark
+                            ? 'rgba(148, 163, 184, 0.25)'
+                            : 'rgba(148, 163, 184, 0.35)'
+                      }
+                      strokeWidth={unit * 0.16}
+                    />
+                    <text
+                      y={unit * 0.36}
+                      textAnchor="middle"
+                      fill={dark ? '#f1f5f9' : '#0f172a'}
+                      fontSize={unit * 1.24}
+                      fontWeight={isStart || isEnd || isSelected ? 800 : 700}
+                    >
+                      {n.name}
+                    </text>
+                  </g>
                 )}
               </g>
             );

@@ -41,7 +41,7 @@ import { FloorPlan2D } from '../components/FloorPlan2D';
 import { IsometricVenueArt } from '../components/VenueCard';
 import { PhotoLocateModal, type ConfirmedSpot } from '../components/PhotoLocateModal';
 import { StatusChip, VenueTypeBadge } from '../components/StatusChip';
-import { ErrorState, Skeleton3D } from '../components/ErrorState';
+import { ErrorState, Skeleton3D, VenueHubSkeleton } from '../components/ErrorState';
 import {
   computeNearestRoute,
   getVenue,
@@ -436,14 +436,7 @@ export const VenuePage: React.FC = () => {
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6">
-        <Loader2 className="h-9 w-9 animate-spin text-indigo-600" />
-        <p className="mt-3 text-sm font-medium text-slate-600">
-          Loading venue spatial twin & directory...
-        </p>
-      </div>
-    );
+    return <VenueHubSkeleton />;
   }
 
   if (error || !venue || !graph) {
@@ -1227,6 +1220,7 @@ export const VenuePage: React.FC = () => {
                 onChangeLevel={(lvl) => setSelectedLevel(lvl)}
                 selectedNodeId={inspectedNode?.id}
                 startNodeId={visitorLoc?.nodeId}
+                headingDeg={visitorLoc?.headingDeg ?? null}
                 onSelectNode={(n) => setInspectedNode(n)}
               />
             )}

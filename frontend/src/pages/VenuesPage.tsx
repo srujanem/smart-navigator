@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { Navbar } from '../components/Navbar';
 import { VenueCard } from '../components/VenueCard';
-import { ErrorState } from '../components/ErrorState';
+import { ErrorState, VenuesGridSkeleton } from '../components/ErrorState';
 import { getVenues } from '../lib/api';
 import type { VenueSummary, VenueType } from '../lib/types';
 
@@ -201,21 +201,7 @@ export const VenuesPage: React.FC = () => {
       {/* Venue Cards Grid */}
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 sm:px-6 lg:px-8 py-10">
         {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {[0, 1, 2, 3].map((i) => (
-              <div
-                key={i}
-                className="h-96 rounded-3xl bg-white ring-1 ring-slate-200 p-4 animate-pulse flex flex-col justify-between"
-              >
-                <div className="h-52 rounded-2xl bg-slate-200" />
-                <div className="space-y-3">
-                  <div className="h-4 w-2/3 rounded bg-slate-200" />
-                  <div className="h-3 w-full rounded bg-slate-100" />
-                  <div className="h-12 w-full rounded-xl bg-slate-100" />
-                </div>
-              </div>
-            ))}
-          </div>
+          <VenuesGridSkeleton />
         ) : error ? (
           <ErrorState message={error} onRetry={() => void fetchList()} />
         ) : filtered.length === 0 ? (
