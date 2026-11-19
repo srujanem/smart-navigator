@@ -1,4 +1,4 @@
-const CACHE_NAME = 'navigator-pwa-v5';
+const CACHE_NAME = 'navigator-pwa-v6';
 const SHELL_ASSETS = ['/', '/index.html', '/manifest.json', '/favicon.svg', '/offline-bundle.json'];
 
 self.addEventListener('install', (event) => {
@@ -57,21 +57,20 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Stale-while-revalidate for JS/CSS/font bundles
+  // Network-first with cache fallback for same-origin JS/CSS/font bundles (prevents stale chunk blank screens on deploy)
   if (url.origin === self.location.origin) {
     event.respondWith(
-      caches.match(req).then((cached) => {
-        const net = fetch(req)
-          .then((res) => {
-            if (res && res.ok) {
-              const copy = res.clone();
-              caches.open(CACHE_NAME).then((c) => c.put(req, copy));
-            }
-            return res;
-          })
-          .catch(() => cached);
-        return cached || net;
-      }),
+      fetch(req)
+        .then((res) => {
+          const ct = res.headers.get('content-type') || '';
+          const isBadHtmlForAsset = url.pathname.startsWith('/assets/') && ct.includes('text/html');
+          if (res && res.ok && !isBadHtmlForAsset) {
+            const copy = res.clone();
+            caches.open(CACHE_NAME).then((c) => c.put(req, copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match(req)),
     );
   }
 });
