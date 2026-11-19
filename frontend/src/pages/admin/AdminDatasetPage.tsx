@@ -811,16 +811,75 @@ export const AdminDatasetPage: React.FC = () => {
             </div>
 
             {autoMapResult.accepted.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto thin-scrollbar pt-1">
-                {autoMapResult.accepted.map((item) => (
-                  <span
-                    key={item.id}
-                    className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-2.5 py-1 text-[11px] text-slate-200 ring-1 ring-white/15"
-                  >
-                    <strong className="text-cyan-300">{item.node_name}</strong>
-                    <span className="text-slate-400">· {item.method}</span>
-                  </span>
-                ))}
+              <div className="space-y-2 pt-1">
+                <div className="text-[11px] text-slate-300">
+                  Review full photos below — if any photo belongs to a different room, reassign it with 1 tap:
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 max-h-64 overflow-y-auto thin-scrollbar pr-1">
+                  {autoMapResult.accepted.map((item) => (
+                    <div
+                      key={item.id}
+                      className="rounded-xl bg-slate-900/95 ring-1 ring-white/15 overflow-hidden flex flex-col"
+                    >
+                      <div className="relative h-24 w-full bg-slate-950 flex items-center justify-center">
+                        <img
+                          src={mediaUrl(item.url)}
+                          alt={item.node_name}
+                          loading="lazy"
+                          className="h-full w-full object-contain"
+                        />
+                        {item.ocr_text && (
+                          <span className="absolute left-1.5 top-1.5 rounded bg-emerald-500/90 px-1.5 py-0.5 text-[9px] font-extrabold text-slate-950">
+                            OCR: {item.ocr_text}
+                          </span>
+                        )}
+                      </div>
+                      <div className="p-2 space-y-1">
+                        <select
+                          value={item.node_id}
+                          onChange={async (e) => {
+                            const nextNodeId = e.target.value;
+                            try {
+                              await updateAdminPhoto(item.id, { node_id: nextNodeId });
+                              const targetN = dataset.nodes.find((nd) => nd.node_id === nextNodeId);
+                              setAutoMapResult((prev) =>
+                                prev
+                                  ? {
+                                      ...prev,
+                                      accepted: prev.accepted.map((a) =>
+                                        a.id === item.id
+                                          ? {
+                                              ...a,
+                                              node_id: nextNodeId,
+                                              node_name: targetN?.name || a.node_name,
+                                              method: 'Pinned Manually ✓',
+                                            }
+                                          : a,
+                                      ),
+                                    }
+                                  : prev,
+                              );
+                              await refreshDatasetOnly();
+                            } catch {
+                              // Ignore
+                            }
+                          }}
+                          className="w-full rounded-lg bg-slate-800 px-1.5 py-1 text-[11px] font-bold text-cyan-200 ring-1 ring-white/15"
+                          title="Reassign photo to exact room/spot"
+                        >
+                          {dataset.nodes.map((nd) => (
+                            <option key={nd.node_id} value={nd.node_id}>
+                              {nd.name} ({formatLevel(nd.level)})
+                            </option>
+                          ))}
+                        </select>
+                        <div className="text-[10px] text-slate-400 truncate">
+                          {item.method}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -1100,6 +1159,10 @@ export const AdminDatasetPage: React.FC = () => {
                 }}
               />
 
+              <div className="rounded-xl bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-900 ring-1 ring-emerald-200">
+                📌 <strong>Direct Pin Mode:</strong> Photos uploaded here stay locked <strong>as-is</strong> on <strong>{selectedNode.name}</strong> (never auto-moved to another room).
+              </div>
+
               <div className="grid grid-cols-3 gap-2">
                 <button
                   type="button"
@@ -1224,74 +1287,102 @@ export const AdminDatasetPage: React.FC = () => {
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
                   {selectedNode.photos.map((ph) => (
                     <div
                       key={ph.id}
-                      className="group relative overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-slate-200 shadow-sm"
+                      className="group relative overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200 shadow-sm flex flex-col"
                     >
-                      <div className="relative h-32 w-full bg-slate-950">
+                      <div className="relative h-40 w-full bg-slate-950 flex items-center justify-center">
                         <img
                           src={mediaUrl(ph.thumbnail_url || ph.url)}
                           alt={selectedNode.name}
                           loading="lazy"
-                          className="h-full w-full object-cover"
+                          className="h-full w-full object-contain"
                         />
+                        {ph.ocr_text && (
+                          <span className="absolute left-2 top-2 rounded-md bg-emerald-500/95 px-2 py-0.5 text-[10px] font-extrabold text-slate-950 shadow">
+                            Plaque: {ph.ocr_text}
+                          </span>
+                        )}
                         {ph.media_type === 'video' && (
-                          <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-md bg-slate-950/85 px-2 py-0.5 text-[10px] font-bold text-cyan-300 ring-1 ring-cyan-400/40">
+                          <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md bg-slate-950/85 px-2 py-0.5 text-[10px] font-bold text-cyan-300 ring-1 ring-cyan-400/40">
                             <Film className="h-3 w-3" />
                             Video {ph.duration_s ? `${ph.duration_s}s` : ''}
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center justify-between bg-white px-2.5 py-2 text-[11px] gap-1">
-                        <div className="flex items-center gap-1 min-w-0">
-                          <span className="font-mono text-emerald-700 font-bold">
-                            Q:{Math.round(ph.quality * 100)}%
-                          </span>
-                          <select
-                            value={
-                              ph.heading_deg !== null && ph.heading_deg !== undefined
-                                ? String(Math.round(ph.heading_deg))
-                                : ''
+                      <div className="bg-white px-2.5 py-2 text-[11px] space-y-1.5">
+                        <select
+                          value={selectedNode.node_id}
+                          onChange={async (e) => {
+                            const nextNodeId = e.target.value;
+                            if (!nextNodeId || nextNodeId === selectedNode.node_id) return;
+                            try {
+                              await updateAdminPhoto(ph.id, { node_id: nextNodeId });
+                              await refreshDatasetOnly();
+                            } catch (err) {
+                              alert(err instanceof Error ? err.message : 'Could not move photo.');
                             }
-                            onChange={async (e) => {
-                              const val =
-                                e.target.value === '' ? null : Number(e.target.value);
-                              try {
-                                await updateAdminPhoto(ph.id, val);
-                                await refreshDatasetOnly();
-                              } catch {
-                                // Ignore
-                              }
-                            }}
-                            className="rounded bg-slate-100 px-1 py-0.5 text-[10px] font-semibold text-slate-700"
-                            title="Camera compass heading"
-                          >
-                            <option value="">Dir: —</option>
-                            <option value="0">0° N</option>
-                            <option value="45">45° NE</option>
-                            <option value="90">90° E</option>
-                            <option value="135">135° SE</option>
-                            <option value="180">180° S</option>
-                            <option value="225">225° SW</option>
-                            <option value="270">270° W</option>
-                            <option value="315">315° NW</option>
-                          </select>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={deletingPhotoId === ph.id}
-                          onClick={() => void handleDeletePhoto(ph.id)}
-                          className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition shrink-0"
-                          title="Delete photo"
+                          }}
+                          className="w-full rounded-lg bg-indigo-50 px-2 py-1 text-[11px] font-bold text-indigo-900 ring-1 ring-indigo-200"
+                          title="Move photo to a different room or spot"
                         >
-                          {deletingPhotoId === ph.id ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-3.5 w-3.5" />
-                          )}
-                        </button>
+                          {dataset.nodes.map((nd) => (
+                            <option key={nd.node_id} value={nd.node_id}>
+                              📌 {nd.name} ({formatLevel(nd.level)})
+                            </option>
+                          ))}
+                        </select>
+                        <div className="flex items-center justify-between gap-1">
+                          <div className="flex items-center gap-1 min-w-0">
+                            <span className="font-mono text-emerald-700 font-bold">
+                              Q:{Math.round(ph.quality * 100)}%
+                            </span>
+                            <select
+                              value={
+                                ph.heading_deg !== null && ph.heading_deg !== undefined
+                                  ? String(Math.round(ph.heading_deg))
+                                  : ''
+                              }
+                              onChange={async (e) => {
+                                const val =
+                                  e.target.value === '' ? null : Number(e.target.value);
+                                try {
+                                  await updateAdminPhoto(ph.id, { heading_deg: val });
+                                  await refreshDatasetOnly();
+                                } catch {
+                                  // Ignore
+                                }
+                              }}
+                              className="rounded bg-slate-100 px-1 py-0.5 text-[10px] font-semibold text-slate-700"
+                              title="Camera compass heading"
+                            >
+                              <option value="">Dir: —</option>
+                              <option value="0">0° N</option>
+                              <option value="45">45° NE</option>
+                              <option value="90">90° E</option>
+                              <option value="135">135° SE</option>
+                              <option value="180">180° S</option>
+                              <option value="225">225° SW</option>
+                              <option value="270">270° W</option>
+                              <option value="315">315° NW</option>
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            disabled={deletingPhotoId === ph.id}
+                            onClick={() => void handleDeletePhoto(ph.id)}
+                            className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition shrink-0"
+                            title="Delete photo"
+                          >
+                            {deletingPhotoId === ph.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}

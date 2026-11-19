@@ -188,8 +188,12 @@ export interface Step {
   node_id: string;
   name: string;
   instruction: string;
+  short_action?: string;
   icon: StepIcon;
   distance_m: number;
+  steps_count?: number;
+  passing_landmarks?: string[];
+  door_side?: 'left' | 'right' | 'ahead' | null;
   level: number;
   photo_url: string | null;
 }

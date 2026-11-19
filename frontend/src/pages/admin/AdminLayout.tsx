@@ -235,7 +235,7 @@ export const AdminLayout: React.FC = () => {
         refreshVenues,
       }}
     >
-      <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col lg:flex-row">
+      <div className="min-h-screen w-full max-w-[100vw] overflow-x-clip bg-slate-100 text-slate-900 flex flex-col lg:flex-row">
         {/* Mobile Header */}
         <div className="lg:hidden flex items-center justify-between bg-[#070B18] px-4 py-3 text-white border-b border-white/10">
           <Link to="/" className="flex items-center gap-2.5">

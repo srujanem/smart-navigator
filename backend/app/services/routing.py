@@ -472,6 +472,24 @@ def compute_venue_route(
     }
 
 
+def _relative_side(ax: float, ay: float, bx: float, by: float, px: float, py: float) -> Optional[str]:
+    vx, vy = bx - ax, by - ay
+    mag = math.hypot(vx, vy)
+    if mag < 1e-3:
+        return None
+    # Screen/plan coords have +y downwards; cross > 0 => right side, cross < 0 => left side
+    cross = vx * (py - ay) - vy * (px - ax)
+    if abs(cross) < 0.25 * mag:
+        return None
+    return "right" if cross > 0 else "left"
+
+
+def _dist_to_steps(dist_m: float) -> int:
+    if dist_m <= 0.2:
+        return 0
+    return max(2, int(round(dist_m / 0.72)))
+
+
 def _build_steps(
     path: List[str],
     G: nx.Graph,
@@ -482,7 +500,10 @@ def _build_steps(
 ) -> list[dict]:
     steps: list[dict] = []
     start = node_map[path[0]]
-    start_instr = f"Start at {start.name} ({buildings.get(start.building_id, '')}, Floor {start.level})."
+    b_start = buildings.get(start.building_id, "")
+    fl_start = "Ground Floor" if start.level == 0 else f"Floor {start.level}"
+    start_loc = f"{b_start}, {fl_start}" if b_start else fl_start
+    start_instr = f"Start at {start.name} ({start_loc})."
     if orientation_hint:
         start_instr = f"{start_instr} {orientation_hint}"
     steps.append({
@@ -490,49 +511,184 @@ def _build_steps(
         "node_id": start.id,
         "name": start.name,
         "instruction": start_instr,
+        "short_action": "Start Here",
         "icon": "start",
         "distance_m": 0.0,
+        "steps_count": 0,
+        "passing_landmarks": [],
+        "door_side": None,
         "level": start.level,
         "photo_url": node_photo.get(start.id),
     })
 
+    if len(path) < 2:
+        return steps
+
+    # Build raw atomic segments along path
+    raw_segs: list[dict] = []
     for i in range(len(path) - 1):
         curr_n = node_map[path[i]]
         next_n = node_map[path[i + 1]]
         ed = G[path[i]][path[i + 1]]
-        dist = round(float(ed["distance"]), 1)
+        dist = float(ed["distance"])
         e_obj: Edge = ed["edge"]
         is_last = i == len(path) - 2
+        is_floor_change = curr_n.level != next_n.level
+        is_outdoor = curr_n.building_id != next_n.building_id or e_obj.kind == "outdoor"
 
-        if curr_n.level != next_n.level:
+        if is_floor_change:
             if e_obj.kind == "lift":
-                icon = "lift"
-                instr = f"Take elevator to Floor {next_n.level} ({next_n.name})."
+                icon, phrase = "lift", "Take elevator"
             else:
                 icon = "up" if next_n.level > curr_n.level else "down"
-                direction_word = "up" if next_n.level > curr_n.level else "down"
-                instr = f"Take stairs {direction_word} to Floor {next_n.level} ({next_n.name})."
-        elif curr_n.building_id != next_n.building_id or e_obj.kind == "outdoor":
+                phrase = f"Take stairs {'up' if next_n.level > curr_n.level else 'down'}"
+        elif is_outdoor:
+            icon, phrase = "straight", "Walk via walkway"
+        elif i >= 1:
+            icon, phrase = _turn_icon(node_map[path[i - 1]], curr_n, next_n)
+        else:
+            icon, phrase = "straight", "Walk straight"
+
+        raw_segs.append({
+            "from_n": curr_n,
+            "to_n": next_n,
+            "dist": dist,
+            "edge": e_obj,
+            "icon": icon,
+            "phrase": phrase,
+            "is_last": is_last,
+            "is_floor_change": is_floor_change,
+            "is_outdoor": is_outdoor,
+            "via_ids": [curr_n.id, next_n.id],
+        })
+
+    # Merge consecutive straight corridor hops on the same floor/building so users never see
+    # repetitive "towards Wing A Corridor" steps back-to-back.
+    merged: list[dict] = []
+    corridor_kinds = {"corridor", "junction", "lobby", "hallway", "passage"}
+    for seg in raw_segs:
+        if merged:
+            prev = merged[-1]
+            prev_to_kind = (prev["to_n"].kind or "").lower()
+            can_merge = (
+                not prev["is_floor_change"]
+                and not prev["is_outdoor"]
+                and not prev["is_last"]
+                and not seg["is_floor_change"]
+                and not seg["is_outdoor"]
+                and prev_to_kind in corridor_kinds
+                and seg["icon"] == "straight"
+                and prev["to_n"].level == seg["to_n"].level
+                and prev["to_n"].building_id == seg["to_n"].building_id
+            )
+            if can_merge:
+                prev["to_n"] = seg["to_n"]
+                prev["dist"] += seg["dist"]
+                prev["is_last"] = seg["is_last"]
+                prev["via_ids"].append(seg["to_n"].id)
+                continue
+        merged.append(seg)
+
+    path_endpoints = {path[0], path[-1]}
+
+    for idx_m, seg in enumerate(merged, start=1):
+        from_n: Node = seg["from_n"]
+        next_n: Node = seg["to_n"]
+        dist = round(float(seg["dist"]), 1)
+        walk_steps = _dist_to_steps(dist)
+        e_obj: Edge = seg["edge"]
+        icon = seg["icon"]
+        door_side: Optional[str] = None
+
+        # Collect nearby recognizable places passed along intermediate corridor nodes
+        passing: list[str] = []
+        seen_pass: set[str] = set()
+        for vid in seg["via_ids"]:
+            if vid not in G:
+                continue
+            for nb_id in G.neighbors(vid):
+                if nb_id in path_endpoints or nb_id == next_n.id or nb_id in seen_pass:
+                    continue
+                nb_node = node_map.get(nb_id)
+                if not nb_node or not nb_node.is_place or nb_node.level != next_n.level:
+                    continue
+                if (nb_node.kind or "").lower() in corridor_kinds:
+                    continue
+                side = _relative_side(from_n.x, from_n.y, next_n.x, next_n.y, nb_node.x, nb_node.y)
+                label = f"{nb_node.name} ({side})" if side else nb_node.name
+                passing.append(label)
+                seen_pass.add(nb_id)
+                if len(passing) >= 3:
+                    break
+            if len(passing) >= 3:
+                break
+
+        pass_clause = ""
+        if passing:
+            shown_names = [p.split(" (")[0] for p in passing[:2]]
+            pass_clause = f", passing {' & '.join(shown_names)}"
+
+        fl_next = "Ground Floor" if next_n.level == 0 else f"Floor {next_n.level}"
+        dist_human = f"{int(round(dist))} m (~{walk_steps} steps)" if dist >= 1.0 else "a few steps"
+
+        if seg["is_floor_change"]:
+            if e_obj.kind == "lift":
+                icon = "lift"
+                short_action = f"Take Lift → {fl_next}"
+                instr = f"Take the elevator to {fl_next} ({next_n.name})."
+            else:
+                direction_word = "up" if next_n.level > from_n.level else "down"
+                icon = direction_word
+                short_action = f"Stairs {direction_word.title()} → {fl_next}"
+                instr = f"Take the stairs {direction_word} to {fl_next} ({next_n.name})."
+        elif seg["is_outdoor"]:
             icon = "straight"
-            instr = f"Walk {dist}m via covered walkway into {buildings.get(next_n.building_id, next_n.name)} ({next_n.name})."
-        elif is_last:
-            if i >= 1:
-                turn_ic, turn_phrase = _turn_icon(node_map[path[i - 1]], curr_n, next_n)
-                icon = "arrive" if turn_ic == "straight" else turn_ic
-                instr = f"{turn_phrase} {dist}m to arrive at {next_n.name} (Destination)."
+            short_action = "Walk Ahead"
+            b_name = buildings.get(next_n.building_id, next_n.name)
+            instr = f"Walk {dist_human} via the connecting walkway into {b_name} ({next_n.name})."
+        elif seg["is_last"]:
+            if icon == "left":
+                door_side = "left"
+                short_action = f"Turn Left → {next_n.name}"
+                instr = f"Turn left and walk {dist_human} — {next_n.name} is on your left."
+            elif icon == "right":
+                door_side = "right"
+                short_action = f"Turn Right → {next_n.name}"
+                instr = f"Turn right and walk {dist_human} — {next_n.name} is on your right."
             else:
                 icon = "arrive"
-                instr = f"Walk {dist}m straight to arrive at {next_n.name} (Destination)."
+                door_side = "ahead"
+                short_action = f"Arrive at {next_n.name}"
+                instr = f"Walk straight {dist_human}{pass_clause} to arrive at {next_n.name}."
         else:
-            if i >= 1:
-                icon, phrase = _turn_icon(node_map[path[i - 1]], curr_n, next_n)
-                instr = f"{phrase} and walk {dist}m towards {next_n.name}."
+            is_cor = (next_n.kind or "").lower() in corridor_kinds
+            if icon == "left":
+                short_action = "Turn Left"
+                if is_cor:
+                    instr = f"Turn left and walk {dist_human} down {next_n.name}{pass_clause}."
+                else:
+                    instr = f"Turn left and walk {dist_human} towards {next_n.name}{pass_clause}."
+            elif icon == "right":
+                short_action = "Turn Right"
+                if is_cor:
+                    instr = f"Turn right and walk {dist_human} down {next_n.name}{pass_clause}."
+                else:
+                    instr = f"Turn right and walk {dist_human} towards {next_n.name}{pass_clause}."
             else:
                 icon = "straight"
-                instr = f"Go straight {dist}m towards {next_n.name}."
+                short_action = "Walk Straight"
+                if is_cor:
+                    instr = f"Walk straight {dist_human} along {next_n.name}{pass_clause}."
+                else:
+                    instr = f"Walk straight {dist_human} towards {next_n.name}{pass_clause}."
 
-        # Find photo for node, or fall back to neighboring place photo if node is an un-photographed corridor junction
+        # Pick best real landmark photo along this merged segment (prefer destination/end node photo)
         step_photo = node_photo.get(next_n.id)
+        if not step_photo:
+            for vid in reversed(seg["via_ids"]):
+                if vid in node_photo:
+                    step_photo = node_photo[vid]
+                    break
         if not step_photo and next_n.id in G:
             for nb in G.neighbors(next_n.id):
                 if nb in node_photo:
@@ -540,12 +696,16 @@ def _build_steps(
                     break
 
         steps.append({
-            "index": i + 1,
+            "index": idx_m,
             "node_id": next_n.id,
             "name": next_n.name,
             "instruction": instr,
+            "short_action": short_action,
             "icon": icon,
             "distance_m": dist,
+            "steps_count": walk_steps,
+            "passing_landmarks": passing,
+            "door_side": door_side,
             "level": next_n.level,
             "photo_url": step_photo,
         })

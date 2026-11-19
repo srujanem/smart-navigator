@@ -1323,6 +1323,7 @@ async def admin_upload_photos(
     slug: str,
     node_id: str = Form(...),
     heading_deg: Optional[float] = Form(default=None),
+    exact_node: bool = Form(default=True),
     files: List[UploadFile] = File(...),
     user: User = Depends(require_admin),
     session: Session = Depends(get_session),
@@ -1541,7 +1542,8 @@ async def admin_upload_photos(
                 continue
 
             target_photo_node = node
-            if node.kind in ("entrance", "lobby", "corridor") and ocr_toks:
+            # Only auto-redirect across rooms when exact_node=False (bulk discovery mode)
+            if not exact_node and node.kind in ("entrance", "lobby", "corridor") and ocr_toks:
                 all_v_nodes = list(session.exec(select(Node).where(Node.venue_id == v.id)).all())
                 rm_hits = _extract_room_identifiers(ocr_toks, fname)
                 v_node_map = {n.id: n for n in all_v_nodes}
@@ -1603,6 +1605,8 @@ async def admin_upload_photos(
 
 class UpdatePhotoPayload(BaseModel):
     heading_deg: Optional[float] = None
+    node_id: Optional[str] = None
+    ocr_text: Optional[str] = None
 
 
 @router.patch("/admin/photos/{photo_id}")
@@ -1619,10 +1623,31 @@ def admin_update_photo(
     if v:
         assert_venue_write_access(user, v)
 
-    p.heading_deg = (float(payload.heading_deg) % 360.0) if payload.heading_deg is not None else None
+    fields = payload.model_fields_set
+    if "heading_deg" in fields:
+        p.heading_deg = (float(payload.heading_deg) % 360.0) if payload.heading_deg is not None else None
+    if "node_id" in fields and payload.node_id:
+        dest_node = session.exec(
+            select(Node).where(Node.id == payload.node_id, Node.venue_id == p.venue_id)
+        ).first()
+        if not dest_node:
+            raise HTTPException(status_code=400, detail="Destination node not found in this venue")
+        p.node_id = dest_node.id
+        # If admin explicitly pinned this photo to a numbered room, clear conflicting old OCR
+        room_nums = re.findall(r"\b[a-zA-Z]?-?\d{2,4}\b", dest_node.name.lower())
+        if room_nums and "ocr_text" not in fields:
+            p.ocr_text = room_nums[0].upper()
+    if "ocr_text" in fields and payload.ocr_text is not None:
+        p.ocr_text = payload.ocr_text.strip()[:160]
+
     session.add(p)
     session.commit()
-    return {"ok": True, "heading_deg": p.heading_deg}
+    return {
+        "ok": True,
+        "heading_deg": p.heading_deg,
+        "node_id": p.node_id,
+        "ocr_text": p.ocr_text,
+    }
 
 
 @router.delete("/admin/photos/{photo_id}")

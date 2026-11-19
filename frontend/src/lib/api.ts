@@ -96,7 +96,7 @@ export function clearAdminSession(): void {
 
 export const API_BASE = (
   (import.meta as any).env?.VITE_API_URL ||
-  'https://scheduled-organised-resident-shade.trycloudflare.com'
+  'https://native-member-properties-senators.trycloudflare.com'
 ).replace(/\/$/, '');
 
 let apiServerDownUntil = 0;
@@ -988,6 +988,7 @@ export async function uploadAdminPhotos(
   nodeId: string,
   files: File[],
   headingDeg?: number | null,
+  exactNode = true,
 ): Promise<UploadPhotosResponse> {
   const BATCH_SIZE = 4;
   const merged: UploadPhotosResponse = { accepted: [], rejected: [] };
@@ -995,6 +996,7 @@ export async function uploadAdminPhotos(
     const rawChunk = files.slice(i, i + BATCH_SIZE);
     const fd = new FormData();
     fd.append('node_id', nodeId);
+    fd.append('exact_node', exactNode ? 'true' : 'false');
     if (headingDeg !== undefined && headingDeg !== null) {
       fd.append('heading_deg', String(headingDeg));
     }
@@ -1147,11 +1149,15 @@ export async function autoMapAdminDataset(
 
 export function updateAdminPhoto(
   photoId: string,
-  headingDeg: number | null,
-): Promise<{ ok: boolean; heading_deg: number | null }> {
-  return request<{ ok: boolean; heading_deg: number | null }>(
+  update: number | null | { heading_deg?: number | null; node_id?: string; ocr_text?: string },
+): Promise<{ ok: boolean; heading_deg: number | null; node_id?: string; ocr_text?: string }> {
+  const body =
+    typeof update === 'object' && update !== null
+      ? update
+      : { heading_deg: update };
+  return request<{ ok: boolean; heading_deg: number | null; node_id?: string; ocr_text?: string }>(
     `/api/admin/photos/${encodeURIComponent(photoId)}`,
-    { method: 'PATCH', body: JSON.stringify({ heading_deg: headingDeg }) },
+    { method: 'PATCH', body: JSON.stringify(body) },
     true,
   );
 }

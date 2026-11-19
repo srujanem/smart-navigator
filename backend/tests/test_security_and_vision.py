@@ -131,6 +131,42 @@ def test_security_backholes_closed_and_vision_filters():
             p_verified = SimpleNamespace(path="door304.webp", thumbnail_path=None, media_type="photo", ocr_text="304", source="uploader", quality=0.68)
             best = pick_best_display_photo(node_304, [p_wrong_high_q, p_conflict, p_verified])
             assert best is p_verified
+
+            # 8. Human-readable directions include short_action, steps_count, passing_landmarks, and door_side
+            r_res = client.post(
+                "/api/venues/city-care/route",
+                json={"from_node": "cc:reception", "to_node": "cc:pharmacy"},
+            )
+            assert r_res.status_code == 200
+            steps = r_res.json()["steps"]
+            assert len(steps) >= 2
+            assert all("short_action" in st and "steps_count" in st and "passing_landmarks" in st for st in steps)
+            assert any(st["steps_count"] > 0 for st in steps)
+
+            # 9. Exact-node pinning keeps uploaded photo on chosen node and PATCH supports 1-tap reassignment
+            pin_img = _jpeg_bytes((125, 130, 140), with_pattern=True)
+            up = client.post(
+                "/api/admin/venues/city-care/photos",
+                headers=admin_headers,
+                data={"node_id": "cc:reception", "exact_node": "true"},
+                files=[("files", ("pinned_door.jpg", pin_img, "image/jpeg"))],
+            )
+            assert up.status_code == 200
+            accepted = up.json()["accepted"]
+            assert len(accepted) == 1
+            pid = accepted[0]["id"]
+            try:
+                assert accepted[0]["node_id"] == "cc:reception"
+                mv = client.patch(
+                    f"/api/admin/photos/{pid}",
+                    headers=admin_headers,
+                    json={"node_id": "cc:pharmacy", "heading_deg": 90},
+                )
+                assert mv.status_code == 200
+                assert mv.json()["node_id"] == "cc:pharmacy"
+                assert mv.json()["heading_deg"] == 90
+            finally:
+                client.delete(f"/api/admin/photos/{pid}", headers=admin_headers)
     finally:
         with Session(engine) as s:
             test_u = s.exec(select(User).where(User.email == uniq_email)).first()

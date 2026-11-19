@@ -41,6 +41,7 @@ import {
   Share2,
   ShieldAlert,
   Siren,
+  SlidersHorizontal,
   Sparkles,
   Users,
   Volume2,
@@ -221,10 +222,14 @@ export const RoutePage: React.FC = () => {
   // Active alternative index (-1 = primary route)
   const [altIndex, setAltIndex] = useState<number>(-1);
   const [activeStepIdx, setActiveStepIdx] = useState<number>(0);
-  const [mobileViewMode, setMobileViewMode] = useState<'all' | 'street' | 'map' | 'steps'>('all');
+  const [mobileViewMode, setMobileViewMode] = useState<'guide' | 'map' | 'all'>('guide');
+  const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const touchStartXRef = React.useRef<number | null>(null);
 
-  // Twin & Walker State
-  const [twinMode, setTwinMode] = useState<'3d' | '2d'>('3d');
+  // Twin & Walker State (default 2D on mobile phones for instant load & clarity)
+  const [twinMode, setTwinMode] = useState<'3d' | '2d'>(() =>
+    typeof window !== 'undefined' && window.innerWidth < 768 ? '2d' : '3d',
+  );
   const [selectedLevel, setSelectedLevel] = useState<number | 'all'>('all');
   const [isPlayingWalker, setIsPlayingWalker] = useState(true);
   const [scrubProgress, setScrubProgress] = useState<number | null>(null);
@@ -237,7 +242,7 @@ export const RoutePage: React.FC = () => {
 
   // Re-check Location Modal & Lightbox
   const [recheckOpen, setRecheckOpen] = useState(false);
-  const [showStreetStage, setShowStreetStage] = useState(true);
+  const [showStreetStage, setShowStreetStage] = useState(false);
   const [lightboxZoom, setLightboxZoom] = useState<number>(1);
   const [lightboxUrl, setLightboxUrl] = useState<{
     url: string;
@@ -790,17 +795,46 @@ export const RoutePage: React.FC = () => {
 
   const activeStep = route?.steps[activeStepIdx] ?? null;
   const activeStepNode = activeStep ? nodeMap.get(activeStep.node_id) : null;
+  const totalWalkSteps = Math.max(0, Math.round(activeDistance / 0.72));
+
+  const speakSingleStep = (step: Step) => {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(localizeInstruction(step, voiceLang));
+    u.lang = voiceLang;
+    u.rate = 0.96;
+    window.speechSynthesis.speak(u);
+  };
+
+  const handleSwipeStart = (e: React.TouchEvent) => {
+    touchStartXRef.current = e.touches[0]?.clientX ?? null;
+  };
+
+  const handleSwipeEnd = (e: React.TouchEvent) => {
+    if (touchStartXRef.current === null || !route) return;
+    const endX = e.changedTouches[0]?.clientX ?? touchStartXRef.current;
+    const delta = endX - touchStartXRef.current;
+    touchStartXRef.current = null;
+    if (Math.abs(delta) < 55) return;
+    if (delta < 0 && activeStepIdx < route.steps.length - 1) {
+      const nxt = activeStepIdx + 1;
+      handleStepClick(route.steps[nxt], nxt);
+    } else if (delta > 0 && activeStepIdx > 0) {
+      const prev = activeStepIdx - 1;
+      handleStepClick(route.steps[prev], prev);
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
+    <div className="min-h-screen w-full max-w-[100vw] overflow-x-clip bg-slate-50 text-slate-900 flex flex-col">
       {/* =================================================================== */}
-      {/* STICKY ROUTE COMMAND HEADER                                         */}
+      {/* STICKY ROUTE COMMAND HEADER (Compact Mobile-First + Full Desktop)   */}
       {/* =================================================================== */}
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#070B18] text-white">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-3.5 space-y-3">
-          {/* Top Row: Back + Origin -> Destination + Re-check + Share + Voice */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3 min-w-0">
+      <header className="sticky top-0 z-40 w-full border-b border-white/10 bg-[#070B18] text-white">
+        <div className="mx-auto max-w-7xl px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3 space-y-2.5">
+          {/* Top Row: Back + Origin -> Destination + Compact Mobile Quick Buttons */}
+          <div className="flex items-center justify-between gap-2 min-w-0">
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
               <Link
                 to={`/v/${slug}`}
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.08] text-slate-200 ring-1 ring-white/10 hover:bg-white/15 transition"
@@ -809,52 +843,84 @@ export const RoutePage: React.FC = () => {
                 <ArrowLeft className="h-4 w-4" />
               </Link>
 
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-1.5 text-sm sm:text-base font-display font-extrabold">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1 text-xs sm:text-base font-display font-extrabold min-w-0">
                   {isEmergency && (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-rose-600 px-2 py-0.5 text-[11px] uppercase tracking-wider text-white">
-                      <Siren className="h-3 w-3" /> Emergency
+                    <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-rose-600 px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-white">
+                      <Siren className="h-3 w-3" /> SOS
                     </span>
                   )}
-                  {route?.stops && route.stops.length > 2 && (
-                    <span className="inline-flex items-center gap-1 rounded-md bg-indigo-500/30 px-2 py-0.5 text-[11px] text-indigo-200 ring-1 ring-indigo-400/40">
-                      {route.stops.length}-Stop Trip
-                    </span>
-                  )}
-                  <span className="text-cyan-300 truncate max-w-[160px] sm:max-w-[220px]">
-                    {originNode?.name || 'Select Start'}
+                  <span className="text-cyan-300 truncate">
+                    {originNode?.name || 'Start'}
                   </span>
-                  <ArrowRight className="h-4 w-4 text-slate-400 shrink-0" />
-                  <span className="text-white truncate max-w-[160px] sm:max-w-[240px]">
-                    {destNode?.name || 'Select Destination'}
+                  <ArrowRight className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                  <span className="text-white truncate">
+                    {destNode?.name || 'Destination'}
                   </span>
                 </div>
 
                 {route && (
-                  <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-300">
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] sm:text-xs text-slate-300">
                     <span className="font-bold text-emerald-300">
                       {formatEta(activeEta)}
                     </span>
                     <span>·</span>
                     <span>{Math.round(activeDistance)} m</span>
-                    <span>·</span>
-                    <span>
-                      Floors:{' '}
-                      {route.levels.map((l) => formatLevel(l)).join(' → ')}
+                    {totalWalkSteps > 0 && (
+                      <>
+                        <span>·</span>
+                        <span className="text-cyan-200 font-semibold">
+                          ~{totalWalkSteps} steps
+                        </span>
+                      </>
+                    )}
+                    <span className="hidden sm:inline">·</span>
+                    <span className="hidden sm:inline">
+                      Floors: {route.levels.map((l) => formatLevel(l)).join(' → ')}
                     </span>
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Right Controls: Emergency Exit + Re-check My Location + Haptics + Share + Voice Narration */}
-            <div className="flex flex-wrap items-center gap-2">
+            {/* Mobile Quick Actions (Voice + Collapsible Tools Drawer) */}
+            <div className="flex lg:hidden items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={handlePlayNarration}
+                disabled={!route}
+                className={`inline-flex h-9 items-center gap-1 rounded-xl px-2.5 text-xs font-bold transition ${
+                  speaking
+                    ? 'bg-rose-600 text-white'
+                    : 'bg-indigo-600 text-white'
+                }`}
+                aria-label="Toggle voice narration"
+              >
+                {speaking ? <VolumeX className="h-3.5 w-3.5" /> : <Volume2 className="h-3.5 w-3.5" />}
+                <span>{speaking ? 'Stop' : 'Voice'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileToolsOpen((v) => !v)}
+                className={`inline-flex h-9 items-center gap-1 rounded-xl px-2.5 text-xs font-bold ring-1 transition ${
+                  mobileToolsOpen
+                    ? 'bg-cyan-400 text-slate-950 ring-cyan-300'
+                    : 'bg-white/10 text-slate-200 ring-white/15'
+                }`}
+                aria-label="More route tools"
+              >
+                <SlidersHorizontal className="h-3.5 w-3.5" />
+                <span>Tools</span>
+              </button>
+            </div>
+
+            {/* Desktop Controls: Emergency Exit + Re-check + Story + Help + Haptics + Share + Voice */}
+            <div className="hidden lg:flex flex-wrap items-center gap-2 shrink-0">
               {!isEmergency && (
                 <button
                   type="button"
                   onClick={() => void handleEmergencyFromHere()}
                   className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-3 py-2 text-xs font-extrabold text-white shadow-md shadow-rose-600/35 ring-1 ring-rose-400/50 hover:bg-rose-500 transition"
-                  title="Reroute immediately from your current step to the nearest emergency exit"
                 >
                   <Siren className="h-3.5 w-3.5" />
                   🚨 Emergency Exit
@@ -867,14 +933,13 @@ export const RoutePage: React.FC = () => {
                 className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-500/15 px-3 py-2 text-xs font-bold text-cyan-300 ring-1 ring-cyan-400/35 hover:bg-cyan-500/25 transition"
               >
                 <Camera className="h-3.5 w-3.5" />
-                📷 Re-check spot
+                Re-check spot
               </button>
 
               <button
                 type="button"
                 onClick={() => setStoryModeOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500/20 px-3 py-2 text-xs font-extrabold text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-500 hover:text-slate-950 transition"
-                title="Open Simple Photo Story Walking Cards"
               >
                 📱 Story Mode
               </button>
@@ -883,7 +948,6 @@ export const RoutePage: React.FC = () => {
                 type="button"
                 onClick={() => setHelpCardOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-500/20 px-3 py-2 text-xs font-bold text-indigo-200 ring-1 ring-indigo-400/35 hover:bg-indigo-500 hover:text-white transition"
-                title="Show big multilingual help card to any person nearby"
               >
                 🙋 Ask Passerby
               </button>
@@ -896,16 +960,14 @@ export const RoutePage: React.FC = () => {
                     ? 'bg-amber-500/15 text-amber-200 ring-amber-400/35 hover:bg-amber-500/25'
                     : 'bg-white/[0.06] text-slate-400 ring-white/10 hover:text-white'
                 }`}
-                title="Toggle Haptic Turn Vibrations (1 pulse=Left, 2=Right, 3=Lift/Stairs)"
               >
-                {hapticsEnabled ? '📳 Haptics On' : '📴 Haptics Off'}
+                {hapticsEnabled ? '📳 Haptics' : '📴 Haptics'}
               </button>
 
               <button
                 type="button"
                 onClick={() => void handleShareRoute(false)}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-white/[0.07] px-2.5 py-2 text-xs font-semibold text-slate-200 ring-1 ring-white/10 hover:bg-white/15 transition"
-                title="Copy shareable route link"
               >
                 {copiedRouteLink ? (
                   <>
@@ -921,12 +983,11 @@ export const RoutePage: React.FC = () => {
               <button
                 type="button"
                 onClick={() => void handleShareRoute(true)}
-                className="hidden sm:inline-flex items-center gap-1 rounded-xl bg-emerald-600/90 px-2.5 py-2 text-xs font-bold text-white hover:bg-emerald-500 transition"
+                className="inline-flex items-center gap-1 rounded-xl bg-emerald-600/90 px-2.5 py-2 text-xs font-bold text-white hover:bg-emerald-500 transition"
               >
                 WhatsApp
               </button>
 
-              {/* Multilingual Voice Guidance */}
               <div className="flex items-center rounded-xl bg-white/[0.07] p-1 ring-1 ring-white/10">
                 <Languages className="h-3.5 w-3.5 text-slate-400 ml-2 mr-1" />
                 <select
@@ -971,107 +1032,179 @@ export const RoutePage: React.FC = () => {
             </div>
           </div>
 
-          {hapticsEnabled && hapticPulseLabel && (
-            <div className="flex items-center justify-between gap-2 rounded-xl bg-amber-500/10 px-3 py-1.5 text-[11px] font-semibold text-amber-200 ring-1 ring-amber-400/25">
-              <span>{hapticPulseLabel}</span>
-              <span className="text-[10px] text-amber-300/80 hidden sm:inline">
-                Eyes-Free Tactile Guidance · 1 Pulse=Left · 2=Right · 3=Lift/Stairs
-              </span>
+          {/* Collapsible Mobile Tools & Accessibility Drawer (hidden on desktop, expands cleanly on tap) */}
+          <div className={`${mobileToolsOpen ? 'block' : 'hidden'} lg:block space-y-2.5 pt-2 border-t border-white/10`}>
+            {/* Mobile-only Quick Utility Grid */}
+            <div className="grid grid-cols-2 gap-1.5 lg:hidden">
+              {!isEmergency && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileToolsOpen(false);
+                    void handleEmergencyFromHere();
+                  }}
+                  className="flex items-center justify-center gap-1.5 rounded-xl bg-rose-600 px-2.5 py-2 text-xs font-extrabold text-white"
+                >
+                  <Siren className="h-3.5 w-3.5" />
+                  Emergency Exit
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileToolsOpen(false);
+                  setRecheckOpen(true);
+                }}
+                className="flex items-center justify-center gap-1.5 rounded-xl bg-cyan-500/20 px-2.5 py-2 text-xs font-bold text-cyan-200 ring-1 ring-cyan-400/35"
+              >
+                <Camera className="h-3.5 w-3.5" />
+                Re-check Spot
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileToolsOpen(false);
+                  setHelpCardOpen(true);
+                }}
+                className="flex items-center justify-center gap-1.5 rounded-xl bg-indigo-500/20 px-2.5 py-2 text-xs font-bold text-indigo-200 ring-1 ring-indigo-400/35"
+              >
+                🙋 Ask Passerby
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleShareRoute(true)}
+                className="flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600/90 px-2.5 py-2 text-xs font-bold text-white"
+              >
+                <Share2 className="h-3.5 w-3.5" />
+                WhatsApp Share
+              </button>
+              <button
+                type="button"
+                onClick={() => setHapticsEnabled((v) => !v)}
+                className={`flex items-center justify-center gap-1 rounded-xl px-2.5 py-2 text-xs font-bold ring-1 ${
+                  hapticsEnabled
+                    ? 'bg-amber-500/20 text-amber-200 ring-amber-400/35'
+                    : 'bg-white/10 text-slate-300 ring-white/15'
+                }`}
+              >
+                {hapticsEnabled ? '📳 Haptics ON' : '📴 Haptics OFF'}
+              </button>
+              <div className="flex items-center rounded-xl bg-white/10 px-2 py-1 ring-1 ring-white/15">
+                <Languages className="h-3.5 w-3.5 text-cyan-300 mr-1.5 shrink-0" />
+                <select
+                  value={voiceLang}
+                  onChange={(e) => setVoiceLang(e.target.value as VoiceLang)}
+                  className="w-full bg-transparent text-xs font-bold text-white focus:outline-none"
+                  aria-label="Voice language"
+                >
+                  {VOICE_LANGUAGES.map((vl) => (
+                    <option key={vl.code} value={vl.code} className="text-slate-900">
+                      {vl.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-          )}
 
-          {/* Second Row: 3 Mobility Profiles + Avoid Crowds Toggle + Alternative Pills */}
-          <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-white/10">
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar w-full sm:w-auto py-0.5">
-              {/* Profile Switcher */}
-              <div className="flex shrink-0 items-center gap-1 rounded-xl bg-white/[0.06] p-1 ring-1 ring-white/10">
+            {hapticsEnabled && hapticPulseLabel && (
+              <div className="hidden lg:flex items-center justify-between gap-2 rounded-xl bg-amber-500/10 px-3 py-1.5 text-[11px] font-semibold text-amber-200 ring-1 ring-amber-400/25">
+                <span>{hapticPulseLabel}</span>
+                <span className="text-[10px] text-amber-300/80">
+                  Eyes-Free Tactile Guidance · 1 Pulse=Left · 2=Right · 3=Lift/Stairs
+                </span>
+              </div>
+            )}
+
+            {/* Mobility Profiles + Avoid Crowds + Alternative Pills */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar max-w-full py-0.5">
+                <div className="flex shrink-0 items-center gap-1 rounded-xl bg-white/[0.06] p-1 ring-1 ring-white/10">
+                  <button
+                    type="button"
+                    onClick={() => updateRouteParams(effectiveFromId, effectiveToId, 'walk')}
+                    className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold whitespace-nowrap transition ${
+                      profileParam === 'walk'
+                        ? 'bg-white text-slate-950 shadow-sm'
+                        : 'text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <Footprints className="h-3.5 w-3.5 text-cyan-500" />
+                    Walk
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateRouteParams(effectiveFromId, effectiveToId, 'wheelchair')}
+                    className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold whitespace-nowrap transition ${
+                      profileParam === 'wheelchair'
+                        ? 'bg-emerald-500 text-slate-950 shadow-sm'
+                        : 'text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <Accessibility className="h-3.5 w-3.5" />
+                    Wheelchair
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => updateRouteParams(effectiveFromId, effectiveToId, 'stretcher')}
+                    className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold whitespace-nowrap transition ${
+                      profileParam === 'stretcher'
+                        ? 'bg-amber-400 text-slate-950 shadow-sm'
+                        : 'text-slate-300 hover:text-white'
+                    }`}
+                  >
+                    <Bed className="h-3.5 w-3.5" />
+                    Stretcher
+                  </button>
+                </div>
+
                 <button
                   type="button"
-                  onClick={() => updateRouteParams(effectiveFromId, effectiveToId, 'walk')}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold whitespace-nowrap transition ${
-                    profileParam === 'walk'
-                      ? 'bg-white text-slate-950 shadow-sm'
-                      : 'text-slate-300 hover:text-white'
+                  onClick={() =>
+                    updateRouteParams(effectiveFromId, effectiveToId, profileParam, {
+                      avoidCrowds: !avoidCrowdsParam,
+                    })
+                  }
+                  className={`inline-flex shrink-0 items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-bold ring-1 whitespace-nowrap transition ${
+                    avoidCrowdsParam
+                      ? 'bg-violet-500/25 text-violet-200 ring-violet-400/50'
+                      : 'bg-white/[0.05] text-slate-300 ring-white/10 hover:text-white'
                   }`}
                 >
-                  <Footprints className="h-3.5 w-3.5 text-cyan-500" />
-                  Walking
-                </button>
-                <button
-                  type="button"
-                  onClick={() => updateRouteParams(effectiveFromId, effectiveToId, 'wheelchair')}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold whitespace-nowrap transition ${
-                    profileParam === 'wheelchair'
-                      ? 'bg-emerald-500 text-slate-950 shadow-sm'
-                      : 'text-slate-300 hover:text-white'
-                  }`}
-                >
-                  <Accessibility className="h-3.5 w-3.5" />
-                  Wheelchair (Lift)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => updateRouteParams(effectiveFromId, effectiveToId, 'stretcher')}
-                  className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-bold whitespace-nowrap transition ${
-                    profileParam === 'stretcher'
-                      ? 'bg-amber-400 text-slate-950 shadow-sm'
-                      : 'text-slate-300 hover:text-white'
-                  }`}
-                >
-                  <Bed className="h-3.5 w-3.5" />
-                  Stretcher-Wide
+                  <Users className="h-3.5 w-3.5 text-violet-400" />
+                  {avoidCrowdsParam ? 'Quiet ✓' : 'Avoid Crowds'}
                 </button>
               </div>
 
-              {/* Avoid Crowded Corridors Toggle */}
-              <button
-                type="button"
-                onClick={() =>
-                  updateRouteParams(effectiveFromId, effectiveToId, profileParam, {
-                    avoidCrowds: !avoidCrowdsParam,
-                  })
-                }
-                className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold ring-1 whitespace-nowrap transition ${
-                  avoidCrowdsParam
-                    ? 'bg-violet-500/25 text-violet-200 ring-violet-400/50'
-                    : 'bg-white/[0.05] text-slate-300 ring-white/10 hover:text-white'
-                }`}
-              >
-                <Users className="h-3.5 w-3.5 text-violet-400" />
-                {avoidCrowdsParam ? 'Avoiding Crowds ✓' : 'Avoid Crowds'}
-              </button>
-            </div>
-
-            {/* Alternative Routes Pills */}
-            {route && route.alternatives.length > 0 && (
-              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-                <button
-                  type="button"
-                  onClick={() => setAltIndex(-1)}
-                  className={`whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
-                    altIndex === -1
-                      ? 'bg-cyan-500/25 text-cyan-200 ring-1 ring-cyan-400/50'
-                      : 'bg-white/[0.05] text-slate-400 hover:text-white'
-                  }`}
-                >
-                  Fastest ({Math.round(route.distance_m)}m · {formatEta(route.eta_s)})
-                </button>
-                {route.alternatives.map((alt, i) => (
+              {route && route.alternatives.length > 0 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar max-w-full">
                   <button
-                    key={i}
                     type="button"
-                    onClick={() => setAltIndex(i)}
+                    onClick={() => setAltIndex(-1)}
                     className={`whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
-                      altIndex === i
+                      altIndex === -1
                         ? 'bg-cyan-500/25 text-cyan-200 ring-1 ring-cyan-400/50'
                         : 'bg-white/[0.05] text-slate-400 hover:text-white'
                     }`}
                   >
-                    {alt.label} ({Math.round(alt.distance_m)}m · {formatEta(alt.eta_s)})
+                    Fastest ({Math.round(route.distance_m)}m · {formatEta(route.eta_s)})
                   </button>
-                ))}
-              </div>
-            )}
+                  {route.alternatives.map((alt, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => setAltIndex(i)}
+                      className={`whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                        altIndex === i
+                          ? 'bg-cyan-500/25 text-cyan-200 ring-1 ring-cyan-400/50'
+                          : 'bg-white/[0.05] text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {alt.label} ({Math.round(alt.distance_m)}m · {formatEta(alt.eta_s)})
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </header>
@@ -1137,9 +1270,13 @@ export const RoutePage: React.FC = () => {
           </div>
         )}
 
-        {/* MULTI-STOP VISIT CHECKLIST BAR */}
+        {/* MULTI-STOP VISIT CHECKLIST BAR (Hidden on mobile until multi-stop or Tools opened) */}
         {route && (
-          <div className="rounded-2xl bg-white p-3.5 ring-1 ring-slate-200/80 shadow-soft flex flex-wrap items-center justify-between gap-2.5">
+          <div
+            className={`${
+              multiStops.length > 2 || mobileToolsOpen ? 'flex' : 'hidden lg:flex'
+            } rounded-2xl bg-white p-3.5 ring-1 ring-slate-200/80 shadow-soft flex-wrap items-center justify-between gap-2.5`}
+          >
             <div className="flex flex-wrap items-center gap-1.5 text-xs">
               <span className="inline-flex items-center gap-1 font-extrabold text-slate-800 mr-1">
                 <ListChecks className="h-4 w-4 text-indigo-600" />
@@ -1260,7 +1397,7 @@ export const RoutePage: React.FC = () => {
       {/* =================================================================== */}
       {/* SPLIT NAVIGATION WORKSPACE: STEPS LIST + 3D/2D INTERACTIVE TWIN     */}
       {/* =================================================================== */}
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 sm:px-6 lg:px-8 py-4 pb-36 sm:pb-8">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-3 sm:px-6 lg:px-8 py-3 sm:py-4 pb-32 lg:pb-8 min-w-0">
         {loadingRoute ? (
           <div className="card p-12 text-center">
             <Loader2 className="h-8 w-8 animate-spin text-indigo-600 mx-auto" />
@@ -1295,32 +1432,18 @@ export const RoutePage: React.FC = () => {
           </div>
         ) : route ? (
           <div>
-            {/* Mobile View Switcher Tabs (Only on small screens) */}
-            <div className="lg:hidden flex items-center justify-between rounded-2xl bg-white p-1 ring-1 ring-slate-200/90 shadow-soft mb-3">
+            {/* Mobile-First 3-Tab Native Navigation Switcher */}
+            <div className="lg:hidden grid grid-cols-3 gap-1 rounded-2xl bg-white p-1 ring-1 ring-slate-200/90 shadow-soft mb-3">
               <button
                 type="button"
-                onClick={() => setMobileViewMode('all')}
-                className={`flex-1 py-2 text-xs font-bold rounded-xl transition ${
-                  mobileViewMode === 'all'
+                onClick={() => setMobileViewMode('guide')}
+                className={`py-2.5 text-xs font-extrabold rounded-xl transition ${
+                  mobileViewMode === 'guide'
                     ? 'bg-slate-900 text-white shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                Overview
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileViewMode('street');
-                  setShowStreetStage(true);
-                }}
-                className={`flex-1 py-2 text-xs font-bold rounded-xl transition ${
-                  mobileViewMode === 'street'
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                📷 Street View
+                🧭 Easy Guide
               </button>
               <button
                 type="button"
@@ -1328,7 +1451,7 @@ export const RoutePage: React.FC = () => {
                   setMobileViewMode('map');
                   setShowStreetStage(false);
                 }}
-                className={`flex-1 py-2 text-xs font-bold rounded-xl transition ${
+                className={`py-2.5 text-xs font-extrabold rounded-xl transition ${
                   mobileViewMode === 'map'
                     ? 'bg-slate-900 text-white shadow-sm'
                     : 'text-slate-600 hover:text-slate-900'
@@ -1338,22 +1461,137 @@ export const RoutePage: React.FC = () => {
               </button>
               <button
                 type="button"
-                onClick={() => setMobileViewMode('steps')}
-                className={`flex-1 py-2 text-xs font-bold rounded-xl transition ${
-                  mobileViewMode === 'steps'
-                    ? 'bg-slate-900 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
+                onClick={() => setStoryModeOpen(true)}
+                className="py-2.5 text-xs font-extrabold rounded-xl text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 hover:bg-emerald-100 transition"
               >
-                📋 Steps
+                📱 Photo Story
               </button>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-              {/* RIGHT ON DESKTOP / TOP ON MOBILE: HERO 3D/2D TWIN & STREET-VIEW WORKSPACE */}
+            {/* MOBILE-FIRST ACTIVE STEP HERO GUIDANCE CARD (Big Direction + Un-Cropped Landmark Photo + Swipe) */}
+            {activeStep && mobileViewMode === 'guide' && (
               <div
-                className={`lg:col-span-7 lg:order-2 lg:sticky lg:top-24 space-y-3 ${
-                  mobileViewMode === 'steps' ? 'hidden lg:block' : ''
+                onTouchStart={handleSwipeStart}
+                onTouchEnd={handleSwipeEnd}
+                className="lg:hidden mb-3 overflow-hidden rounded-3xl bg-gradient-to-br from-[#0A1128] via-slate-900 to-indigo-950 text-white ring-1 ring-cyan-400/35 shadow-xl"
+              >
+                {/* Top Step Action Banner */}
+                <div className="p-4 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-cyan-400/20 px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wider text-cyan-300 ring-1 ring-cyan-400/40">
+                      Step {activeStepIdx + 1} of {route.steps.length} · {formatLevel(activeStep.level)}
+                    </span>
+                    {activeStep.distance_m > 0 && (
+                      <span className="rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300">
+                        {Math.round(activeStep.distance_m)} m · ~{activeStep.steps_count || Math.max(2, Math.round(activeStep.distance_m / 0.72))} steps
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl ring-2 ${
+                        activeStepIdx === route.steps.length - 1 || activeStep.icon === 'arrive'
+                          ? 'bg-emerald-500/25 ring-emerald-400 text-emerald-300'
+                          : 'bg-cyan-500/20 ring-cyan-400/70 text-cyan-200'
+                      }`}
+                    >
+                      {renderStepIcon(activeStep.icon)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] font-extrabold uppercase tracking-wider text-cyan-300">
+                        {activeStep.short_action ||
+                          (activeStep.icon === 'left'
+                            ? 'Turn Left'
+                            : activeStep.icon === 'right'
+                              ? 'Turn Right'
+                              : activeStep.icon === 'arrive'
+                                ? 'Destination Reached'
+                                : 'Walk Straight')}
+                      </div>
+                      <h2 className="mt-0.5 font-display text-base font-extrabold leading-snug text-white">
+                        {activeStep.instruction}
+                      </h2>
+                      {voiceLang !== 'en-IN' && (
+                        <p className="mt-1 text-xs font-semibold text-cyan-200 leading-snug">
+                          {localizeInstruction(activeStep, voiceLang)}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Door Side + Passing Landmarks Badges */}
+                  {(activeStep.door_side || (activeStep.passing_landmarks && activeStep.passing_landmarks.length > 0)) && (
+                    <div className="flex flex-wrap gap-1.5 pt-0.5">
+                      {activeStep.door_side && activeStep.door_side !== 'ahead' && (
+                        <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-500/20 px-2.5 py-1 text-[11px] font-extrabold text-emerald-200 ring-1 ring-emerald-400/40">
+                          🚪 Door is on your {activeStep.door_side.toUpperCase()}
+                        </span>
+                      )}
+                      {activeStep.passing_landmarks?.slice(0, 2).map((lm, i) => (
+                        <span
+                          key={i}
+                          className="inline-flex items-center gap-1 rounded-lg bg-white/10 px-2 py-1 text-[11px] font-semibold text-slate-200 ring-1 ring-white/15"
+                        >
+                          👀 Pass {lm}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Un-Cropped Landmark Photo Preview (shows full vertical phone photo as-is!) */}
+                {activeStep.photo_url && !failedPhotoUrls.has(activeStep.photo_url) && (
+                  <div
+                    onClick={() => {
+                      setLightboxZoom(1);
+                      setLightboxUrl({
+                        url: mediaUrl(activeStep.photo_url)!,
+                        caption: `${activeStep.name} (${formatLevel(activeStep.level)})`,
+                      });
+                    }}
+                    className="relative h-56 w-full bg-slate-950 border-t border-white/10 overflow-hidden cursor-pointer"
+                  >
+                    <img
+                      src={mediaUrl(activeStep.photo_url)}
+                      alt=""
+                      aria-hidden="true"
+                      className="absolute inset-0 h-full w-full object-cover blur-2xl scale-110 opacity-35"
+                    />
+                    <img
+                      src={mediaUrl(activeStep.photo_url)}
+                      alt={activeStep.name}
+                      onError={() => markPhotoFailed(activeStep.photo_url!)}
+                      className="relative z-10 h-full w-full object-contain"
+                    />
+                    <span className="absolute left-2.5 top-2.5 z-20 rounded-lg bg-slate-950/80 px-2.5 py-1 text-[10px] font-extrabold text-cyan-300 ring-1 ring-cyan-400/40 backdrop-blur-md">
+                      👀 Look for: {activeStep.name}
+                    </span>
+                    <span className="absolute right-2.5 bottom-2.5 z-20 inline-flex items-center gap-1 rounded-lg bg-slate-950/85 px-2.5 py-1 text-[10px] font-bold text-white ring-1 ring-white/20">
+                      <Maximize2 className="h-3 w-3 text-cyan-300" />
+                      Tap to Zoom
+                    </span>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-between bg-slate-950/80 px-4 py-2 text-[11px] text-slate-400 border-t border-white/10">
+                  <span>👆 Swipe left/right for steps</span>
+                  <button
+                    type="button"
+                    onClick={() => setRecheckOpen(true)}
+                    className="font-bold text-cyan-300 hover:text-cyan-200"
+                  >
+                    📷 Lost? Snap Photo
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start min-w-0">
+              {/* RIGHT ON DESKTOP / MAP TAB ON MOBILE: HERO 3D/2D TWIN & STREET-VIEW WORKSPACE */}
+              <div
+                className={`lg:col-span-7 lg:order-2 lg:sticky lg:top-24 space-y-3 min-w-0 ${
+                  mobileViewMode === 'guide' ? 'hidden lg:block' : ''
                 }`}
               >
                 {/* Unified Workspace Header Ribbon */}
@@ -1479,13 +1717,21 @@ export const RoutePage: React.FC = () => {
                             className="h-full w-full object-cover"
                           />
                         ) : activeStep?.photo_url && !failedPhotoUrls.has(activeStep.photo_url) ? (
-                          <img
-                            src={mediaUrl(activeStep.photo_url)}
-                            alt={activeStep.name}
-                            loading="lazy"
-                            onError={() => markPhotoFailed(activeStep.photo_url!)}
-                            className="h-full w-full object-cover"
-                          />
+                          <>
+                            <img
+                              src={mediaUrl(activeStep.photo_url)}
+                              alt=""
+                              aria-hidden="true"
+                              className="absolute inset-0 h-full w-full object-cover blur-2xl scale-110 opacity-40"
+                            />
+                            <img
+                              src={mediaUrl(activeStep.photo_url)}
+                              alt={activeStep.name}
+                              loading="lazy"
+                              onError={() => markPhotoFailed(activeStep.photo_url!)}
+                              className="relative z-[1] h-full w-full object-contain"
+                            />
+                          </>
                         ) : (
                           <IsometricVenueArt
                             accent={venue.accent || '#0ea5e9'}
@@ -1903,8 +2149,8 @@ export const RoutePage: React.FC = () => {
 
               {/* LEFT ON DESKTOP / BOTTOM ON MOBILE: VISUAL TURN-BY-TURN STEPS */}
               <div
-                className={`lg:col-span-5 lg:order-1 space-y-3 ${
-                  mobileViewMode === 'street' || mobileViewMode === 'map'
+                className={`lg:col-span-5 lg:order-1 space-y-3 min-w-0 ${
+                  mobileViewMode === 'map'
                     ? 'hidden lg:block'
                     : ''
                 }`}
@@ -1957,7 +2203,7 @@ export const RoutePage: React.FC = () => {
                         {pct}% · Step {activeStepIdx + 1}/{route.steps.length}
                       </span>
                     </div>
-                    <svg viewBox={`0 0 ${w} ${h}`} className="h-14 w-full overflow-visible">
+                    <svg viewBox={`0 0 ${w} ${h}`} className="h-14 w-full overflow-hidden">
                       <defs>
                         <linearGradient id="journeyProgGrad" x1="0%" y1="0%" x2="100%" y2="0%">
                           <stop offset="0%" stopColor="#06b6d4" />
@@ -2137,8 +2383,8 @@ export const RoutePage: React.FC = () => {
                               Step {idx + 1} · {formatLevel(step.level)}
                             </span>
                             {step.distance_m > 0 && (
-                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                                {Math.round(step.distance_m)} m
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700 shrink-0">
+                                {Math.round(step.distance_m)} m · ~{step.steps_count || Math.max(2, Math.round(step.distance_m / 0.72))} steps
                               </span>
                             )}
                           </div>
@@ -2150,6 +2396,23 @@ export const RoutePage: React.FC = () => {
                             <p className="mt-1 text-xs font-semibold text-indigo-700 leading-snug">
                               {localizeInstruction(step, voiceLang)}
                             </p>
+                          )}
+                          {(step.door_side || (step.passing_landmarks && step.passing_landmarks.length > 0)) && (
+                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                              {step.door_side && step.door_side !== 'ahead' && (
+                                <span className="rounded-md bg-emerald-50 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800 ring-1 ring-emerald-200">
+                                  🚪 Door on your {step.door_side}
+                                </span>
+                              )}
+                              {step.passing_landmarks?.slice(0, 2).map((lm, i) => (
+                                <span
+                                  key={i}
+                                  className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600"
+                                >
+                                  👀 Pass {lm}
+                                </span>
+                              ))}
+                            </div>
                           )}
                           <p className="mt-0.5 text-xs text-slate-500">{step.name}</p>
 
@@ -2184,7 +2447,7 @@ export const RoutePage: React.FC = () => {
                                   alt={step.name}
                                   loading="lazy"
                                   onError={() => markPhotoFailed(step.photo_url!)}
-                                  className="h-full w-full object-cover hdr-photo transition-transform duration-300 group-hover:scale-110"
+                                  className="h-full w-full object-contain bg-slate-950 hdr-photo transition-transform duration-300 group-hover:scale-105"
                                 />
                                 <span className="absolute right-1 bottom-1 rounded bg-slate-950/75 p-0.5 text-cyan-300 opacity-0 group-hover:opacity-100 transition">
                                   <ZoomIn className="h-3 w-3" />
@@ -2244,10 +2507,20 @@ export const RoutePage: React.FC = () => {
                     const prev = Math.max(0, activeStepIdx - 1);
                     handleStepClick(route.steps[prev], prev);
                   }}
-                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl bg-white/10 py-3 text-xs font-bold text-white ring-1 ring-white/15 disabled:opacity-30 active:scale-95 transition"
+                  className="flex-1 inline-flex items-center justify-center gap-1 rounded-xl bg-white/10 py-3 text-xs font-bold text-white ring-1 ring-white/15 disabled:opacity-30 active:scale-95 transition"
                 >
                   <ChevronLeft className="h-4 w-4" />
                   Prev
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => speakSingleStep(activeStep)}
+                  className="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-3.5 py-3 text-xs font-extrabold text-white active:scale-95 transition"
+                  aria-label="Speak current step"
+                  title="Speak current step"
+                >
+                  <Volume2 className="h-4 w-4" />
                 </button>
 
                 <button
@@ -2257,10 +2530,14 @@ export const RoutePage: React.FC = () => {
                     const nxt = Math.min(route.steps.length - 1, activeStepIdx + 1);
                     handleStepClick(route.steps[nxt], nxt);
                   }}
-                  className="flex-[1.6] inline-flex items-center justify-center gap-1.5 rounded-xl bg-gradient-to-r from-cyan-400 to-indigo-600 py-3 text-xs font-extrabold text-slate-950 shadow-lg shadow-cyan-500/30 active:scale-95 transition disabled:opacity-35"
+                  className="flex-[1.6] inline-flex items-center justify-center gap-1 rounded-xl bg-gradient-to-r from-cyan-400 to-emerald-400 py-3 text-xs font-extrabold text-slate-950 shadow-lg shadow-cyan-500/30 active:scale-95 transition disabled:opacity-35"
                 >
-                  <span>Next Step</span>
-                  <ChevronRight className="h-4 w-4" />
+                  <span>
+                    {activeStepIdx >= route.steps.length - 1 ? 'Arrived ✓' : 'Next Step'}
+                  </span>
+                  {activeStepIdx < route.steps.length - 1 && (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
                 </button>
               </div>
             </div>
@@ -2348,16 +2625,28 @@ export const RoutePage: React.FC = () => {
             </div>
           </div>
 
-          {/* Center Giant Photo + Big Turn Banner */}
-          <div className="mx-auto my-3 w-full max-w-lg flex-1 overflow-hidden rounded-3xl bg-slate-900 ring-1 ring-white/15 relative flex flex-col justify-between">
+          {/* Center Giant Photo + Big Turn Banner (Swipeable + Un-Cropped) */}
+          <div
+            onTouchStart={handleSwipeStart}
+            onTouchEnd={handleSwipeEnd}
+            className="mx-auto my-3 w-full max-w-lg flex-1 overflow-hidden rounded-3xl bg-slate-950 ring-1 ring-white/15 relative flex flex-col justify-between"
+          >
             <div className="absolute inset-0">
               {activeStep.photo_url && !failedPhotoUrls.has(activeStep.photo_url) ? (
-                <img
-                  src={mediaUrl(activeStep.photo_url)}
-                  alt={activeStep.name}
-                  onError={() => markPhotoFailed(activeStep.photo_url!)}
-                  className="h-full w-full object-cover"
-                />
+                <>
+                  <img
+                    src={mediaUrl(activeStep.photo_url)}
+                    alt=""
+                    aria-hidden="true"
+                    className="absolute inset-0 h-full w-full object-cover blur-2xl scale-110 opacity-40"
+                  />
+                  <img
+                    src={mediaUrl(activeStep.photo_url)}
+                    alt={activeStep.name}
+                    onError={() => markPhotoFailed(activeStep.photo_url!)}
+                    className="relative z-[1] h-full w-full object-contain"
+                  />
+                </>
               ) : (
                 <IsometricVenueArt
                   accent={venue.accent || '#0ea5e9'}
