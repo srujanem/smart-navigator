@@ -16,7 +16,6 @@ import {
   Check,
   CheckCircle2,
   Compass,
-  DoorOpen,
   Layers,
   ListChecks,
   Loader2,
@@ -119,7 +118,6 @@ export const VenuePage: React.FC = () => {
   const [copiedSpotLink, setCopiedSpotLink] = useState(false);
 
   // Nearest SOS / Facility Routing State
-  const [nearestLoadingKind, setNearestLoadingKind] = useState<string | null>(null);
   const [nearestNotice, setNearestNotice] = useState<string | null>(null);
 
   // Multi-Stop Visit Checklist State
@@ -275,65 +273,6 @@ export const VenuePage: React.FC = () => {
       .slice(0, 4);
   }, [placeNodes, doorPadQuery]);
 
-  const guidedVisitorTrails = useMemo(() => {
-    if (placeNodes.length < 3) return [];
-    const findMatch = (terms: string[], excludeIds: Set<string>) =>
-      placeNodes.find((n) => {
-        if (excludeIds.has(n.id)) return false;
-        const blob = `${n.name} ${n.kind} ${n.category ?? ''} ${n.keywords}`.toLowerCase();
-        return terms.some((t) => blob.includes(t));
-      });
-
-    const trails: { id: string; title: string; badge: string; stops: GNode[] }[] = [];
-    const startN = entranceNode ?? placeNodes[0];
-
-    if (venue?.type === 'hospital') {
-      const s1 = findMatch(['reception', 'registration', 'triage', 'opd'], new Set([startN.id]));
-      const s2 = findMatch(['x-ray', 'lab', 'radiology', 'cardiology', 'diagnostics', 'clinic'], new Set([startN.id, s1?.id ?? '']));
-      const s3 = findMatch(['pharmacy', 'billing', 'dispensary', 'cafeteria'], new Set([startN.id, s1?.id ?? '', s2?.id ?? '']));
-      const list = [startN, s1, s2, s3].filter((x): x is GNode => Boolean(x));
-      if (list.length >= 3) {
-        trails.push({
-          id: 'opd-trail',
-          title: '🏥 New Patient OPD → Lab → Pharmacy Trail',
-          badge: `${list.length} Stops`,
-          stops: list,
-        });
-      }
-    } else {
-      const s1 = findMatch(['lobby', 'junction', 'office', 'warden', 'reception', '101', '301', '001'], new Set([startN.id]));
-      const s2 = findMatch(['309', '201', 'lab', 'library', 'mess', 'study', 'balcony'], new Set([startN.id, s1?.id ?? '']));
-      const s3 = findMatch(['318', 'washroom', 'cafeteria', 'canteen', 'courtyard', '118', '018'], new Set([startN.id, s1?.id ?? '', s2?.id ?? '']));
-      const list = [startN, s1, s2, s3].filter((x): x is GNode => Boolean(x));
-      if (list.length >= 3) {
-        trails.push({
-          id: 'campus-checkin',
-          title: '🎓 Visitor & Parent Check-In Guided Trail',
-          badge: `${list.length} Stops`,
-          stops: list,
-        });
-      }
-      const floorRooms = placeNodes.filter((n) => /\d{3}/.test(n.name));
-      if (floorRooms.length >= 3) {
-        const wingTour = [
-          startN,
-          floorRooms[0],
-          floorRooms[Math.floor(floorRooms.length / 2)],
-          floorRooms[floorRooms.length - 1],
-        ].filter((v, idx, arr) => arr.findIndex((x) => x.id === v.id) === idx);
-        if (wingTour.length >= 3) {
-          trails.push({
-            id: 'wing-tour',
-            title: '🏠 Complete Floor Wing-A to Wing-B Tour',
-            badge: `${wingTour.length} Stops`,
-            stops: wingTour,
-          });
-        }
-      }
-    }
-    return trails;
-  }, [placeNodes, entranceNode, venue?.type]);
-
   const exampleQueries = useMemo(() => {
     if (!venue) return ['nearest washroom', 'reception'];
     if (venue.type === 'hospital') {
@@ -388,7 +327,6 @@ export const VenuePage: React.FC = () => {
       setLocateOpen(true);
       return;
     }
-    setNearestLoadingKind(targetKind);
     setNearestNotice(null);
     try {
       const r = await computeNearestRoute(slug, originId, targetKind, 'walk', {
@@ -409,8 +347,6 @@ export const VenuePage: React.FC = () => {
           : `No mapped ${label.toLowerCase()} node found in this venue yet.`,
       );
       setTimeout(() => setNearestNotice(null), 4000);
-    } finally {
-      setNearestLoadingKind(null);
     }
   };
 
@@ -536,26 +472,12 @@ export const VenuePage: React.FC = () => {
         ? 'Faculty & Lab Coordinators'
         : 'Directory & Staff On-Duty';
 
-  const quickNearestChips = [
-    { kind: 'exit', label: 'Nearest Exit', emoji: '🚨', danger: true },
-    ...(venue.type === 'hospital'
-      ? [{ kind: 'emergency', label: 'Emergency Ward', emoji: '🏥', danger: true }]
-      : []),
-    { kind: 'washroom', label: 'Washroom', emoji: '🚻', danger: false },
-    { kind: 'lift', label: 'Lift / Stairs', emoji: '🛗', danger: false },
-    { kind: 'water', label: 'Drinking Water', emoji: '💧', danger: false },
-    venue.type === 'hospital'
-      ? { kind: 'pharmacy', label: 'Pharmacy', emoji: '💊', danger: false }
-      : { kind: 'helpdesk', label: 'Warden / Help Desk', emoji: '👔', danger: false },
-    { kind: 'canteen', label: 'Mess / Canteen', emoji: '🍽️', danger: false },
-  ];
-
   return (
     <div className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-900 pb-24">
       {/* =================================================================== */}
       {/* STICKY TOP VENUE HUB BAR                                            */}
       {/* =================================================================== */}
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#070B18]/95 text-white backdrop-blur-xl">
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#070B18] text-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6 lg:px-8 py-3">
           {/* Left: Back + Venue Identity */}
           <div className="flex items-center gap-3 min-w-0">
@@ -1186,74 +1108,9 @@ export const VenuePage: React.FC = () => {
             </div>
           </div>
 
-          {/* 1-TAP NEAREST FACILITY & EMERGENCY SOS ROUTING BAR */}
-          <div className="rounded-2xl bg-white/95 p-3.5 shadow-soft ring-1 ring-slate-900/[0.07] flex flex-wrap items-center justify-between gap-2.5">
-            <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-slate-700">
-              <DoorOpen className="h-4 w-4 text-rose-600" />
-              1-Tap Nearest Essential & SOS:
-            </div>
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar w-full sm:w-auto py-0.5">
-              {quickNearestChips.map((chip) => {
-                const isBusy = nearestLoadingKind === chip.kind;
-                return (
-                  <button
-                    key={chip.kind}
-                    type="button"
-                    disabled={nearestLoadingKind !== null}
-                    onClick={() => void handleNearestFacility(chip.kind, chip.label)}
-                    className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition ${
-                      chip.danger
-                        ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-200 hover:bg-rose-600 hover:text-white'
-                        : 'bg-slate-100 text-slate-800 ring-1 ring-slate-200/80 hover:bg-indigo-600 hover:text-white'
-                    }`}
-                  >
-                    {isBusy ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <span>{chip.emoji}</span>
-                    )}
-                    {chip.label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
           {nearestNotice && (
             <div className="rounded-xl bg-amber-50 px-4 py-2.5 text-xs font-semibold text-amber-900 ring-1 ring-amber-200">
               {nearestNotice}
-            </div>
-          )}
-
-          {/* 1-TAP CURATED VISITOR GUIDED TRAILS */}
-          {guidedVisitorTrails.length > 0 && (
-            <div className="rounded-2xl bg-gradient-to-r from-indigo-950 via-slate-900 to-cyan-950 p-3.5 text-white shadow-soft ring-1 ring-white/10 flex flex-wrap items-center justify-between gap-2.5">
-              <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-cyan-300">
-                <ListChecks className="h-4 w-4 text-emerald-400" />
-                1-Tap Guided Visitor Trails:
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {guidedVisitorTrails.map((trail) => (
-                  <button
-                    key={trail.id}
-                    type="button"
-                    onClick={() => {
-                      const stopIds = trail.stops.map((s) => s.id);
-                      navigate(
-                        `/v/${slug}/route?from=${encodeURIComponent(stopIds[0])}&to=${encodeURIComponent(
-                          stopIds[stopIds.length - 1],
-                        )}&stops=${encodeURIComponent(stopIds.join(','))}`,
-                      );
-                    }}
-                    className="inline-flex items-center gap-2 rounded-xl bg-white/10 px-3 py-1.5 text-xs font-bold text-white ring-1 ring-white/15 hover:bg-cyan-500 hover:text-slate-950 transition"
-                  >
-                    <span>{trail.title}</span>
-                    <span className="rounded-md bg-emerald-400/20 px-1.5 py-0.5 text-[10px] font-extrabold text-emerald-300">
-                      {trail.badge}
-                    </span>
-                  </button>
-                ))}
-              </div>
             </div>
           )}
         </div>

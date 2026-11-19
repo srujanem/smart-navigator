@@ -95,7 +95,7 @@ export function clearAdminSession(): void {
 
 export const API_BASE = (
   (import.meta as any).env?.VITE_API_URL ||
-  'https://ambassador-doing-school-classroom.trycloudflare.com'
+  'https://cape-orlando-suse-velocity.trycloudflare.com'
 ).replace(/\/$/, '');
 
 let apiServerDownUntil = 0;

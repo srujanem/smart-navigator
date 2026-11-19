@@ -796,7 +796,7 @@ export const RoutePage: React.FC = () => {
       {/* =================================================================== */}
       {/* STICKY ROUTE COMMAND HEADER                                         */}
       {/* =================================================================== */}
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#070B18]/95 text-white backdrop-blur-xl">
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#070B18] text-white">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-3.5 space-y-3">
           {/* Top Row: Back + Origin -> Destination + Re-check + Share + Voice */}
           <div className="flex flex-wrap items-center justify-between gap-3">

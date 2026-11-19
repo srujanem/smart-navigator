@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { ContactShadows, Float, Line, OrbitControls } from '@react-three/drei';
+import { Float, Line, OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import {
   Box,
@@ -951,19 +951,6 @@ const SceneContent: React.FC<
         isPlayingWalker={isPlayingWalker}
         cameraMode={cameraMode}
       />
-
-      {/* Cached floor shadow on Desktop (skipped on mobile GPUs for 60fps smoothness) */}
-      {(typeof window === 'undefined' || window.innerWidth >= 768) && (
-        <ContactShadows
-          position={[0, baseFloorY - 2.15, 0]}
-          opacity={daylight ? 0.22 : 0.35}
-          scale={90}
-          blur={1.6}
-          far={16}
-          resolution={256}
-          frames={1}
-        />
-      )}
     </group>
   );
 };
@@ -1058,7 +1045,6 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
         gl={{
           antialias: !isSmallScreen,
           powerPreference: 'high-performance',
-          preserveDrawingBuffer: true,
           stencil: false,
           depth: true,
         }}

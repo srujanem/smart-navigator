@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { ContactShadows, Float, Line, OrbitControls } from '@react-three/drei';
+import { Float, Line, OrbitControls } from '@react-three/drei';
 import { Moon, Sun } from 'lucide-react';
 import * as THREE from 'three';
 
@@ -95,28 +95,25 @@ const ArchitecturalWing: React.FC<{
   return (
     <group position={slab.pos}>
       {/* Floor Slab */}
-      <mesh receiveShadow castShadow>
+      <mesh>
         <boxGeometry args={[w, 0.16, d]} />
-        <meshPhysicalMaterial
+        <meshStandardMaterial
           color={daylight ? '#e2e8f0' : '#0f1f44'}
           transparent
-          opacity={daylight ? 0.84 : 0.62}
-          roughness={0.18}
-          metalness={0.22}
-          clearcoat={0.6}
+          opacity={daylight ? 0.86 : 0.65}
+          roughness={0.35}
+          metalness={0.15}
         />
       </mesh>
 
-      {/* Architectural Glass Curtain Facade */}
+      {/* Architectural Glass Curtain Facade (Lightweight Standard Material — Zero Extra Transmission Pass) */}
       <mesh position={[0, wh / 2, 0]}>
         <boxGeometry args={[w - 0.08, wh - 0.16, d - 0.08]} />
-        <meshPhysicalMaterial
+        <meshStandardMaterial
           color={daylight ? '#bae6fd' : '#1e3a8a'}
           transparent
-          opacity={daylight ? 0.16 : 0.11}
-          roughness={0.08}
-          metalness={0.1}
-          transmission={0.35}
+          opacity={daylight ? 0.15 : 0.09}
+          roughness={0.2}
           depthWrite={false}
         />
       </mesh>
@@ -280,7 +277,7 @@ const HologramComplex: React.FC<{ daylight: boolean }> = ({ daylight }) => {
       {/* Skybridge Linking Level 1 East Wing */}
       <mesh position={[3.3, 2.55, -0.6]}>
         <boxGeometry args={[2.2, 0.14, 1.3]} />
-        <meshPhysicalMaterial
+        <meshStandardMaterial
           color={daylight ? '#cbd5e1' : '#1e3a8a'}
           transparent
           opacity={0.75}
@@ -299,10 +296,10 @@ const HologramComplex: React.FC<{ daylight: boolean }> = ({ daylight }) => {
             opacity={0.14}
           />
         </mesh>
-        <lineSegments position={[0, 4.1, 0]}>
-          <edgesGeometry args={[new THREE.BoxGeometry(1.34, 8.4, 1.34)]} />
-          <lineBasicMaterial color="#38bdf8" transparent opacity={0.55} />
-        </lineSegments>
+        <mesh position={[0, 4.1, 0]}>
+          <boxGeometry args={[1.34, 8.4, 1.34]} />
+          <meshBasicMaterial color="#38bdf8" wireframe transparent opacity={0.45} />
+        </mesh>
 
         {/* Moving Elevator Car */}
         <mesh ref={elevatorCabRef} position={[0, 0.6, 0]}>
@@ -478,6 +475,8 @@ const HologramComplex: React.FC<{ daylight: boolean }> = ({ daylight }) => {
 
 const Hero3D: React.FC = () => {
   const [daylight, setDaylight] = useState(false);
+  const isSmallScreen =
+    typeof window !== 'undefined' && window.innerWidth < 768;
 
   return (
     <div
@@ -489,8 +488,14 @@ const Hero3D: React.FC = () => {
     >
       <Canvas
         camera={{ position: [14.5, 10.6, 16.5], fov: 39 }}
-        dpr={[1, 2]}
-        gl={{ antialias: true, alpha: true }}
+        dpr={isSmallScreen ? 1 : [1, 1.25]}
+        performance={{ min: 0.55 }}
+        gl={{
+          antialias: !isSmallScreen,
+          alpha: true,
+          powerPreference: 'high-performance',
+          stencil: false,
+        }}
       >
         <ambientLight intensity={daylight ? 1.35 : 0.9} />
         <directionalLight
@@ -509,13 +514,6 @@ const Hero3D: React.FC = () => {
           color="#38bdf8"
         />
         <HologramComplex daylight={daylight} />
-        <ContactShadows
-          position={[0, -3.25, 0]}
-          opacity={daylight ? 0.35 : 0.45}
-          scale={28}
-          blur={2.4}
-          far={10}
-        />
         <OrbitControls
           enableZoom={false}
           enablePan={false}
