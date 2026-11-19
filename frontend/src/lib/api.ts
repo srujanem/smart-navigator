@@ -34,6 +34,7 @@ import {
   cacheVenueGraph,
   cacheVenuePeople,
   cacheVenuesList,
+  clearDeviceVenueCache,
   computeOfflineMultiStopRoute,
   computeOfflineNearestRoute,
   computeOfflineRoute,
@@ -769,12 +770,40 @@ export function uploadAdminVenueCover(
   );
 }
 
-export function deleteAdminVenue(slug: string): Promise<{ ok: boolean }> {
-  return request<{ ok: boolean }>(
+export async function deleteAdminVenue(slug: string): Promise<{ ok: boolean }> {
+  const res = await request<{ ok: boolean }>(
     `/api/admin/venues/${encodeURIComponent(slug)}`,
     { method: 'DELETE' },
     true,
   );
+  clearDeviceVenueCache(slug);
+  return res;
+}
+
+export async function cleanAdminVenueData(
+  slug: string,
+  resetGraph = true,
+): Promise<{
+  ok: boolean;
+  photos_deleted: number;
+  nodes_deleted: number;
+  edges_deleted: number;
+}> {
+  const res = await request<{
+    ok: boolean;
+    photos_deleted: number;
+    nodes_deleted: number;
+    edges_deleted: number;
+  }>(
+    `/api/admin/venues/${encodeURIComponent(slug)}/clean-data`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ reset_graph: resetGraph }),
+    },
+    true,
+  );
+  clearDeviceVenueCache(slug);
+  return res;
 }
 
 export function createAdminBuilding(

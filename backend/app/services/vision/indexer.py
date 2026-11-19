@@ -34,7 +34,7 @@ def rebuild_venue_index(session: Session, venue: Venue, force: bool = False) -> 
         img_path = MEDIA_DIR / rel_img
         if not img_path.exists():
             continue
-        needs_emb = (p.embedding is None) or (p.embedder != emb_name)
+        needs_emb = force or (p.embedding is None) or (p.embedder != emb_name)
         if needs_emb:
             with Image.open(img_path) as im:
                 rgb = im.convert("RGB")

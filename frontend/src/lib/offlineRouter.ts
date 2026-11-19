@@ -14,10 +14,58 @@ import type {
   VenueSummary,
 } from './types';
 
-const VENUE_CACHE_PREFIX = 'navigator_offline_venue_';
-const GRAPH_CACHE_PREFIX = 'navigator_offline_graph_';
-const PEOPLE_CACHE_PREFIX = 'navigator_offline_people_';
-const VENUES_LIST_KEY = 'navigator_offline_venues_list';
+const VENUE_CACHE_PREFIX = 'navigator_offline_v2_venue_';
+const GRAPH_CACHE_PREFIX = 'navigator_offline_v2_graph_';
+const PEOPLE_CACHE_PREFIX = 'navigator_offline_v2_people_';
+const VENUES_LIST_KEY = 'navigator_offline_v2_venues_list';
+const DEVICE_CLEANUP_VERSION_KEY = 'navigator_device_cleanup_v2';
+
+// Automatically purge stale device caches (such as deleted test venues) once per version bump
+if (typeof window !== 'undefined') {
+  try {
+    if (localStorage.getItem(DEVICE_CLEANUP_VERSION_KEY) !== 'done') {
+      const toRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (
+          k &&
+          (k.startsWith('navigator_offline_') ||
+            k.includes('n-block-hostel') ||
+            k.includes('mite'))
+        ) {
+          toRemove.push(k);
+        }
+      }
+      toRemove.forEach((k) => localStorage.removeItem(k));
+      localStorage.setItem(DEVICE_CLEANUP_VERSION_KEY, 'done');
+    }
+  } catch {
+    // Ignore storage access errors
+  }
+}
+
+export function clearDeviceVenueCache(slug?: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.removeItem(VENUES_LIST_KEY);
+    if (slug) {
+      localStorage.removeItem(`${VENUE_CACHE_PREFIX}${slug}`);
+      localStorage.removeItem(`${GRAPH_CACHE_PREFIX}${slug}`);
+      localStorage.removeItem(`${PEOPLE_CACHE_PREFIX}${slug}`);
+    } else {
+      const toRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('navigator_offline_')) {
+          toRemove.push(k);
+        }
+      }
+      toRemove.forEach((k) => localStorage.removeItem(k));
+    }
+  } catch {
+    // Ignore
+  }
+}
 
 export interface BundledOfflineSnapshot {
   venues: VenueSummary[];
@@ -31,7 +79,7 @@ let bundledSnapshotPromise: Promise<BundledOfflineSnapshot | null> | null = null
 export function loadBundledOfflineSnapshot(): Promise<BundledOfflineSnapshot | null> {
   if (typeof window === 'undefined') return Promise.resolve(null);
   if (!bundledSnapshotPromise) {
-    bundledSnapshotPromise = fetch('/offline-bundle.json', { cache: 'force-cache' })
+    bundledSnapshotPromise = fetch('/offline-bundle.json', { cache: 'no-cache' })
       .then((res) => (res.ok ? (res.json() as Promise<BundledOfflineSnapshot>) : null))
       .catch(() => null);
   }

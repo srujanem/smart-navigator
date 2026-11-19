@@ -20,6 +20,7 @@ import {
 import {
   autoConnectAdminGraph,
   autoMapAdminDataset,
+  cleanAdminVenueData,
   deleteAdminPhoto,
   getAdminDataset,
   getAdminIndexReport,
@@ -253,12 +254,14 @@ export const AdminDatasetPage: React.FC = () => {
 
   const refreshDatasetOnly = async () => {
     if (!selectedSlug) return;
-    const [ds, g] = await Promise.all([
+    const [ds, g, rep] = await Promise.all([
       getAdminDataset(selectedSlug),
       getVenueGraph(selectedSlug),
+      getAdminIndexReport(selectedSlug).catch(() => null),
     ]);
     setDataset(ds);
     setGraph(g);
+    if (rep) setReport(rep);
   };
 
   const handleUploadFiles = async (fileList: FileList | File[]) => {
@@ -402,6 +405,36 @@ export const AdminDatasetPage: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            disabled={rebuilding}
+            onClick={async () => {
+              if (!selectedSlug) return;
+              if (
+                !window.confirm(
+                  'Clean & reset all uploaded photos, videos, and auto-created floor nodes on this venue so you can start fresh?',
+                )
+              ) {
+                return;
+              }
+              setRebuilding(true);
+              try {
+                await cleanAdminVenueData(selectedSlug, true);
+                setUploadResult(null);
+                setAutoMapResult(null);
+                await loadAll();
+              } catch (err) {
+                alert(err instanceof Error ? err.message : 'Failed to clean floor data.');
+              } finally {
+                setRebuilding(false);
+              }
+            }}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-rose-50 px-3.5 py-2.5 text-xs font-extrabold text-rose-700 ring-1 ring-rose-200 shadow-sm hover:bg-rose-100 transition"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            <span>Clean & Reset Floor Data</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setQrModalOpen(true)}

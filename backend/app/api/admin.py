@@ -509,6 +509,82 @@ def admin_delete_venue(
     return {"ok": True}
 
 
+class CleanVenueDataPayload(BaseModel):
+    reset_graph: bool = True
+
+
+@router.post("/admin/venues/{slug}/clean-data")
+def admin_clean_venue_data(
+    slug: str,
+    payload: Optional[CleanVenueDataPayload] = None,
+    user: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """
+    Wipes all uploaded photos, videos, query logs, and (if reset_graph=True) auto-mapped room/corridor
+    nodes & edges on a venue, leaving a clean starting floor ready for fresh photo/video uploads.
+    """
+    v = get_venue_or_404(session, slug)
+    assert_venue_write_access(user, v)
+    reset_graph = True if payload is None else bool(payload.reset_graph)
+
+    photos_deleted = 0
+    for p in session.exec(select(Photo).where(Photo.venue_id == v.id)).all():
+        (MEDIA_DIR / p.path).unlink(missing_ok=True)
+        if getattr(p, "thumbnail_path", None):
+            (MEDIA_DIR / p.thumbnail_path).unlink(missing_ok=True)
+        session.delete(p)
+        photos_deleted += 1
+
+    for model in (LocalizeLog, RouteLog, SearchLog, IndexReport):
+        for row in session.exec(select(model).where(model.venue_id == v.id)).all():  # type: ignore[attr-defined]
+            session.delete(row)
+
+    for sub in ("photos", "videos", "queries"):
+        sub_dir = MEDIA_DIR / "venues" / v.slug / sub
+        if sub_dir.exists():
+            shutil.rmtree(sub_dir, ignore_errors=True)
+            sub_dir.mkdir(parents=True, exist_ok=True)
+
+    nodes_deleted = 0
+    edges_deleted = 0
+    if reset_graph:
+        for c in session.exec(select(Closure).where(Closure.venue_id == v.id)).all():
+            session.delete(c)
+        for e in session.exec(select(Edge).where(Edge.venue_id == v.id)).all():
+            session.delete(e)
+            edges_deleted += 1
+
+        all_nodes = list(session.exec(select(Node).where(Node.venue_id == v.id)).all())
+        keep_node = (
+            next((n for n in all_nodes if n.id == v.entrance_node_id), None)
+            or next((n for n in all_nodes if n.kind == "entrance"), None)
+            or (all_nodes[0] if all_nodes else None)
+        )
+        for n in all_nodes:
+            if keep_node and n.id == keep_node.id:
+                continue
+            session.delete(n)
+            nodes_deleted += 1
+
+        if keep_node:
+            v.entrance_node_id = keep_node.id
+            v.emergency_node_id = keep_node.id
+            session.add(v)
+
+    session.commit()
+    try:
+        rebuild_venue_index(session, v, force=True)
+    except Exception:  # noqa: BLE001
+        pass
+    return {
+        "ok": True,
+        "photos_deleted": photos_deleted,
+        "nodes_deleted": nodes_deleted,
+        "edges_deleted": edges_deleted,
+    }
+
+
 class CreateBuildingPayload(BaseModel):
     name: str
     x: float = 10.0
@@ -1394,11 +1470,17 @@ async def admin_upload_photos(
                                 continue
                             kf_ocr = ocr_service.extract_text(kf_img)
                             kf_target = node
-                            rm_hits = re.findall(r"\b([0-9]{3})\b", " ".join(kf_ocr))
+                            rm_hits = _extract_room_identifiers(kf_ocr)
                             if rm_hits and target_fl is not None:
                                 kf_target = _auto_create_room_node_for_ocr(
                                     session, v, rm_hits[0], target_fl, all_v_nodes, v_node_map, all_v_nodes, {}, {}
                                 )
+                            elif target_fl is not None:
+                                fac_hit = _extract_facility_sign(kf_ocr)
+                                if fac_hit:
+                                    kf_target = _auto_create_facility_node_for_ocr(
+                                        session, v, fac_hit, target_fl, all_v_nodes, v_node_map, all_v_nodes, {}, {}
+                                    )
                             kf_row = Photo(
                                 venue_id=v.id,
                                 node_id=kf_target.id,
@@ -1436,21 +1518,26 @@ async def admin_upload_photos(
                 continue
 
             ocr_toks = ocr_service.extract_text(img)
-            fn_nums = re.findall(r"\b(?:room[-_\s]*)?([0-9]{3})\b", fname.lower())
-            for fn_n in fn_nums:
+            fn_nums = _extract_filename_room_hints(fname)
+            for fn_n in reversed(fn_nums):
                 if fn_n not in ocr_toks:
                     ocr_toks.insert(0, fn_n)
 
             target_photo_node = node
             if node.kind in ("entrance", "lobby", "corridor") and ocr_toks:
-                rm_hits = re.findall(r"\b([0-9]{3})\b", " ".join(ocr_toks))
-                if rm_hits:
-                    all_v_nodes = list(session.exec(select(Node).where(Node.venue_id == v.id)).all())
-                    v_node_map = {n.id: n for n in all_v_nodes}
-                    target_fl = session.exec(select(Floor).where(Floor.id == node.floor_id)).first()
-                    if target_fl is not None:
-                        target_photo_node = _auto_create_room_node_for_ocr(
-                            session, v, rm_hits[0], target_fl, all_v_nodes, v_node_map, all_v_nodes, {}, {}
+                rm_hits = _extract_room_identifiers(ocr_toks, fname)
+                all_v_nodes = list(session.exec(select(Node).where(Node.venue_id == v.id)).all())
+                v_node_map = {n.id: n for n in all_v_nodes}
+                target_fl = session.exec(select(Floor).where(Floor.id == node.floor_id)).first()
+                if rm_hits and target_fl is not None:
+                    target_photo_node = _auto_create_room_node_for_ocr(
+                        session, v, rm_hits[0], target_fl, all_v_nodes, v_node_map, all_v_nodes, {}, {}
+                    )
+                elif target_fl is not None:
+                    fac_hit = _extract_facility_sign(ocr_toks, fname)
+                    if fac_hit:
+                        target_photo_node = _auto_create_facility_node_for_ocr(
+                            session, v, fac_hit, target_fl, all_v_nodes, v_node_map, all_v_nodes, {}, {}
                         )
 
             p_row = Photo(
@@ -1486,6 +1573,10 @@ async def admin_upload_photos(
 
     session.commit()
     ensure_venue_graph_connected(session, v)
+    try:
+        rebuild_venue_index(session, v)
+    except Exception:  # noqa: BLE001
+        pass
     return {"accepted": accepted, "rejected": rejected}
 
 
@@ -1531,6 +1622,149 @@ def admin_delete_photo(
     session.delete(p)
     session.commit()
     return {"ok": True}
+
+
+def _extract_filename_room_hints(filename: str) -> list[str]:
+    """
+    Extracts explicit room/door numbers from an image or video filename
+    while ignoring camera timestamps (e.g. IMG_20261119_192530, WhatsApp Image 2026-11-19...).
+    """
+    base = filename.split("@")[0].strip()
+    base = re.sub(r"\.[a-zA-Z0-9]{2,5}$", "", base).strip()
+    cleaned = re.sub(r"20[1-3]\d[-_.]?\d{2}[-_.]?\d{2}", " ", base)
+    cleaned = re.sub(r"\b\d{6,}\b", " ", cleaned)
+    cleaned = re.sub(r"\b(?:1920|1080|3840|2160|4000|3000|202[0-9])\b", " ", cleaned)
+    cleaned = re.sub(r"(?i)whatsapp\s*image.*", " ", cleaned)
+    cleaned = re.sub(r"(?i)\b(?:img|pxl|dsc|vid|mov|frame|capture|photo|screenshot)[-_.\s]*\d{4,}\b", " ", cleaned)
+
+    hints: list[str] = []
+    # Explicit prefix in filename: "room_308", "cabin-12", "lab_2", "ward-4"
+    for m in re.finditer(r"(?i)\b(?:room|rm|cabin|lab|ward|door)[-_.\s]*([a-z]?-?\d{1,4})\b", cleaned):
+        tok = m.group(1).upper()
+        if tok not in hints:
+            hints.append(tok)
+
+    # Pure room number filename: "308.jpg", "G-04.png", "309_1.webp"
+    m_pure = re.match(r"^\s*([a-zA-Z]?-?\d{2,4})(?:[-_\s](?:[a-zA-Z]|\d{1,2}))?\s*$", cleaned)
+    if m_pure:
+        tok = m_pure.group(1).upper()
+        if not re.match(r"^20[2-3]\d$", tok) and tok not in hints:
+            hints.append(tok)
+
+    # 3-digit room number token inside descriptive filename: "floor3_308_view.jpg"
+    for m3 in re.finditer(r"\b([1-9]\d{2}|0\d{2})\b", cleaned):
+        tok = m3.group(1)
+        if tok not in hints:
+            hints.append(tok)
+
+    return hints
+
+
+def _extract_room_identifiers(ocr_toks: list[str], filename: str = "") -> list[str]:
+    """
+    Extracts room/door identifiers from OCR tokens + filename hints:
+    - 3-digit plaques ("001".."999", e.g. "308", "104")
+    - Wing-prefixed plaques ("A-101", "G-04", "B204")
+    - 4-digit room numbers ("1001".."4999", excluding years 2020..2035)
+    - Explicit prefixed 1-to-4 digit rooms ("ROOM 12", "LAB 2", "CABIN 4")
+    """
+    out: list[str] = []
+    if filename:
+        for fh in _extract_filename_room_hints(filename):
+            if fh not in out:
+                out.append(fh)
+
+    blob = " ".join(ocr_toks)
+    # 1. Explicit prefixed room/lab/cabin numbers
+    for m in re.finditer(r"(?i)\b(?:room|rm|cabin|lab|ward|hall)\s*[-:#.]?\s*([a-z]?-?\d{1,4})\b", blob):
+        tok = m.group(1).upper()
+        if not re.match(r"^20[2-3]\d$", tok) and tok not in out:
+            out.append(tok)
+
+    # 2. Standard 3-digit room plaques (most common on campus & hospital floors)
+    for m in re.finditer(r"\b(\d{3})\b", blob):
+        tok = m.group(1)
+        if tok not in out:
+            out.append(tok)
+
+    # 3. Wing-prefixed room plaques (e.g. G-01, A-204, B102)
+    ignore_codes = {"MP4", "F24", "V14", "2D", "3D", "4K", "H264"}
+    for m in re.finditer(r"\b([A-Za-z]-?\d{2,4})\b", blob):
+        tok = m.group(1).upper()
+        if tok not in ignore_codes and tok not in out:
+            out.append(tok)
+
+    # 4. 4-digit room plaques (1001..4999, excluding years)
+    for m in re.finditer(r"\b([1-4]\d{3})\b", blob):
+        tok = m.group(1)
+        if not (2018 <= int(tok) <= 2035) and tok not in out:
+            out.append(tok)
+
+    return out
+
+
+_FACILITY_PATTERNS: list[tuple[str, str, str, str, tuple[float, float]]] = [
+    (r"\b(?:washroom|restroom|toilet|wc|lavatory|gents|ladies)\b", "Washroom", "washroom", "facility", (20.0, 22.0)),
+    (r"\b(?:lift|elevator)\b", "Elevator / Lift", "lift", "transit", (50.0, 44.0)),
+    (r"\b(?:stairs|staircase|stairway)\b", "Staircase", "stairs", "transit", (24.0, 74.0)),
+    (r"\b(?:emergency\s*exit|fire\s*exit|exit)\b", "Emergency Exit", "exit", "emergency", (84.0, 74.0)),
+    (r"\b(?:canteen|cafeteria|mess|dining|food\s*court)\b", "Cafeteria / Mess", "cafeteria", "amenity", (68.0, 24.0)),
+    (r"\b(?:library|reading\s*room)\b", "Library", "room", "academic", (72.0, 34.0)),
+    (r"\b(?:reception|help\s*desk|enquiry|warden)\b", "Reception / Help Desk", "reception", "service", (48.0, 78.0)),
+    (r"\b(?:pharmacy|dispensary|medical|first\s*aid)\b", "Dispensary / Medical", "pharmacy", "medical", (62.0, 78.0)),
+    (r"\b(?:office|admin|principal|hod|dean)\b", "Department Office", "room", "admin", (36.0, 34.0)),
+]
+
+
+def _extract_facility_sign(ocr_toks: list[str], filename: str = "") -> Optional[tuple[str, str, str, tuple[float, float]]]:
+    blob = f"{' '.join(ocr_toks)} {filename.split('@')[0]}".lower()
+    for pat, disp_name, n_kind, n_cat, coords in _FACILITY_PATTERNS:
+        if re.search(pat, blob):
+            return disp_name, n_kind, n_cat, coords
+    return None
+
+
+def _auto_create_facility_node_for_ocr(
+    session: Session,
+    v: Venue,
+    fac_info: tuple[str, str, str, tuple[float, float]],
+    target_floor: Floor,
+    all_nodes: list[Node],
+    node_map: dict[str, Node],
+    route_candidate_pool: list[Node],
+    node_photo_texts: dict[str, list[str]],
+    node_vecs: dict[str, list],
+) -> Node:
+    disp_name, n_kind, n_cat, (fx, fy) = fac_info
+    for ex_n in all_nodes:
+        if ex_n.floor_id == target_floor.id and (
+            ex_n.kind == n_kind or disp_name.lower() in ex_n.name.lower()
+        ):
+            return ex_n
+
+    n_id = f"{v.id[:6]}:{n_kind}-{uuid.uuid4().hex[:5]}"
+    new_fac = Node(
+        id=n_id,
+        venue_id=v.id,
+        building_id=target_floor.building_id,
+        floor_id=target_floor.id,
+        level=target_floor.level,
+        name=disp_name,
+        kind=n_kind,
+        category=n_cat,
+        x=round(fx, 1),
+        y=round(fy, 1),
+        keywords=f"{disp_name.lower()} {n_kind} {n_cat}",
+        is_place=True,
+    )
+    session.add(new_fac)
+    session.flush()
+    all_nodes.append(new_fac)
+    node_map[new_fac.id] = new_fac
+    route_candidate_pool.append(new_fac)
+    node_photo_texts[new_fac.id] = [disp_name]
+    node_vecs[new_fac.id] = []
+    return new_fac
 
 
 def _auto_create_room_node_for_ocr(
@@ -1797,10 +2031,9 @@ async def admin_auto_map_dataset(
                 continue
 
             ocr_toks = ocr_service.extract_text(img)
-            # Also check filename for explicit 3-digit room number hints (e.g. "room_304.jpg")
-            fname_base = label.split("@")[0].strip().lower()
-            fname_nums = re.findall(r"\b(?:room[-_\s]*)?([0-9]{3})\b", fname_base)
-            for fn_num in fname_nums:
+            # Also check filename for explicit room number hints (while ignoring camera date/time timestamps)
+            fname_nums = _extract_filename_room_hints(label)
+            for fn_num in reversed(fname_nums):
                 if fn_num not in ocr_toks:
                     ocr_toks.insert(0, fn_num)
 
@@ -1815,8 +2048,8 @@ async def admin_auto_map_dataset(
                     best_ocr_node = cand_n
                     best_ocr_reason = mt
 
-            # Auto-create Room node if OCR read a 3-digit room number plaque that doesn't exist yet
-            detected_room_nums = re.findall(r"\b([0-9]{3})\b", " ".join(ocr_toks))
+            # Auto-create Room or Facility node if OCR read a room plaque / facility sign that doesn't exist yet
+            detected_room_nums = _extract_room_identifiers(ocr_toks, label)
             if (best_ocr_node is None or best_ocr_score < 0.72) and detected_room_nums and target_floor is not None:
                 rm_num = detected_room_nums[0]
                 best_ocr_node = _auto_create_room_node_for_ocr(
@@ -1832,6 +2065,22 @@ async def admin_auto_map_dataset(
                 )
                 best_ocr_score = 0.96
                 best_ocr_reason = f"Auto-Created Room {rm_num}"
+            elif (best_ocr_node is None or best_ocr_score < 0.72) and target_floor is not None:
+                fac_hit = _extract_facility_sign(ocr_toks, label)
+                if fac_hit:
+                    best_ocr_node = _auto_create_facility_node_for_ocr(
+                        session,
+                        v,
+                        fac_hit,
+                        target_floor,
+                        all_nodes,
+                        node_map,
+                        route_candidate_pool,
+                        node_photo_texts,
+                        node_vecs,
+                    )
+                    best_ocr_score = 0.94
+                    best_ocr_reason = f"Auto-Created {best_ocr_node.name}"
 
             assigned_node: Optional[Node] = None
             assigned_heading: Optional[float] = None
@@ -1843,7 +2092,7 @@ async def admin_auto_map_dataset(
                 if route_path_ids and assigned_node.id in route_path_ids:
                     r_idx = route_path_ids.index(assigned_node.id)
                     assigned_heading = route_headings[r_idx]
-            elif mode == "route" and route_path_ids:
+            elif mode == "route" and route_path_ids and len(route_path_ids) >= 2:
                 # Interpolate along the route path by chronological frame progress
                 u = idx / float(max(1, total_frames_count - 1))
                 total_d = route_cum_dist[-1] if route_cum_dist else 0.0
@@ -1868,7 +2117,7 @@ async def admin_auto_map_dataset(
                             if sim > best_vis_sim:
                                 best_vis_sim = sim
                                 best_vis_node = cand_n
-                if best_vis_node is not None and best_vis_sim >= 0.55:
+                if best_vis_node is not None and best_vis_sim >= 0.62:
                     assigned_node = best_vis_node
                     match_method = f"Visual Similarity ({int(best_vis_sim * 100)}%)"
                 elif fallback_node_id and fallback_node_id in node_map:
@@ -1919,7 +2168,7 @@ async def admin_auto_map_dataset(
             rejected.append({"filename": label, "reason": f"Frame error ({exc})"})
 
     # Second pass: Chronological Walkthrough Sequence Interpolation
-    # If some frames in a video matched specific rooms via OCR, interpolate un-anchored frames between them
+    # If some frames in a video/batch matched specific rooms via OCR, interpolate un-anchored frames between them
     anchored_indices = [
         i for i, item in enumerate(accepted)
         if item["method"].startswith("OCR Signboard")
@@ -1939,9 +2188,40 @@ async def admin_auto_map_dataset(
                     item["level"] = anchor_item["level"]
                     item["method"] = f"Walkthrough Sequence -> {anchor_item['node_name']}"
                     touched_nodes.add(anchor_item["node_id"])
+    elif len(all_nodes) <= 2 and len(accepted) >= 2 and target_floor is not None:
+        # Fresh floor with no OCR plaques detected in the batch: auto-create sequential corridor waypoints
+        # so the 2D/3D Digital Twin builds a multi-spot navigable floor graph automatically.
+        for i, item in enumerate(accepted):
+            if i == 0:
+                continue
+            spot_num = i + 1
+            wp_node = _auto_create_room_node_for_ocr(
+                session,
+                v,
+                f"{target_floor.level or 1}{spot_num:02d}",
+                target_floor,
+                all_nodes,
+                node_map,
+                route_candidate_pool,
+                node_photo_texts,
+                node_vecs,
+            )
+            p_obj = session.exec(select(Photo).where(Photo.id == item["id"])).first()
+            if p_obj:
+                p_obj.node_id = wp_node.id
+                session.add(p_obj)
+            item["node_id"] = wp_node.id
+            item["node_name"] = wp_node.name
+            item["level"] = wp_node.level
+            item["method"] = f"Auto-Plotted 3D Floor Node ({wp_node.name})"
+            touched_nodes.add(wp_node.id)
 
     session.commit()
     graph_stats = ensure_venue_graph_connected(session, v)
+    try:
+        rebuild_venue_index(session, v)
+    except Exception:  # noqa: BLE001
+        pass
     saved_mb = round(max(0.0, (raw_bytes_total - saved_bytes_total) / (1024.0 * 1024.0)), 2)
     return {
         "accepted": accepted,

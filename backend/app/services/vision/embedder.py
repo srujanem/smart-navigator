@@ -70,25 +70,34 @@ class EmbedderService:
         rgb = img.convert("RGB")
 
         if self._ort_session is not None:
-            # Resize shorter side to 256 then center-crop 224x224 (divisible by 14 patch size)
+            # Dual-Region DINOv2 ViT-S/14 Fusion:
+            # 1) Aspect-preserved 224x224 center crop (fine doorway & central corridor texture)
+            # 2) Full-frame 224x224 context view (captures upper door lintels & floor geometry on 9:16 mobile shots)
             w, h = rgb.size
-            scale = 256.0 / float(min(w, h))
+            scale = 256.0 / float(max(1, min(w, h)))
             nw, nh = max(224, int(round(w * scale))), max(224, int(round(h * scale)))
             resized = rgb.resize((nw, nh), Image.Resampling.BICUBIC)
             left = (nw - 224) // 2
             top = (nh - 224) // 2
-            cropped = resized.crop((left, top, left + 224, top + 224))
+            center_crop = resized.crop((left, top, left + 224, top + 224))
+            full_view = rgb.resize((224, 224), Image.Resampling.BICUBIC)
 
-            arr = np.asarray(cropped, dtype=np.float32) / 255.0
-            chw = np.transpose(arr, (2, 0, 1))
-            normed = ((chw - IMAGENET_MEAN) / IMAGENET_STD)[None, ...]  # [1, 3, 224, 224]
+            def _encode_224(pil_224: Image.Image) -> np.ndarray:
+                arr = np.asarray(pil_224, dtype=np.float32) / 255.0
+                chw = np.transpose(arr, (2, 0, 1))
+                normed = ((chw - IMAGENET_MEAN) / IMAGENET_STD)[None, ...]  # [1, 3, 224, 224]
+                hidden = self._ort_session.run(["last_hidden_state"], {"pixel_values": normed})[0]  # [1, 257, 384]
+                cls_tok = hidden[0, 0]
+                patches = hidden[0, 1:]
+                mean_tok = patches.mean(axis=0)
+                rms_tok = np.sqrt(np.mean(np.square(patches), axis=0) + 1e-6) * np.sign(mean_tok)
+                v = np.concatenate([cls_tok, 0.7 * mean_tok + 0.3 * rms_tok], axis=0).astype(np.float32)
+                nrm = float(np.linalg.norm(v))
+                return v / nrm if nrm > 1e-8 else v
 
-            hidden = self._ort_session.run(["last_hidden_state"], {"pixel_values": normed})[0]  # [1, 257, 384]
-            cls_tok = hidden[0, 0]
-            patches = hidden[0, 1:]
-            mean_tok = patches.mean(axis=0)
-            rms_tok = np.sqrt(np.mean(np.square(patches), axis=0) + 1e-6) * np.sign(mean_tok)
-            vec = np.concatenate([cls_tok, 0.7 * mean_tok + 0.3 * rms_tok], axis=0).astype(np.float32)
+            vec_center = _encode_224(center_crop)
+            vec_full = _encode_224(full_view)
+            vec = (0.65 * vec_center + 0.35 * vec_full).astype(np.float32)
         else:
             vec = self._classic_descriptor(rgb)
 

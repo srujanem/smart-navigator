@@ -43,8 +43,8 @@ class OCRService:
     @staticmethod
     def _clean_plaque_token(text: str) -> str:
         cleaned = re.sub(r"\s+", " ", text).strip()
-        # Normalize common OCR confusions on 3-digit room number plaques (e.g. "3O8" -> "308", "01:" -> "011")
-        if len(cleaned) == 3 and sum(ch.isdigit() for ch in cleaned) >= 2:
+        # Normalize common OCR confusions on 2-to-4-digit room number plaques (e.g. "3O8" -> "308", "01:" -> "011", "1O2" -> "102")
+        if 2 <= len(cleaned) <= 4 and sum(ch.isdigit() for ch in cleaned) >= max(1, len(cleaned) - 1):
             trans = str.maketrans({
                 "O": "0", "o": "0", "Q": "0", "D": "0",
                 "I": "1", "l": "1", "|": "1", ":": "1", "!": "1",
