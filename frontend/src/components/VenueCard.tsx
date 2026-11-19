@@ -21,12 +21,13 @@ interface IsometricVenueArtProps {
   floors?: number;
   compact?: boolean;
   label?: string;
+  venueType?: 'hospital' | 'campus' | 'mall' | 'office';
 }
 
 /**
  * Procedural 3D Isometric Architectural Blueprint SVG.
- * Renders a realistic multi-floor architectural wireframe for newly created or
- * zero-photo venues without adding any fake sample dataset images.
+ * Renders a realistic multi-floor architectural twin with venue-specific rooftop landmarks,
+ * glowing lift cores, illuminated window grids, and animated indoor route laser traces.
  */
 export const IsometricVenueArt: React.FC<IsometricVenueArtProps> = ({
   accent = '#0ea5e9',
@@ -34,9 +35,11 @@ export const IsometricVenueArt: React.FC<IsometricVenueArtProps> = ({
   floors = 3,
   compact = false,
   label,
+  venueType = 'campus',
 }) => {
   const towerCount = Math.max(1, Math.min(buildings || 1, 3));
   const floorCount = Math.max(2, Math.min(floors || 2, 5));
+  const safeId = accent.replace(/[^a-zA-Z0-9]/g, '');
 
   const towers =
     towerCount === 1
@@ -72,17 +75,17 @@ export const IsometricVenueArt: React.FC<IsometricVenueArtProps> = ({
         aria-hidden="true"
       >
         <defs>
-          <linearGradient id={`iso-top-${accent}`} x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor={accent} stopOpacity="0.46" />
-            <stop offset="100%" stopColor="#818cf8" stopOpacity="0.18" />
+          <linearGradient id={`iso-top-${safeId}`} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor={accent} stopOpacity="0.52" />
+            <stop offset="100%" stopColor="#818cf8" stopOpacity="0.22" />
           </linearGradient>
-          <linearGradient id={`iso-left-${accent}`} x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor={accent} stopOpacity="0.32" />
-            <stop offset="100%" stopColor="#0f172a" stopOpacity="0.7" />
+          <linearGradient id={`iso-left-${safeId}`} x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor={accent} stopOpacity="0.34" />
+            <stop offset="100%" stopColor="#0f172a" stopOpacity="0.74" />
           </linearGradient>
-          <linearGradient id={`iso-right-${accent}`} x1="0%" y1="0%" x2="0%" y2="100%">
-            <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.22" />
-            <stop offset="100%" stopColor="#020617" stopOpacity="0.85" />
+          <linearGradient id={`iso-right-${safeId}`} x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#38bdf8" stopOpacity="0.24" />
+            <stop offset="100%" stopColor="#020617" stopOpacity="0.88" />
           </linearGradient>
         </defs>
 
@@ -106,7 +109,20 @@ export const IsometricVenueArt: React.FC<IsometricVenueArtProps> = ({
           ))}
         </g>
 
-        {/* Connecting Skybridge when >= 2 buildings */}
+        {/* Ground Perimeter Radar Ellipse */}
+        <ellipse
+          cx="200"
+          cy="158"
+          rx="145"
+          ry="48"
+          fill="none"
+          stroke={accent}
+          strokeOpacity="0.22"
+          strokeWidth="1"
+          strokeDasharray="6 5"
+        />
+
+        {/* Connecting Skybridge + Animated Route Trace when >= 2 buildings */}
         {towers.length >= 2 && (
           <g>
             <line
@@ -115,8 +131,9 @@ export const IsometricVenueArt: React.FC<IsometricVenueArtProps> = ({
               x2={towers[1].cx - 18}
               y2={towers[1].cy - 26}
               stroke={accent}
-              strokeWidth="5"
-              strokeOpacity="0.38"
+              strokeWidth="6"
+              strokeOpacity="0.34"
+              strokeLinecap="round"
             />
             <line
               x1={towers[0].cx + 18}
@@ -124,8 +141,9 @@ export const IsometricVenueArt: React.FC<IsometricVenueArtProps> = ({
               x2={towers[1].cx - 18}
               y2={towers[1].cy - 26}
               stroke="#67e8f9"
-              strokeWidth="1.4"
-              strokeDasharray="4 3"
+              strokeWidth="1.6"
+              strokeDasharray="5 4"
+              className="route-dash"
             />
           </g>
         )}
@@ -140,26 +158,50 @@ export const IsometricVenueArt: React.FC<IsometricVenueArtProps> = ({
               {/* Soft base shadow */}
               <polygon
                 points={`${t.cx},${t.cy - t.ry + 6} ${t.cx + t.rx + 6},${t.cy + 6} ${t.cx},${t.cy + t.ry + 6} ${t.cx - t.rx - 6},${t.cy + 6}`}
-                fill="rgba(0,0,0,0.45)"
+                fill="rgba(0,0,0,0.48)"
               />
 
               {/* Left Glass Wall */}
               <polygon
                 points={`${t.cx - t.rx},${topY} ${t.cx},${topY + t.ry} ${t.cx},${t.cy + t.ry} ${t.cx - t.rx},${t.cy}`}
-                fill={`url(#iso-left-${accent})`}
+                fill={`url(#iso-left-${safeId})`}
                 stroke={accent}
-                strokeOpacity="0.55"
+                strokeOpacity="0.58"
                 strokeWidth="1"
               />
 
               {/* Right Glass Wall */}
               <polygon
                 points={`${t.cx},${topY + t.ry} ${t.cx + t.rx},${topY} ${t.cx + t.rx},${t.cy} ${t.cx},${t.cy + t.ry}`}
-                fill={`url(#iso-right-${accent})`}
+                fill={`url(#iso-right-${safeId})`}
                 stroke="#38bdf8"
-                strokeOpacity="0.45"
+                strokeOpacity="0.48"
                 strokeWidth="1"
               />
+
+              {/* Vertical Curtain-Wall Mullions */}
+              {[0.33, 0.66].map((frac, mi) => (
+                <React.Fragment key={mi}>
+                  <line
+                    x1={t.cx - t.rx * frac}
+                    y1={topY + t.ry * (1 - frac)}
+                    x2={t.cx - t.rx * frac}
+                    y2={t.cy + t.ry * (1 - frac)}
+                    stroke="#bae6fd"
+                    strokeOpacity="0.18"
+                    strokeWidth="0.7"
+                  />
+                  <line
+                    x1={t.cx + t.rx * frac}
+                    y1={topY + t.ry * (1 - frac)}
+                    x2={t.cx + t.rx * frac}
+                    y2={t.cy + t.ry * (1 - frac)}
+                    stroke="#bae6fd"
+                    strokeOpacity="0.16"
+                    strokeWidth="0.7"
+                  />
+                </React.Fragment>
+              ))}
 
               {/* Stacked Interior Floor Slabs */}
               {Array.from({ length: t.levels }).map((_, lvl) => {
@@ -170,8 +212,8 @@ export const IsometricVenueArt: React.FC<IsometricVenueArtProps> = ({
                     points={`${t.cx - t.rx},${y} ${t.cx},${y + t.ry} ${t.cx + t.rx},${y}`}
                     fill="none"
                     stroke="#bae6fd"
-                    strokeOpacity={lvl === t.levels - 1 ? 0.7 : 0.32}
-                    strokeWidth="0.9"
+                    strokeOpacity={lvl === t.levels - 1 ? 0.72 : 0.34}
+                    strokeWidth="0.95"
                   />
                 );
               })}
@@ -179,11 +221,62 @@ export const IsometricVenueArt: React.FC<IsometricVenueArtProps> = ({
               {/* Roof Slab */}
               <polygon
                 points={`${t.cx},${topY - t.ry} ${t.cx + t.rx},${topY} ${t.cx},${topY + t.ry} ${t.cx - t.rx},${topY}`}
-                fill={`url(#iso-top-${accent})`}
+                fill={`url(#iso-top-${safeId})`}
                 stroke="#e0f2fe"
-                strokeOpacity="0.75"
-                strokeWidth="1.1"
+                strokeOpacity="0.82"
+                strokeWidth="1.15"
               />
+
+              {/* Venue-Specific Architectural Rooftop Landmark on Main Tower */}
+              {ti === 0 && venueType === 'hospital' && (
+                <g transform={`translate(${t.cx}, ${topY})`}>
+                  <ellipse
+                    rx={t.rx * 0.34}
+                    ry={t.ry * 0.34}
+                    fill="rgba(244,63,94,0.22)"
+                    stroke="#fb7185"
+                    strokeWidth="1.3"
+                  />
+                  <line x1="-6" y1="0" x2="6" y2="0" stroke="#ffffff" strokeWidth="2.4" strokeLinecap="round" />
+                  <line x1="0" y1="-4.5" x2="0" y2="4.5" stroke="#ffffff" strokeWidth="2.4" strokeLinecap="round" />
+                </g>
+              )}
+              {ti === 0 && venueType === 'campus' && (
+                <g transform={`translate(${t.cx}, ${topY})`}>
+                  <polygon
+                    points={`0,${-t.ry * 0.45} ${t.rx * 0.42},0 0,${t.ry * 0.45} ${-t.rx * 0.42},0`}
+                    fill="rgba(56,189,248,0.28)"
+                    stroke="#7dd3fc"
+                    strokeWidth="1"
+                  />
+                  <line x1="0" y1={-t.ry * 0.45} x2="0" y2={t.ry * 0.45} stroke="#e0f2fe" strokeOpacity="0.6" strokeWidth="0.7" />
+                  <line x1={-t.rx * 0.42} y1="0" x2={t.rx * 0.42} y2="0" stroke="#e0f2fe" strokeOpacity="0.6" strokeWidth="0.7" />
+                </g>
+              )}
+              {ti === 0 && venueType === 'mall' && (
+                <g transform={`translate(${t.cx}, ${topY})`}>
+                  <ellipse
+                    rx={t.rx * 0.45}
+                    ry={t.ry * 0.42}
+                    fill="rgba(245,158,11,0.2)"
+                    stroke="#fbbf24"
+                    strokeWidth="1.1"
+                  />
+                  <ellipse
+                    rx={t.rx * 0.22}
+                    ry={t.ry * 0.2}
+                    fill="rgba(255,255,255,0.22)"
+                    stroke="#fde68a"
+                    strokeWidth="0.8"
+                  />
+                </g>
+              )}
+              {ti === 0 && venueType === 'office' && (
+                <g transform={`translate(${t.cx}, ${topY})`}>
+                  <line x1="0" y1="0" x2="0" y2="-16" stroke="#38bdf8" strokeWidth="1.8" strokeLinecap="round" />
+                  <circle cx="0" cy="-16" r="2.6" fill="#22d3ee" />
+                </g>
+              )}
 
               {/* Glowing Lift Core Shaft */}
               <line
@@ -196,9 +289,23 @@ export const IsometricVenueArt: React.FC<IsometricVenueArtProps> = ({
                 strokeOpacity="0.85"
               />
               <circle cx={t.cx} cy={topY - 6} r="3" fill="#22d3ee" />
+              <circle cx={t.cx} cy={topY - 6} r="6.5" fill="#22d3ee" opacity="0.22" />
             </g>
           );
         })}
+
+        {/* Animated Indoor Wayfinding Laser Path Preview */}
+        {towers.length >= 2 && (
+          <path
+            d={`M ${towers[0].cx - 24} ${towers[0].cy + 4} L ${towers[0].cx} ${towers[0].cy - 26} L ${towers[1].cx} ${towers[1].cy - 26} L ${towers[1].cx + 22} ${towers[1].cy - 44}`}
+            fill="none"
+            stroke="#34d399"
+            strokeWidth="2.2"
+            strokeDasharray="6 5"
+            strokeLinecap="round"
+            className="route-dash"
+          />
+        )}
       </svg>
 
       {!compact && (
@@ -256,6 +363,7 @@ export const VenueCard: React.FC<VenueCardProps> = ({ venue, dark = false }) => 
             accent={accent}
             buildings={venue.stats.buildings}
             floors={venue.stats.floors}
+            venueType={venue.type}
           />
         )}
 

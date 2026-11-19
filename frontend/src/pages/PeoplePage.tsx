@@ -131,11 +131,23 @@ export const PeoplePage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-        <p className="mt-3 text-sm font-medium text-slate-600">
-          Loading live staff & doctor directory...
-        </p>
+      <div className="min-h-screen bg-slate-50">
+        <div className="h-16 w-full bg-[#070B18] border-b border-white/10" />
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          {[0, 1, 2, 3, 4, 5].map((i) => (
+            <div key={i} className="card p-5 space-y-4">
+              <div className="flex items-center gap-3">
+                <div className="h-12 w-12 rounded-2xl skeleton-shimmer" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-4 w-36 rounded skeleton-shimmer" />
+                  <div className="h-3 w-24 rounded skeleton-shimmer" />
+                </div>
+              </div>
+              <div className="h-16 w-full rounded-xl skeleton-shimmer" />
+              <div className="h-10 w-full rounded-xl skeleton-shimmer" />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
@@ -318,21 +330,34 @@ export const PeoplePage: React.FC = () => {
                   className="card p-5 flex flex-col justify-between gap-4 hover:shadow-lift transition"
                 >
                   <div className="space-y-3.5">
-                    {/* Avatar + Identity + Status */}
+                    {/* Avatar with Live Status Ring + Identity + Status */}
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-center gap-3.5 min-w-0">
-                        <div
-                          className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl text-base font-extrabold text-white shadow-sm"
-                          style={{
-                            backgroundColor: person.avatar_color || '#4f46e5',
-                          }}
-                        >
-                          {person.name
-                            .split(' ')
-                            .slice(0, 2)
-                            .map((w) => w[0])
-                            .join('')
-                            .toUpperCase()}
+                        <div className="relative shrink-0">
+                          <div
+                            className="flex h-12 w-12 items-center justify-center rounded-2xl text-base font-extrabold text-white shadow-md ring-2 ring-white"
+                            style={{
+                              background: `linear-gradient(135deg, ${person.avatar_color || '#4f46e5'}, #0ea5e9)`,
+                            }}
+                          >
+                            {person.name
+                              .split(' ')
+                              .slice(0, 2)
+                              .map((w) => w[0])
+                              .join('')
+                              .toUpperCase()}
+                          </div>
+                          <span
+                            className={`absolute -bottom-0.5 -right-0.5 h-3.5 w-3.5 rounded-full ring-2 ring-white ${
+                              person.status === 'available'
+                                ? 'bg-emerald-500'
+                                : person.status === 'busy'
+                                  ? 'bg-amber-500'
+                                  : person.status === 'moved'
+                                    ? 'bg-sky-500'
+                                    : 'bg-rose-500'
+                            }`}
+                          />
                         </div>
                         <div className="min-w-0">
                           <h3 className="font-display text-base font-extrabold text-slate-900 truncate">

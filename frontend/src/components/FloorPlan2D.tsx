@@ -783,7 +783,7 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
               />
             )}
 
-          {/* Active Route Segments + Animated Directional Flow Chevrons */}
+          {/* Active Route Segments + Animated Directional Flow Chevrons + Gliding Pulse Particle */}
           {floorRouteSegments.map((seg, idx) => {
             const dx = seg.x2 - seg.x1;
             const dy = seg.y2 - seg.y1;
@@ -838,6 +838,24 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
               </g>
             );
           })}
+
+          {/* Hardware-Accelerated SVG Route Tracer Pulse Gliding Along Active Path */}
+          {floorRouteSegments.length > 0 && (() => {
+            const pathD = floorRouteSegments
+              .map((seg, i) => (i === 0 ? `M ${seg.x1} ${seg.y1} L ${seg.x2} ${seg.y2}` : `L ${seg.x2} ${seg.y2}`))
+              .join(' ');
+            const durSec = Math.max(2.6, Math.min(7.5, floorRouteSegments.length * 1.1));
+            return (
+              <g pointerEvents="none">
+                <circle r={unit * 1.15} fill="#22d3ee" opacity="0.38">
+                  <animateMotion dur={`${durSec}s`} repeatCount="indefinite" path={pathD} />
+                </circle>
+                <circle r={unit * 0.58} fill="#ffffff" stroke="#0284c7" strokeWidth={unit * 0.22}>
+                  <animateMotion dur={`${durSec}s`} repeatCount="indefinite" path={pathD} />
+                </circle>
+              </g>
+            );
+          })()}
 
           {/* Floor Nodes + Google-Maps Radar Pulse & Facing View Cone */}
           {floorNodes.map((n) => {
@@ -981,6 +999,94 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
             );
           })}
         </svg>
+
+        {/* Architectural Compass Rose & Dynamic Scale Bar HUD */}
+        <div
+          className={`pointer-events-none absolute top-2.5 right-2.5 flex items-center gap-2.5 rounded-xl px-2.5 py-1.5 ring-1 backdrop-blur-md ${
+            dark
+              ? 'bg-slate-950/75 text-slate-200 ring-white/10'
+              : 'bg-white/90 text-slate-700 ring-slate-200/80 shadow-sm'
+          }`}
+        >
+          <div className="flex flex-col items-end gap-0.5">
+            <span className="text-[9px] font-mono font-bold tracking-wider opacity-75">
+              {Math.max(2, Math.round(12 / zoom))}m
+            </span>
+            <div className="flex items-center">
+              <span className="h-1.5 w-[1.5px] bg-current opacity-60" />
+              <span className="h-[1.5px] w-7 bg-current opacity-60" />
+              <span className="h-1.5 w-[1.5px] bg-current opacity-60" />
+            </div>
+          </div>
+          <svg viewBox="0 0 28 28" className="h-6 w-6 shrink-0" aria-hidden="true">
+            <circle
+              cx="14"
+              cy="14"
+              r="12"
+              fill="none"
+              stroke="currentColor"
+              strokeOpacity="0.22"
+              strokeWidth="1.2"
+            />
+            <polygon points="14,3 17,14 14,12 11,14" fill="#0ea5e9" />
+            <polygon points="14,25 17,14 14,16 11,14" fill="currentColor" opacity="0.35" />
+            <text
+              x="14"
+              y="10"
+              textAnchor="middle"
+              fontSize="5.5"
+              fontWeight="800"
+              fill={dark ? '#38bdf8' : '#0284c7'}
+            >
+              N
+            </text>
+          </svg>
+        </div>
+
+        {/* Interactive Stacked Isometric Floor Plate Selector (Multi-Floor Buildings) */}
+        {levels.length > 1 && onChangeLevel && (
+          <div
+            className={`hidden sm:flex absolute right-2.5 top-1/2 -translate-y-1/2 flex-col-reverse gap-1 rounded-2xl p-1.5 ring-1 backdrop-blur-md z-10 ${
+              dark
+                ? 'bg-slate-950/80 ring-white/10'
+                : 'bg-white/90 ring-slate-200/80 shadow-md'
+            }`}
+            title="Switch floor layer"
+          >
+            {levels.map((lvl) => {
+              const active = lvl === selectedLevel;
+              const hasRouteOnFloor = routePath.some((nid) => nodeMap.get(nid)?.level === lvl);
+              return (
+                <button
+                  key={`stack-${lvl}`}
+                  type="button"
+                  onClick={() => onChangeLevel(lvl)}
+                  className={`group relative flex items-center gap-1.5 rounded-xl px-2 py-1 text-[10px] font-extrabold transition ${
+                    active
+                      ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow-sm'
+                      : dark
+                        ? 'text-slate-300 hover:bg-white/10'
+                        : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <svg viewBox="0 0 20 12" className="h-3 w-4 shrink-0" aria-hidden="true">
+                    <polygon
+                      points="10,1 19,6 10,11 1,6"
+                      fill={active ? '#ffffff' : 'currentColor'}
+                      fillOpacity={active ? 0.9 : 0.3}
+                      stroke="currentColor"
+                      strokeWidth="1"
+                    />
+                  </svg>
+                  <span>{lvl === 0 ? 'G' : `F${lvl}`}</span>
+                  {hasRouteOnFloor && (
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
 
         {/* Legend Footer */}
         <div

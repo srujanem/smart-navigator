@@ -147,17 +147,32 @@ export const AdminOverviewPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="card p-5 space-y-2">
-          <div className="flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-500">
-            <span>Node Coverage</span>
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+        <div className="card p-5 flex items-center justify-between gap-3">
+          <div className="space-y-1">
+            <div className="text-xs font-bold uppercase tracking-wider text-slate-500">
+              Node Coverage
+            </div>
+            <div className="font-display text-3xl font-extrabold text-slate-900">
+              {coveragePct}%
+            </div>
+            <div className="text-xs text-slate-500">
+              {data.stats.nodes_with_photos} of {data.stats.nodes_total} nodes
+            </div>
           </div>
-          <div className="font-display text-3xl font-extrabold text-slate-900">
-            {coveragePct}%
-          </div>
-          <div className="text-xs text-slate-500">
-            {data.stats.nodes_with_photos} of {data.stats.nodes_total} nodes
-          </div>
+          <svg viewBox="0 0 56 56" className="h-14 w-14 shrink-0 -rotate-90">
+            <circle cx="28" cy="28" r="22" fill="none" stroke="#e2e8f0" strokeWidth="6" />
+            <circle
+              cx="28"
+              cy="28"
+              r="22"
+              fill="none"
+              stroke={coveragePct >= 70 ? '#10b981' : coveragePct >= 35 ? '#f59e0b' : '#f43f5e'}
+              strokeWidth="6"
+              strokeLinecap="round"
+              strokeDasharray={2 * Math.PI * 22}
+              strokeDashoffset={2 * Math.PI * 22 * (1 - Math.min(100, coveragePct) / 100)}
+            />
+          </svg>
         </div>
 
         <div className="card p-5 space-y-2">
@@ -191,56 +206,101 @@ export const AdminOverviewPage: React.FC = () => {
           </div>
 
           <div className="h-52 w-full pt-2">
-            <svg viewBox="0 0 600 180" className="h-full w-full overflow-visible">
-              {/* Horizontal Guide Lines */}
-              {[0, 0.5, 1].map((t, idx) => (
-                <line
-                  key={idx}
-                  x1={0}
-                  x2={600}
-                  y1={150 - t * 135}
-                  y2={150 - t * 135}
-                  stroke="#e2e8f0"
-                  strokeDasharray="4 4"
-                  strokeWidth={1}
-                />
-              ))}
-
-              {hourly.map((val, hr) => {
-                const barW = 16;
-                const gap = (600 - 24 * barW) / 23;
-                const x = hr * (barW + gap);
-                const h = Math.max((val / maxHourVal) * 135, 3);
+            {(() => {
+              const barW = 14;
+              const gap = (600 - 24 * barW) / 23;
+              const pts = hourly.map((val, hr) => {
+                const cx = hr * (barW + gap) + barW / 2;
+                const h = Math.max((val / maxHourVal) * 132, 3);
                 const y = 150 - h;
-
-                return (
-                  <g key={hr}>
-                    <title>{`${String(hr).padStart(2, '0')}:00 — ${val} sessions`}</title>
-                    <rect
-                      x={x}
-                      y={y}
-                      width={barW}
-                      height={h}
-                      rx={4}
-                      fill={val === maxHourVal && val > 0 ? '#0ea5e9' : '#6366f1'}
-                      opacity={val === 0 ? 0.25 : 0.9}
+                return { cx, x: hr * (barW + gap), y, h, val, hr };
+              });
+              const lineD = pts
+                .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.cx.toFixed(1)} ${p.y.toFixed(1)}`)
+                .join(' ');
+              const areaD = `${lineD} L ${pts[pts.length - 1].cx.toFixed(1)} 150 L ${pts[0].cx.toFixed(1)} 150 Z`;
+              return (
+                <svg viewBox="0 0 600 180" className="h-full w-full overflow-visible">
+                  <defs>
+                    <linearGradient id="activityAreaGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                      <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.32" />
+                      <stop offset="100%" stopColor="#6366f1" stopOpacity="0.02" />
+                    </linearGradient>
+                    <linearGradient id="activityBarGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+                      <stop offset="0%" stopColor="#0ea5e9" />
+                      <stop offset="100%" stopColor="#6366f1" />
+                    </linearGradient>
+                  </defs>
+                  {/* Horizontal Guide Lines */}
+                  {[0, 0.5, 1].map((t, idx) => (
+                    <line
+                      key={idx}
+                      x1={0}
+                      x2={600}
+                      y1={150 - t * 132}
+                      y2={150 - t * 132}
+                      stroke="#e2e8f0"
+                      strokeDasharray="4 4"
+                      strokeWidth={1}
                     />
-                    {hr % 3 === 0 && (
-                      <text
-                        x={x + barW / 2}
-                        y={168}
-                        textAnchor="middle"
-                        fontSize={10}
-                        fill="#64748b"
-                        fontWeight={600}
-                      >
-                        {String(hr).padStart(2, '0')}h
-                      </text>
-                    )}
-                  </g>
-                );
-              })}
-            </svg>
+                  ))}
+
+                  {/* Smooth Area Glow Fill */}
+                  <path d={areaD} fill="url(#activityAreaGrad)" />
+
+                  {/* Gradient Bars */}
+                  {pts.map((p) => (
+                    <g key={p.hr}>
+                      <title>{`${String(p.hr).padStart(2, '0')}:00 — ${p.val} sessions`}</title>
+                      <rect
+                        x={p.x}
+                        y={p.y}
+                        width={barW}
+                        height={p.h}
+                        rx={4}
+                        fill="url(#activityBarGrad)"
+                        opacity={p.val === 0 ? 0.16 : 0.72}
+                      />
+                      {p.hr % 3 === 0 && (
+                        <text
+                          x={p.cx}
+                          y={168}
+                          textAnchor="middle"
+                          fontSize={10}
+                          fill="#64748b"
+                          fontWeight={600}
+                        >
+                          {String(p.hr).padStart(2, '0')}h
+                        </text>
+                      )}
+                    </g>
+                  ))}
+
+                  {/* Luminous Trend Line + Peak Dots */}
+                  <path
+                    d={lineD}
+                    fill="none"
+                    stroke="#0ea5e9"
+                    strokeWidth="2.4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  {pts
+                    .filter((p) => p.val > 0 && (p.val === maxHourVal || p.hr % 4 === 0))
+                    .map((p) => (
+                      <circle
+                        key={`dot-${p.hr}`}
+                        cx={p.cx}
+                        cy={p.y}
+                        r={p.val === maxHourVal ? 4.5 : 3}
+                        fill={p.val === maxHourVal ? '#06b6d4' : '#4f46e5'}
+                        stroke="#ffffff"
+                        strokeWidth="1.8"
+                      />
+                    ))}
+                </svg>
+              );
+            })()}
           </div>
         </div>
 

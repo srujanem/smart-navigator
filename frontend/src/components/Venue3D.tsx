@@ -160,6 +160,28 @@ const AnimatedLiftCab: React.FC<{
   );
 };
 
+const GroundRadarSweep: React.FC<{ y: number; color: string }> = ({ y, color }) => {
+  const ringRef = useRef<THREE.Mesh>(null);
+  useFrame((state) => {
+    if (!ringRef.current) return;
+    const p = (state.clock.getElapsedTime() * 0.42) % 1;
+    ringRef.current.scale.setScalar(1 + p * 28);
+    (ringRef.current.material as THREE.MeshBasicMaterial).opacity = (1 - p) * 0.52;
+  });
+  return (
+    <mesh ref={ringRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, y, 0]}>
+      <ringGeometry args={[0.92, 1.15, 48]} />
+      <meshBasicMaterial
+        color={color}
+        transparent
+        opacity={0.5}
+        side={THREE.DoubleSide}
+        depthWrite={false}
+      />
+    </mesh>
+  );
+};
+
 const ROUTE_FLOW_CONES = 8;
 
 // Static pre-allocated scratch vectors to eliminate garbage collection freezes in useFrame
@@ -500,6 +522,28 @@ const SceneContent: React.FC<
     });
   }, [routePoints]);
 
+  // Volumetric 3D Glowing Tube Ribbon along active route (low-poly radialSegments=8 for 60fps)
+  const routeTubeGeo = useMemo(() => {
+    if (routePoints.length < 2) return null;
+    const path = new THREE.CurvePath<THREE.Vector3>();
+    for (let i = 0; i < routePoints.length - 1; i++) {
+      const a = new THREE.Vector3(...routePoints[i]);
+      const b = new THREE.Vector3(...routePoints[i + 1]);
+      if (a.distanceToSquared(b) > 0.001) {
+        path.add(new THREE.LineCurve3(a, b));
+      }
+    }
+    if (path.curves.length === 0) return null;
+    const segs = Math.min(96, Math.max(24, path.curves.length * 10));
+    return new THREE.TubeGeometry(path, segs, 0.22, 8, false);
+  }, [routePoints]);
+
+  useEffect(() => {
+    return () => {
+      routeTubeGeo?.dispose();
+    };
+  }, [routeTubeGeo]);
+
   const verticalShafts = useMemo(() => {
     const list: {
       id: string;
@@ -578,6 +622,19 @@ const SceneContent: React.FC<
             emissiveIntensity={1.2}
           />
         </mesh>
+        {/* Expanding 3D Radar Scan Wave when Facility Radar is active */}
+        {radarFilter !== 'none' && (
+          <GroundRadarSweep
+            y={0.1}
+            color={
+              radarFilter === 'emergency'
+                ? '#f43f5e'
+                : radarFilter === 'lift'
+                  ? '#06b6d4'
+                  : '#a855f7'
+            }
+          />
+        )}
       </group>
 
       {/* Architectural Buildings: Slabs + Glass Curtain Walls + Structural Columns */}
@@ -679,6 +736,50 @@ const SceneContent: React.FC<
                     transparent
                     opacity={isFocused ? 0.7 : 0.2}
                   />
+
+                  {/* Rooftop Architectural Landmark on Top Floor (Helipad Cross / Skylight Crown) */}
+                  {fl.level === topLvl && selectedLevel === 'all' && (
+                    <group position={[0, wallH + 0.26, 0]}>
+                      <Line
+                        points={border}
+                        color={daylight ? '#0284c7' : '#22d3ee'}
+                        lineWidth={1.2}
+                        transparent
+                        opacity={0.42}
+                      />
+                      {venue.type === 'hospital' ? (
+                        <group position={[0, 0.05, 0]}>
+                          <mesh rotation={[-Math.PI / 2, 0, 0]}>
+                            <ringGeometry args={[1.65, 2.0, 28]} />
+                            <meshBasicMaterial
+                              color="#fb7185"
+                              transparent
+                              opacity={0.75}
+                              side={THREE.DoubleSide}
+                            />
+                          </mesh>
+                          <mesh position={[0, 0.04, 0]}>
+                            <boxGeometry args={[1.8, 0.08, 0.45]} />
+                            <meshStandardMaterial color="#f43f5e" emissive="#e11d48" emissiveIntensity={1.1} />
+                          </mesh>
+                          <mesh position={[0, 0.04, 0]}>
+                            <boxGeometry args={[0.45, 0.08, 1.8]} />
+                            <meshStandardMaterial color="#f43f5e" emissive="#e11d48" emissiveIntensity={1.1} />
+                          </mesh>
+                        </group>
+                      ) : (
+                        <mesh position={[0, 0.4, 0]}>
+                          <boxGeometry args={[Math.min(sw * 0.45, 5.5), 0.7, Math.min(sd * 0.45, 4.2)]} />
+                          <meshStandardMaterial
+                            color={daylight ? '#38bdf8' : '#0ea5e9'}
+                            transparent
+                            opacity={0.22}
+                            roughness={0.2}
+                          />
+                        </mesh>
+                      )}
+                    </group>
+                  )}
                 </group>
               );
             })}
@@ -796,15 +897,29 @@ const SceneContent: React.FC<
         );
       })}
 
-      {/* Active Luminous Route Ribbon */}
+      {/* Active Luminous 3D Route Ribbon + Volumetric Tube Aura */}
       {routePoints.length >= 2 && (
-        <Line
-          points={routePoints}
-          vertexColors={routeColors}
-          lineWidth={5.5}
-          transparent
-          opacity={0.98}
-        />
+        <>
+          <Line
+            points={routePoints}
+            vertexColors={routeColors}
+            lineWidth={5.5}
+            transparent
+            opacity={0.98}
+          />
+          {routeTubeGeo && (
+            <mesh geometry={routeTubeGeo}>
+              <meshStandardMaterial
+                color="#22d3ee"
+                emissive="#06b6d4"
+                emissiveIntensity={1.1}
+                transparent
+                opacity={0.42}
+                depthWrite={false}
+              />
+            </mesh>
+          )}
+        </>
       )}
 
       {/* Place & Corridor Nodes + 3D Volumetric Rooms + Facility Radar Pillars */}

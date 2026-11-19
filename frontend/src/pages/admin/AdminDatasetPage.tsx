@@ -478,6 +478,60 @@ export const AdminDatasetPage: React.FC = () => {
         </div>
       </div>
 
+      {/* VISUAL 3-STEP AI FLOOR MODELING PIPELINE STATUS */}
+      <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200/80 shadow-soft">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
+          {[
+            {
+              step: '01',
+              title: 'Upload Floor Photos / Video',
+              sub: `${dataset.totals.photos} clean WebP frames indexed`,
+              done: dataset.totals.photos > 0,
+            },
+            {
+              step: '02',
+              title: 'Auto-Create 2D & 3D Graph',
+              sub: `${dataset.totals.nodes} mapped spots · ${graph.edges.length} paths`,
+              done: dataset.totals.nodes >= 2 && graph.edges.length >= 1,
+            },
+            {
+              step: '03',
+              title: 'Dual-Region DINOv2 + OCR Ready',
+              sub: report ? `Top-1 Accuracy: ${Math.round(report.top1 * 100)}%` : 'Auto-rebuilds on upload',
+              done: Boolean(report && report.photos > 0),
+            },
+          ].map((item, idx) => (
+            <div
+              key={item.step}
+              className={`flex items-center gap-3 rounded-xl p-3 ring-1 transition ${
+                item.done
+                  ? 'bg-emerald-50/70 ring-emerald-200'
+                  : 'bg-slate-50 ring-slate-200/80'
+              }`}
+            >
+              <div
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-extrabold ${
+                  item.done
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'bg-slate-200 text-slate-600'
+                }`}
+              >
+                {item.done ? <CheckCircle2 className="h-4 w-4" /> : item.step}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-extrabold text-slate-900 truncate">
+                  {item.title}
+                </div>
+                <div className="text-[11px] text-slate-500 truncate">{item.sub}</div>
+              </div>
+              {idx < 2 && (
+                <ArrowRight className="hidden sm:block h-4 w-4 text-slate-300 shrink-0" />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+
       {/* DECISION-POINT COVERAGE ADVISOR + SELF-GROWING ACTIVE LEARNING STATUS */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="rounded-2xl bg-indigo-50/80 p-4 ring-1 ring-indigo-200/80 flex flex-col justify-between space-y-2">

@@ -174,7 +174,7 @@ export const LandingPage: React.FC = () => {
   }, [loadData]);
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-[#070B18] text-white selection:bg-cyan-500/30 selection:text-cyan-200">
+    <div className="min-h-screen overflow-x-clip bg-[#070B18] text-white selection:bg-cyan-500/30 selection:text-cyan-200">
       <Navbar variant="dark" />
 
       {/* =================================================================== */}
@@ -511,84 +511,128 @@ export const LandingPage: React.FC = () => {
                     {HOW_IT_WORKS_STEPS[activeStep].title}
                   </h4>
 
-                  {/* Dynamic Visual Illustration per Step */}
-                  <div className="mt-5 rounded-2xl bg-white/[0.05] p-4 ring-1 ring-white/10 space-y-3">
+                  {/* Dynamic Animated SVG Graphic per Pipeline Stage */}
+                  <div className="mt-5 rounded-2xl bg-white/[0.04] p-4 ring-1 ring-white/10 space-y-3">
                     {activeStep === 0 && (
                       <div className="space-y-3">
-                        <div className="flex items-center justify-between rounded-xl bg-cyan-500/10 px-3.5 py-2.5 ring-1 ring-cyan-400/30">
-                          <span className="text-xs font-semibold text-cyan-200">
-                            📷 visitor_corridor_still.jpg
-                          </span>
-                          <span className="rounded bg-cyan-400/20 px-2 py-0.5 text-[10px] font-bold text-cyan-300">
-                            EXIF Stripped
+                        <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-950 ring-1 ring-cyan-400/35 ai-hud-grid">
+                          <svg viewBox="0 0 280 130" className="h-full w-full" aria-hidden="true">
+                            {/* Corridor Perspective Lines */}
+                            <line x1="0" y1="0" x2="88" y2="34" stroke="#38bdf8" strokeOpacity="0.22" strokeWidth="1" />
+                            <line x1="280" y1="0" x2="192" y2="34" stroke="#38bdf8" strokeOpacity="0.22" strokeWidth="1" />
+                            <line x1="0" y1="130" x2="88" y2="112" stroke="#38bdf8" strokeOpacity="0.22" strokeWidth="1" />
+                            <line x1="280" y1="130" x2="192" y2="112" stroke="#38bdf8" strokeOpacity="0.22" strokeWidth="1" />
+                            {/* Corridor Door Frame */}
+                            <rect x="106" y="42" width="68" height="72" rx="4" fill="#0f172a" stroke="#38bdf8" strokeOpacity="0.55" strokeWidth="1.4" />
+                            <circle cx="164" cy="82" r="2.5" fill="#94a3b8" />
+                            {/* Glowing Room Number Plaque */}
+                            <rect x="116" y="20" width="48" height="16" rx="3" fill="rgba(16,185,129,0.22)" stroke="#34d399" strokeWidth="1.5" />
+                            <text x="140" y="31" textAnchor="middle" fill="#6ee7b7" fontSize="9.5" fontFamily="monospace" fontWeight="800">
+                              RM 308
+                            </text>
+                            {/* Viewfinder Corner Brackets */}
+                            <path d="M 16 26 L 16 14 L 28 14" fill="none" stroke="#22d3ee" strokeWidth="2.2" />
+                            <path d="M 264 26 L 264 14 L 252 14" fill="none" stroke="#22d3ee" strokeWidth="2.2" />
+                            <path d="M 16 104 L 16 116 L 28 116" fill="none" stroke="#22d3ee" strokeWidth="2.2" />
+                            <path d="M 264 104 L 264 116 L 252 116" fill="none" stroke="#22d3ee" strokeWidth="2.2" />
+                          </svg>
+                          <div className="ai-scan-beam pointer-events-none absolute inset-x-0 h-0.5 bg-gradient-to-r from-transparent via-cyan-300 to-transparent shadow-[0_0_14px_rgba(34,211,238,0.95)]" />
+                          <span className="absolute right-2.5 top-2 rounded-md bg-emerald-500/20 px-2 py-0.5 text-[9px] font-bold text-emerald-300 ring-1 ring-emerald-400/40">
+                            EXIF Stripped · Face Blur
                           </span>
                         </div>
                         <div className="grid grid-cols-2 gap-2 text-xs">
-                          <div className="rounded-xl bg-white/[0.04] p-3 ring-1 ring-white/10">
-                            <div className="text-slate-400 text-[11px]">Input Mode</div>
-                            <div className="font-bold text-white mt-0.5">
-                              Still Photo / Drop
-                            </div>
+                          <div className="rounded-xl bg-white/[0.04] p-2.5 ring-1 ring-white/10">
+                            <div className="text-slate-400 text-[10px]">Input Mode</div>
+                            <div className="font-bold text-white mt-0.5">1 Still Photo / Drop</div>
                           </div>
-                          <div className="rounded-xl bg-white/[0.04] p-3 ring-1 ring-white/10">
-                            <div className="text-slate-400 text-[11px]">Privacy Filter</div>
-                            <div className="font-bold text-emerald-300 mt-0.5">
-                              Auto Face-Blur
-                            </div>
+                          <div className="rounded-xl bg-white/[0.04] p-2.5 ring-1 ring-white/10">
+                            <div className="text-slate-400 text-[10px]">Hardware Needed</div>
+                            <div className="font-bold text-emerald-300 mt-0.5">Zero Beacons</div>
                           </div>
                         </div>
                       </div>
                     )}
 
                     {activeStep === 1 && (
-                      <div className="space-y-2.5 text-xs">
-                        <div className="flex items-center justify-between rounded-xl bg-indigo-500/15 px-3 py-2 ring-1 ring-indigo-400/30">
-                          <span className="font-semibold text-indigo-200">
-                            DINOv2 Cosine Embedding Match
-                          </span>
-                          <span className="font-mono text-cyan-300">Visual Vector</span>
+                      <div className="space-y-3 text-xs">
+                        <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-950 p-2 ring-1 ring-indigo-400/35">
+                          <svg viewBox="0 0 280 120" className="h-full w-full" aria-hidden="true">
+                            {/* Dual-Region DINOv2 Feature Spectrum Bars */}
+                            {[34, 58, 42, 76, 64, 88, 52, 70, 92, 48, 62, 78].map((val, i) => (
+                              <rect
+                                key={i}
+                                x={14 + i * 11}
+                                y={102 - val * 0.72}
+                                width="7"
+                                height={val * 0.72}
+                                rx="2"
+                                fill={i % 2 === 0 ? '#38bdf8' : '#818cf8'}
+                                opacity={0.85}
+                              />
+                            ))}
+                            <text x="14" y="16" fill="#93c5fd" fontSize="8" fontFamily="monospace" fontWeight="700">
+                              DINOv2 768-D FUSION VECTOR
+                            </text>
+                            {/* Fusion Bridge Arrow */}
+                            <path
+                              d="M 152 60 L 188 60"
+                              stroke="#34d399"
+                              strokeWidth="2.4"
+                              strokeDasharray="4 3"
+                              className="route-dash"
+                            />
+                            {/* Locked Confidence Node */}
+                            <circle cx="228" cy="60" r="30" fill="rgba(16,185,129,0.16)" stroke="#34d399" strokeWidth="2" />
+                            <text x="228" y="57" textAnchor="middle" fill="#ffffff" fontSize="14" fontWeight="800">
+                              99%
+                            </text>
+                            <text x="228" y="70" textAnchor="middle" fill="#6ee7b7" fontSize="7.5" fontWeight="700">
+                              LOCKED
+                            </text>
+                          </svg>
                         </div>
                         <div className="flex items-center justify-between rounded-xl bg-emerald-500/15 px-3 py-2 ring-1 ring-emerald-400/30">
-                          <span className="font-semibold text-emerald-200">
-                            Signboard OCR Fusion
-                          </span>
-                          <span className="font-mono text-emerald-300">
-                            "CARDIOLOGY · L2"
-                          </span>
-                        </div>
-                        <div className="rounded-xl bg-white/[0.04] p-2.5 text-[11px] text-slate-300">
-                          Side-by-side reference verification ensures you confirm the exact spot before walking.
+                          <span className="font-semibold text-emerald-200">Signboard OCR Fusion</span>
+                          <span className="font-mono text-emerald-300">"CARDIOLOGY · L2"</span>
                         </div>
                       </div>
                     )}
 
                     {activeStep === 2 && (
-                      <div className="space-y-2.5 text-xs">
-                        <div className="flex items-center gap-2.5 rounded-xl bg-white/[0.06] px-3 py-2">
-                          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-cyan-500 text-slate-950 font-bold">
-                            1
-                          </span>
-                          <div>
-                            <div className="font-semibold text-white">
-                              Walk straight past Main Reception
-                            </div>
-                            <div className="text-[10px] text-slate-400">
-                              Ground Floor · Landmark photo attached
-                            </div>
-                          </div>
+                      <div className="space-y-3 text-xs">
+                        <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-950 ring-1 ring-emerald-400/35">
+                          <svg viewBox="0 0 280 128" className="h-full w-full" aria-hidden="true">
+                            {/* Ground Floor Isometric Plate */}
+                            <polygon points="140,78 242,98 140,118 38,98" fill="rgba(56,189,248,0.12)" stroke="#38bdf8" strokeOpacity="0.45" strokeWidth="1.2" />
+                            {/* Floor 2 Isometric Plate */}
+                            <polygon points="140,18 242,38 140,58 38,38" fill="rgba(16,185,129,0.12)" stroke="#34d399" strokeOpacity="0.55" strokeWidth="1.2" />
+                            {/* Vertical Lift Beam */}
+                            <line x1="140" y1="98" x2="140" y2="38" stroke="#22d3ee" strokeWidth="5" strokeOpacity="0.22" />
+                            {/* Animated Multi-Floor A* Path */}
+                            <path
+                              id="landingRouteDemo"
+                              d="M 80 98 L 140 98 L 140 38 L 198 38"
+                              fill="none"
+                              stroke="#34d399"
+                              strokeWidth="2.8"
+                              strokeDasharray="6 4"
+                              strokeLinecap="round"
+                              className="route-dash"
+                            />
+                            <circle cx="80" cy="98" r="5" fill="#0ea5e9" stroke="#ffffff" strokeWidth="1.5" />
+                            <circle cx="198" cy="38" r="5.5" fill="#f43f5e" stroke="#ffffff" strokeWidth="1.5" />
+                            {/* Gliding Beacon Dot */}
+                            <circle r="4" fill="#ffffff">
+                              <animateMotion dur="3.2s" repeatCount="indefinite" path="M 80 98 L 140 98 L 140 38 L 198 38" />
+                            </circle>
+                            <text x="54" y="114" fill="#93c5fd" fontSize="8" fontWeight="700">START (G)</text>
+                            <text x="180" y="24" fill="#6ee7b7" fontSize="8" fontWeight="700">DEST (F2) ★</text>
+                          </svg>
                         </div>
-                        <div className="flex items-center gap-2.5 rounded-xl bg-white/[0.06] px-3 py-2">
-                          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-500 text-white font-bold">
-                            2
-                          </span>
-                          <div>
-                            <div className="font-semibold text-white">
-                              Take Central Lift to Floor 2 (Accessible)
-                            </div>
-                            <div className="text-[10px] text-emerald-300">
-                              Closed East Staircase automatically avoided
-                            </div>
-                          </div>
+                        <div className="flex items-center justify-between rounded-xl bg-white/[0.06] px-3 py-2">
+                          <span className="font-semibold text-white">Multi-Floor 3D A* + Voice</span>
+                          <span className="text-[10px] font-bold text-emerald-300">Lift / Wheelchair Ready</span>
                         </div>
                       </div>
                     )}

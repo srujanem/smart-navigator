@@ -1919,6 +1919,114 @@ export const RoutePage: React.FC = () => {
                 </span>
               </div>
 
+              {/* Interactive Multi-Floor Journey Elevation & Progress Map */}
+              {route.steps.length >= 2 && (() => {
+                const lvls = route.steps.map((s) => s.level);
+                const minL = Math.min(...lvls);
+                const maxL = Math.max(...lvls);
+                const spanL = Math.max(1, maxL - minL);
+                const padX = 16;
+                const w = 320;
+                const h = 58;
+                const pts = route.steps.map((st, idx) => {
+                  const x = padX + (idx / Math.max(1, route.steps.length - 1)) * (w - padX * 2);
+                  const y =
+                    maxL === minL
+                      ? h / 2
+                      : h - 14 - ((st.level - minL) / spanL) * (h - 28);
+                  return { x, y, step: st, idx };
+                });
+                const fullPath = pts
+                  .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+                  .join(' ');
+                const donePath = pts
+                  .slice(0, activeStepIdx + 1)
+                  .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+                  .join(' ');
+                const pct = Math.round(
+                  ((activeStepIdx + 1) / Math.max(1, route.steps.length)) * 100,
+                );
+                return (
+                  <div className="rounded-2xl bg-white p-3.5 ring-1 ring-slate-200/80 shadow-soft space-y-2">
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="font-extrabold uppercase tracking-wider text-slate-600">
+                        Journey Elevation · {route.levels.length} Floor
+                        {route.levels.length > 1 ? 's' : ''}
+                      </span>
+                      <span className="font-mono font-bold text-indigo-600">
+                        {pct}% · Step {activeStepIdx + 1}/{route.steps.length}
+                      </span>
+                    </div>
+                    <svg viewBox={`0 0 ${w} ${h}`} className="h-14 w-full overflow-visible">
+                      <defs>
+                        <linearGradient id="journeyProgGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                          <stop offset="0%" stopColor="#06b6d4" />
+                          <stop offset="100%" stopColor="#10b981" />
+                        </linearGradient>
+                      </defs>
+                      <path
+                        d={fullPath}
+                        fill="none"
+                        stroke="#e2e8f0"
+                        strokeWidth="4"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <path
+                        d={donePath}
+                        fill="none"
+                        stroke="url(#journeyProgGrad)"
+                        strokeWidth="4.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      {pts.map((p) => {
+                        const isCur = p.idx === activeStepIdx;
+                        const isPassed = p.idx <= activeStepIdx;
+                        const isEnd = p.idx === pts.length - 1;
+                        return (
+                          <g
+                            key={p.idx}
+                            transform={`translate(${p.x}, ${p.y})`}
+                            onClick={() => handleStepClick(p.step, p.idx)}
+                            style={{ cursor: 'pointer' }}
+                          >
+                            {isCur && (
+                              <circle r="10" fill="#06b6d4" opacity="0.22" className="radar-ping-svg" />
+                            )}
+                            <circle
+                              r={isCur ? 5.5 : isEnd ? 5 : 3.5}
+                              fill={
+                                isEnd
+                                  ? '#10b981'
+                                  : isCur
+                                    ? '#0284c7'
+                                    : isPassed
+                                      ? '#06b6d4'
+                                      : '#cbd5e1'
+                              }
+                              stroke="#ffffff"
+                              strokeWidth="1.8"
+                            />
+                            {(p.idx === 0 || isCur || isEnd) && (
+                              <text
+                                y={p.y < 22 ? 15 : -9}
+                                textAnchor="middle"
+                                fontSize="8.5"
+                                fontWeight="800"
+                                fill={isCur ? '#0284c7' : '#64748b'}
+                              >
+                                {p.step.level === 0 ? 'G' : `F${p.step.level}`}
+                              </text>
+                            )}
+                          </g>
+                        );
+                      })}
+                    </svg>
+                  </div>
+                );
+              })()}
+
               {altIndex >= 0 && (
                 <div className="rounded-xl bg-cyan-50 px-3.5 py-2 text-xs text-cyan-900 ring-1 ring-cyan-200 flex items-center justify-between">
                   <span>
@@ -2282,6 +2390,53 @@ export const RoutePage: React.FC = () => {
                   {activeStep.distance_m > 0 ? ` · ${Math.round(activeStep.distance_m)}m` : ''}
                 </span>
               </div>
+            </div>
+
+            {/* Center 3D Perspective AR Floor Chevrons / Arrival Ring inside Photo Story */}
+            <div className="pointer-events-none relative z-10 flex items-center justify-center my-auto">
+              {activeStep.icon === 'arrive' || activeStepIdx === route.steps.length - 1 ? (
+                <div className="arrival-pop flex flex-col items-center gap-1.5 rounded-3xl bg-emerald-950/85 px-6 py-4 ring-2 ring-emerald-400 shadow-2xl backdrop-blur-md">
+                  <svg viewBox="0 0 60 60" className="h-12 w-12">
+                    <circle
+                      cx="30"
+                      cy="30"
+                      r="24"
+                      fill="rgba(16,185,129,0.2)"
+                      stroke="#34d399"
+                      strokeWidth="3.5"
+                      className="arrival-ring-draw"
+                    />
+                    <path
+                      d="M19 31 L27 39 L42 22"
+                      fill="none"
+                      stroke="#ffffff"
+                      strokeWidth="4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  <span className="text-xs font-extrabold uppercase tracking-widest text-emerald-200">
+                    ✨ Destination Reached
+                  </span>
+                </div>
+              ) : activeStep.icon !== 'lift' && activeStep.icon !== 'up' && activeStep.icon !== 'down' ? (
+                <div
+                  style={{
+                    transform: `perspective(420px) rotateX(56deg) rotateZ(${
+                      activeStep.icon === 'left'
+                        ? '-40deg'
+                        : activeStep.icon === 'right'
+                          ? '40deg'
+                          : '0deg'
+                    })`,
+                  }}
+                  className="flex flex-col items-center -space-y-4 drop-shadow-[0_0_16px_rgba(34,211,238,0.9)]"
+                >
+                  <ChevronUp className="h-12 w-12 text-cyan-300 stroke-[3.2] street-chevron-3" />
+                  <ChevronUp className="h-14 w-14 text-cyan-200 stroke-[3.2] street-chevron-2" />
+                  <ChevronUp className="h-16 w-16 text-white stroke-[3.4] street-chevron-1" />
+                </div>
+              ) : null}
             </div>
 
             {/* Bottom Step Instruction & Checkpoint Warnings */}
