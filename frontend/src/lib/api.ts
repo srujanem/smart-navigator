@@ -935,24 +935,37 @@ export async function uploadAdminPhotos(
   files: File[],
   headingDeg?: number | null,
 ): Promise<UploadPhotosResponse> {
-  const fd = new FormData();
-  fd.append('node_id', nodeId);
-  if (headingDeg !== undefined && headingDeg !== null) {
-    fd.append('heading_deg', String(headingDeg));
-  }
+  const readyFiles: File[] = [];
   for (const f of files) {
     if (f.type.startsWith('image/')) {
       const opt = await compressImageForUpload(f, 1600, 0.88);
-      fd.append('files', opt);
+      readyFiles.push(opt);
     } else {
-      fd.append('files', f);
+      readyFiles.push(f);
     }
   }
-  return request<UploadPhotosResponse>(
-    `/api/admin/venues/${encodeURIComponent(slug)}/photos`,
-    { method: 'POST', body: fd },
-    true,
-  );
+
+  const BATCH_SIZE = 4;
+  const merged: UploadPhotosResponse = { accepted: [], rejected: [] };
+  for (let i = 0; i < readyFiles.length; i += BATCH_SIZE) {
+    const chunk = readyFiles.slice(i, i + BATCH_SIZE);
+    const fd = new FormData();
+    fd.append('node_id', nodeId);
+    if (headingDeg !== undefined && headingDeg !== null) {
+      fd.append('heading_deg', String(headingDeg));
+    }
+    for (const cf of chunk) {
+      fd.append('files', cf);
+    }
+    const res = await request<UploadPhotosResponse>(
+      `/api/admin/venues/${encodeURIComponent(slug)}/photos`,
+      { method: 'POST', body: fd },
+      true,
+    );
+    merged.accepted.push(...res.accepted);
+    merged.rejected.push(...res.rejected);
+  }
+  return merged;
 }
 
 export async function autoMapAdminDataset(
@@ -967,17 +980,6 @@ export async function autoMapAdminDataset(
     onProgressStage?: (stageText: string) => void;
   },
 ): Promise<AutoMapDatasetResponse> {
-  const fd = new FormData();
-  fd.append('mode', options.mode);
-  if (options.fromNodeId) fd.append('from_node_id', options.fromNodeId);
-  if (options.toNodeId) fd.append('to_node_id', options.toNodeId);
-  if (options.levelFilter !== undefined && options.levelFilter !== null) {
-    fd.append('level_filter', String(options.levelFilter));
-  }
-  if (options.fallbackNodeId) {
-    fd.append('fallback_node_id', options.fallbackNodeId);
-  }
-
   const readyFiles: File[] = [];
   for (const f of options.files) {
     const ext = f.name.split('.').pop()?.toLowerCase() || '';
@@ -1001,18 +1003,62 @@ export async function autoMapAdminDataset(
     }
   }
 
-  options.onProgressStage?.(
-    `Uploading ${readyFiles.length} optimized frame(s) & running AI Route/OCR Auto-Mapper...`,
-  );
-  for (const rf of readyFiles) {
-    fd.append('files', rf);
+  // Send in fast micro-batches of 4 frames so large 20-50 photo/video uploads never hit proxy timeouts
+  const BATCH_SIZE = 4;
+  const totalBatches = Math.max(1, Math.ceil(readyFiles.length / BATCH_SIZE));
+  const merged: AutoMapDatasetResponse = {
+    accepted: [],
+    rejected: [],
+    nodes_updated: 0,
+    edges_created: 0,
+    raw_mb: 0,
+    stored_mb: 0,
+    space_saved_mb: 0,
+  };
+  const updatedNodeIds = new Set<string>();
+
+  for (let b = 0; b < totalBatches; b++) {
+    const chunk = readyFiles.slice(b * BATCH_SIZE, (b + 1) * BATCH_SIZE);
+    if (chunk.length === 0) continue;
+    const isLastBatch = b === totalBatches - 1;
+    const processedSoFar = Math.min(readyFiles.length, (b + 1) * BATCH_SIZE);
+    options.onProgressStage?.(
+      totalBatches > 1
+        ? `Uploading & AI-mapping batch ${b + 1}/${totalBatches} (${processedSoFar} of ${readyFiles.length} frames)...`
+        : `Uploading ${readyFiles.length} optimized frame(s) & running AI Route/OCR Auto-Mapper...`,
+    );
+
+    const fd = new FormData();
+    fd.append('mode', options.mode);
+    if (options.fromNodeId) fd.append('from_node_id', options.fromNodeId);
+    if (options.toNodeId) fd.append('to_node_id', options.toNodeId);
+    if (options.levelFilter !== undefined && options.levelFilter !== null) {
+      fd.append('level_filter', String(options.levelFilter));
+    }
+    if (options.fallbackNodeId) {
+      fd.append('fallback_node_id', options.fallbackNodeId);
+    }
+    fd.append('rebuild_index', isLastBatch ? 'true' : 'false');
+    for (const rf of chunk) {
+      fd.append('files', rf);
+    }
+
+    const res = await request<AutoMapDatasetResponse>(
+      `/api/admin/venues/${encodeURIComponent(slug)}/dataset/auto-map`,
+      { method: 'POST', body: fd },
+      true,
+    );
+    merged.accepted.push(...res.accepted);
+    merged.rejected.push(...res.rejected);
+    res.accepted.forEach((a) => updatedNodeIds.add(a.node_id));
+    merged.edges_created = (merged.edges_created || 0) + (res.edges_created || 0);
+    merged.raw_mb = +(merged.raw_mb + (res.raw_mb || 0)).toFixed(2);
+    merged.stored_mb = +(merged.stored_mb + (res.stored_mb || 0)).toFixed(2);
+    merged.space_saved_mb = +(merged.space_saved_mb + (res.space_saved_mb || 0)).toFixed(2);
   }
 
-  return request<AutoMapDatasetResponse>(
-    `/api/admin/venues/${encodeURIComponent(slug)}/dataset/auto-map`,
-    { method: 'POST', body: fd },
-    true,
-  );
+  merged.nodes_updated = updatedNodeIds.size;
+  return merged;
 }
 
 export function updateAdminPhoto(

@@ -13,6 +13,7 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
+from starlette.concurrency import run_in_threadpool
 
 from ..auth import (
     LOCKOUT_SECONDS,
@@ -1509,15 +1510,15 @@ async def admin_upload_photos(
         rel_path = f"venues/{v.slug}/photos/{uuid.uuid4().hex[:12]}.webp"
         dest_path = MEDIA_DIR / rel_path
         try:
-            img, _ = save_clean_image(raw, dest_path, max_side=1600)
-            vec = embedder_service.embed(img)
+            img, _ = await run_in_threadpool(save_clean_image, raw, dest_path, 1600)
+            vec = await run_in_threadpool(embedder_service.embed, img)
             ok, q_score, reason = validate_dataset_photo(img, vec, existing_vecs)
             if not ok:
                 dest_path.unlink(missing_ok=True)
                 rejected.append({"filename": fname, "reason": reason or "Quality check failed"})
                 continue
 
-            ocr_toks = ocr_service.extract_text(img)
+            ocr_toks = await run_in_threadpool(ocr_service.extract_text, img)
             fn_nums = _extract_filename_room_hints(fname)
             for fn_n in reversed(fn_nums):
                 if fn_n not in ocr_toks:
@@ -1577,7 +1578,7 @@ async def admin_upload_photos(
     session.commit()
     ensure_venue_graph_connected(session, v)
     try:
-        rebuild_venue_index(session, v)
+        await run_in_threadpool(rebuild_venue_index, session, v)
     except Exception:  # noqa: BLE001
         pass
     return {"accepted": accepted, "rejected": rejected}
@@ -1930,6 +1931,7 @@ async def admin_auto_map_dataset(
     to_node_id: Optional[str] = Form(default=None),
     level_filter: Optional[int] = Form(default=None),
     fallback_node_id: Optional[str] = Form(default=None),
+    rebuild_index: bool = Form(True),
     files: List[UploadFile] = File(...),
     user: User = Depends(require_admin),
     session: Session = Depends(get_session),
@@ -2069,21 +2071,21 @@ async def admin_auto_map_dataset(
         rel_path = f"venues/{v.slug}/photos/{uuid.uuid4().hex[:12]}.webp"
         dest_path = MEDIA_DIR / rel_path
         try:
-            img, _ = save_clean_image(frame_bytes, dest_path, max_side=1600)
+            img, _ = await run_in_threadpool(save_clean_image, frame_bytes, dest_path, 1600)
             q_score = compute_sharpness_quality(img)
             if q_score < 0.13:
                 dest_path.unlink(missing_ok=True)
                 rejected.append({"filename": label, "reason": f"Motion blur detected (sharpness {int(q_score*100)}%)"})
                 continue
 
-            vec = embedder_service.embed(img)
+            vec = await run_in_threadpool(embedder_service.embed, img)
             # Deduplicate consecutive near-identical corridor frames
             if last_accepted_vec is not None and float(np.dot(vec, last_accepted_vec)) > 0.965:
                 dest_path.unlink(missing_ok=True)
                 rejected.append({"filename": label, "reason": "Duplicate stationary frame skipped"})
                 continue
 
-            ocr_toks = ocr_service.extract_text(img)
+            ocr_toks = await run_in_threadpool(ocr_service.extract_text, img)
             # Also check filename for explicit room number hints (while ignoring camera date/time timestamps)
             fname_nums = _extract_filename_room_hints(label)
             for fn_num in reversed(fname_nums):
@@ -2272,10 +2274,11 @@ async def admin_auto_map_dataset(
 
     session.commit()
     graph_stats = ensure_venue_graph_connected(session, v)
-    try:
-        rebuild_venue_index(session, v)
-    except Exception:  # noqa: BLE001
-        pass
+    if rebuild_index:
+        try:
+            await run_in_threadpool(rebuild_venue_index, session, v)
+        except Exception:  # noqa: BLE001
+            pass
     saved_mb = round(max(0.0, (raw_bytes_total - saved_bytes_total) / (1024.0 * 1024.0)), 2)
     return {
         "accepted": accepted,

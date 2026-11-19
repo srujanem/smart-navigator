@@ -27,7 +27,7 @@ class OCRService:
         try:
             from rapidocr_onnxruntime import RapidOCR  # type: ignore
 
-            self._engine = RapidOCR(det_limit_side_len=1360, det_db_box_thresh=0.35, det_db_thresh=0.22)
+            self._engine = RapidOCR(det_limit_side_len=1024, det_db_box_thresh=0.35, det_db_thresh=0.22)
             self._name = "rapidocr-ppocrv4"
             log.info("RapidOCR engine initialized.")
         except Exception as exc:  # noqa: BLE001
@@ -63,8 +63,8 @@ class OCRService:
             from PIL import ImageEnhance, ImageOps
 
             rgb = img.convert("RGB")
-            if max(rgb.size) > 1360:
-                scale = 1360 / float(max(rgb.size))
+            if max(rgb.size) > 1024:
+                scale = 1024 / float(max(rgb.size))
                 rgb = rgb.resize((int(rgb.width * scale), int(rgb.height * scale)), Image.Resampling.BILINEAR)
             w_px, h_px = max(1, rgb.width), max(1, rgb.height)
             arr = np.asarray(rgb)[:, :, ::-1]  # RGB -> BGR for RapidOCR
@@ -112,7 +112,7 @@ class OCRService:
                 crop = rgb.crop((0, 0, w_px, crop_h))
                 crop = ImageOps.autocontrast(crop, cutoff=1)
                 crop = ImageEnhance.Sharpness(crop).enhance(2.0)
-                up_w, up_h = int(crop.width * 1.7), int(crop.height * 1.7)
+                up_w, up_h = int(crop.width * 1.35), int(crop.height * 1.35)
                 crop_up = crop.resize((up_w, up_h), Image.Resampling.BICUBIC)
                 res_top, _ = self._engine(np.asarray(crop_up)[:, :, ::-1])
                 for item in (res_top or []):
