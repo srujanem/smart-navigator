@@ -1540,6 +1540,9 @@ async def admin_upload_photos(
                             session, v, fac_hit, target_fl, all_v_nodes, v_node_map, all_v_nodes, {}, {}
                         )
 
+            frame_hdg = _extract_filename_heading(fname)
+            effective_hdg = frame_hdg if frame_hdg is not None else clean_heading
+
             p_row = Photo(
                 venue_id=v.id,
                 node_id=target_photo_node.id,
@@ -1549,7 +1552,7 @@ async def admin_upload_photos(
                 embedding=embedder_service.to_bytes(vec),
                 embedder=embedder_service.name,
                 ocr_text=" ".join(ocr_toks),
-                heading_deg=clean_heading,
+                heading_deg=effective_hdg,
                 uploaded_by_id=user.id,
                 media_type="photo",
                 thumbnail_path=None,
@@ -1563,7 +1566,7 @@ async def admin_upload_photos(
                 "url": f"/media/{rel_path}",
                 "media_type": "photo",
                 "quality": q_score,
-                "heading_deg": clean_heading,
+                "heading_deg": effective_hdg,
                 "node_id": target_photo_node.id,
                 "node_name": target_photo_node.name,
             })
@@ -1624,6 +1627,54 @@ def admin_delete_photo(
     return {"ok": True}
 
 
+def _extract_filename_heading(filename: str) -> Optional[float]:
+    """
+    Extracts an explicit 360° compass heading tag from a filename (e.g. 'sweep_hdg090.webp' -> 90.0).
+    """
+    m = re.search(r"(?i)(?:^|[-_.\s@])hdg(\d{1,3})\b", filename)
+    if m:
+        return float(int(m.group(1)) % 360)
+    return None
+
+
+def _unwrap_360_panorama_frames(fname: str, raw_bytes: bytes) -> list[tuple[str, bytes]]:
+    """
+    If `raw_bytes` is a wide 360° equirectangular or smartphone panorama image (width >= 2.1 * height),
+    automatically slices it into 4 directional perspective views (0° N, 90° E, 180° S, 270° W)
+    so DINOv2 + RapidOCR index every wall and door plaque around the full 360° circle.
+    """
+    try:
+        from PIL import Image as PILImage
+
+        with PILImage.open(io.BytesIO(raw_bytes)) as im:
+            w, h = im.size
+            if w < 720 or h < 240 or (w / float(max(1, h))) < 2.1:
+                return [(fname, raw_bytes)]
+            rgb = im.convert("RGB")
+            base_stem = re.sub(r"\.[a-zA-Z0-9]{2,5}$", "", fname)
+            slices: list[tuple[str, bytes]] = []
+            slice_w = max(int(h * 1.15), w // 4)
+            headings = [(0, "000"), (90, "090"), (180, "180"), (270, "270")]
+            for idx_s, (_, hdg_str) in enumerate(headings):
+                x0 = int((idx_s * w) / 4)
+                if x0 + slice_w <= w:
+                    crop = rgb.crop((x0, 0, x0 + slice_w, h))
+                else:
+                    # Wrap around 360° seam
+                    part1 = rgb.crop((x0, 0, w, h))
+                    rem = (x0 + slice_w) - w
+                    part2 = rgb.crop((0, 0, rem, h))
+                    crop = PILImage.new("RGB", (slice_w, h))
+                    crop.paste(part1, (0, 0))
+                    crop.paste(part2, (part1.width, 0))
+                buf = io.BytesIO()
+                crop.save(buf, format="WEBP", quality=90)
+                slices.append((f"{base_stem}_360_hdg{hdg_str}.webp", buf.getvalue()))
+            return slices
+    except Exception:  # noqa: BLE001
+        return [(fname, raw_bytes)]
+
+
 def _extract_filename_room_hints(filename: str) -> list[str]:
     """
     Extracts explicit room/door numbers from an image or video filename
@@ -1631,7 +1682,9 @@ def _extract_filename_room_hints(filename: str) -> list[str]:
     """
     base = filename.split("@")[0].strip()
     base = re.sub(r"\.[a-zA-Z0-9]{2,5}$", "", base).strip()
-    cleaned = re.sub(r"20[1-3]\d[-_.]?\d{2}[-_.]?\d{2}", " ", base)
+    cleaned = re.sub(r"(?i)(?:^|[-_.\s])hdg\d{1,3}\b", " ", base)
+    cleaned = re.sub(r"(?i)_360\b", " ", cleaned)
+    cleaned = re.sub(r"20[1-3]\d[-_.]?\d{2}[-_.]?\d{2}", " ", cleaned)
     cleaned = re.sub(r"\b\d{6,}\b", " ", cleaned)
     cleaned = re.sub(r"\b(?:1920|1080|3840|2160|4000|3000|202[0-9])\b", " ", cleaned)
     cleaned = re.sub(r"(?i)whatsapp\s*image.*", " ", cleaned)
@@ -2004,7 +2057,7 @@ async def admin_auto_map_dataset(
             finally:
                 tmp_video.unlink(missing_ok=True)
         else:
-            raw_frames.append((fname, raw))
+            raw_frames.extend(_unwrap_360_panorama_frames(fname, raw))
 
     accepted = []
     rejected = []
@@ -2083,13 +2136,13 @@ async def admin_auto_map_dataset(
                     best_ocr_reason = f"Auto-Created {best_ocr_node.name}"
 
             assigned_node: Optional[Node] = None
-            assigned_heading: Optional[float] = None
+            assigned_heading: Optional[float] = _extract_filename_heading(label)
             match_method = "Route Path Interpolation"
 
             if best_ocr_node is not None and best_ocr_score >= 0.72:
                 assigned_node = best_ocr_node
                 match_method = f"OCR Signboard ({best_ocr_reason or 'Text Match'})"
-                if route_path_ids and assigned_node.id in route_path_ids:
+                if assigned_heading is None and route_path_ids and assigned_node.id in route_path_ids:
                     r_idx = route_path_ids.index(assigned_node.id)
                     assigned_heading = route_headings[r_idx]
             elif mode == "route" and route_path_ids and len(route_path_ids) >= 2:
@@ -2104,7 +2157,8 @@ async def admin_auto_map_dataset(
                         best_d_diff = abs(cd - target_d)
                         chosen_i = r_i
                 assigned_node = node_map[route_path_ids[chosen_i]]
-                assigned_heading = route_headings[chosen_i]
+                if assigned_heading is None:
+                    assigned_heading = route_headings[chosen_i]
                 match_method = f"Walk Path Slot #{chosen_i + 1}/{len(route_path_ids)}"
             else:
                 # Visual similarity against existing photos on candidate floor/venue

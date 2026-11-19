@@ -6,6 +6,7 @@ import {
   Compass,
   Crosshair,
   GitCommit,
+  Globe,
   Image as ImageIcon,
   Layers,
   Loader2,
@@ -20,6 +21,7 @@ import {
 } from 'lucide-react';
 import {
   autoConnectAdminGraph,
+  autoMapAdminDataset,
   createAdminBuilding,
   createAdminEdge,
   createAdminFloor,
@@ -39,6 +41,7 @@ import {
 } from '../../lib/api';
 import { formatLevel } from '../../lib/locationStore';
 import { FloorPlan2D } from '../../components/FloorPlan2D';
+import { Camera360CaptureModal } from '../../components/Camera360CaptureModal';
 import { ErrorState } from '../../components/ErrorState';
 import { useAdminVenue } from './adminVenueContext';
 import type {
@@ -138,6 +141,7 @@ export const AdminMapBuilderPage: React.FC = () => {
   const [floorName, setFloorName] = useState('');
 
   const [busyAction, setBusyAction] = useState(false);
+  const [camera360Open, setCamera360Open] = useState(false);
 
   const showToast = (msg: string) => {
     setToast(msg);
@@ -626,6 +630,16 @@ export const AdminMapBuilderPage: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={busyAction}
+            onClick={() => setCamera360Open(true)}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 px-3.5 py-2 text-xs font-extrabold text-white shadow-md shadow-cyan-500/20 hover:from-cyan-400 hover:to-indigo-500 transition"
+          >
+            <Globe className="h-3.5 w-3.5" />
+            🌐 360° Camera &amp; Auto-3D
+          </button>
+
           <input
             ref={coverInputRef}
             type="file"
@@ -1504,6 +1518,39 @@ export const AdminMapBuilderPage: React.FC = () => {
           )}
         </div>
       </div>
+
+      <Camera360CaptureModal
+        open={camera360Open}
+        onClose={() => setCamera360Open(false)}
+        venueName={venue.name}
+        targetLabel={
+          selectedNode
+            ? `${selectedNode.name} (${formatLevel(selectedNode.level)})`
+            : `${activeFloor?.name || formatLevel(selectedLevel)} · Auto-3D Floor Model`
+        }
+        submitting={busyAction}
+        onSubmitFrames={async (files) => {
+          setBusyAction(true);
+          try {
+            const res = await autoMapAdminDataset(venue.slug, {
+              mode: 'ocr',
+              levelFilter: selectedLevel,
+              fallbackNodeId: selectedNode?.id ?? graph.nodes[0]?.id ?? null,
+              files,
+            });
+            setCamera360Open(false);
+            await loadMapBundle();
+            await refreshVenues();
+            showToast(
+              `360° Auto-Model built: ${res.accepted.length} frames indexed, ${res.nodes_updated} spots mapped, +${res.edges_created} 3D paths connected!`,
+            );
+          } catch (err) {
+            alert(err instanceof Error ? err.message : '360° Auto-Mapping failed.');
+          } finally {
+            setBusyAction(false);
+          }
+        }}
+      />
     </div>
   );
 };

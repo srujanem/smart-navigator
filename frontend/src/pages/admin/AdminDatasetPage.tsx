@@ -7,6 +7,7 @@ import {
   Compass,
   Cpu,
   Film,
+  Globe,
   HardDrive,
   Loader2,
   Route as RouteIcon,
@@ -33,6 +34,7 @@ import {
 } from '../../lib/api';
 import { formatLevel } from '../../lib/locationStore';
 import { FloorPlan2D } from '../../components/FloorPlan2D';
+import { Camera360CaptureModal } from '../../components/Camera360CaptureModal';
 import { ErrorState } from '../../components/ErrorState';
 import { useAdminVenue } from './adminVenueContext';
 import type {
@@ -154,6 +156,7 @@ export const AdminDatasetPage: React.FC = () => {
   const [covFilter, setCovFilter] = useState<'all' | CoverageLevel>('all');
   const [dpFilter, setDpFilter] = useState<'all' | 'decision_only' | 'missing_decision'>('all');
   const [qrModalOpen, setQrModalOpen] = useState(false);
+  const [camera360Mode, setCamera360Mode] = useState<'automap' | 'node' | null>(null);
   const [nodeQuery, setNodeQuery] = useState('');
 
   // Upload & Rebuild States
@@ -405,6 +408,15 @@ export const AdminDatasetPage: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setCamera360Mode('automap')}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-md shadow-cyan-500/20 hover:from-cyan-400 hover:to-indigo-500 transition"
+          >
+            <Globe className="h-3.5 w-3.5" />
+            <span>🌐 360° Camera Studio</span>
+          </button>
+
           <button
             type="button"
             disabled={rebuilding}
@@ -692,7 +704,7 @@ export const AdminDatasetPage: React.FC = () => {
             )}
           </div>
 
-          <div className="lg:col-span-5">
+          <div className="lg:col-span-5 space-y-2">
             <input
               ref={autoMapInputRef}
               type="file"
@@ -706,28 +718,39 @@ export const AdminDatasetPage: React.FC = () => {
                 e.target.value = '';
               }}
             />
-            <button
-              type="button"
-              disabled={autoMapping}
-              onClick={() => autoMapInputRef.current?.click()}
-              className="w-full flex items-center justify-center gap-2.5 rounded-2xl bg-gradient-to-r from-cyan-400 to-emerald-400 px-5 py-4 text-xs sm:text-sm font-extrabold text-slate-950 shadow-xl hover:brightness-105 disabled:opacity-50 transition"
-            >
-              {autoMapping ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>{autoMapStage || 'Auto-Mapping Route & OCR...'}</span>
-                </>
-              ) : (
-                <>
-                  <Upload className="h-4 w-4" />
-                  <span>
-                    {autoMode === 'route'
-                      ? 'Upload Walk Video or Photo Burst for Route'
-                      : 'Upload Bulk Photos / Video for Auto-OCR Tagging'}
-                  </span>
-                </>
-              )}
-            </button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={autoMapping}
+                onClick={() => setCamera360Mode('automap')}
+                className="flex items-center justify-center gap-2 rounded-2xl bg-white/10 px-4 py-3.5 text-xs font-extrabold text-cyan-300 ring-1 ring-cyan-400/40 hover:bg-cyan-500/20 disabled:opacity-50 transition"
+              >
+                <Globe className="h-4 w-4 shrink-0" />
+                <span>🌐 Live 360° Camera</span>
+              </button>
+              <button
+                type="button"
+                disabled={autoMapping}
+                onClick={() => autoMapInputRef.current?.click()}
+                className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-cyan-400 to-emerald-400 px-4 py-3.5 text-xs font-extrabold text-slate-950 shadow-xl hover:brightness-105 disabled:opacity-50 transition"
+              >
+                {autoMapping ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                    <span className="truncate">{autoMapStage || 'Auto-Mapping...'}</span>
+                  </>
+                ) : (
+                  <>
+                    <Upload className="h-4 w-4 shrink-0" />
+                    <span>
+                      {autoMode === 'route'
+                        ? 'Upload Walk Video/Photos'
+                        : 'Upload Photos / Video'}
+                    </span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -967,26 +990,37 @@ export const AdminDatasetPage: React.FC = () => {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             {/* Multi-file Drag-and-Drop Photo Uploader */}
             <div className="lg:col-span-5 space-y-3">
-              <div className="flex items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200/80">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200/80">
                 <span className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
                   <Compass className="h-3.5 w-3.5 text-indigo-600" />
                   Camera Heading:
                 </span>
-                <select
-                  value={uploadHeading}
-                  onChange={(e) => setUploadHeading(e.target.value)}
-                  className="rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-slate-800 ring-1 ring-slate-200"
-                >
-                  <option value="">Unspecified</option>
-                  <option value="0">0° North</option>
-                  <option value="45">45° NE</option>
-                  <option value="90">90° East</option>
-                  <option value="135">135° SE</option>
-                  <option value="180">180° South</option>
-                  <option value="225">225° SW</option>
-                  <option value="270">270° West</option>
-                  <option value="315">315° NW</option>
-                </select>
+                <div className="flex items-center gap-1.5">
+                  <select
+                    value={uploadHeading}
+                    onChange={(e) => setUploadHeading(e.target.value)}
+                    className="rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-slate-800 ring-1 ring-slate-200"
+                  >
+                    <option value="">Unspecified</option>
+                    <option value="0">0° North</option>
+                    <option value="45">45° NE</option>
+                    <option value="90">90° East</option>
+                    <option value="135">135° SE</option>
+                    <option value="180">180° South</option>
+                    <option value="225">225° SW</option>
+                    <option value="270">270° West</option>
+                    <option value="315">315° NW</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => setCamera360Mode('node')}
+                    className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-extrabold text-white hover:bg-indigo-500 transition"
+                    title="Open 360° Multi-Angle Camera for this spot"
+                  >
+                    <Globe className="h-3 w-3" />
+                    <span>360° Scan</span>
+                  </button>
+                </div>
               </div>
               <div
                 onDragOver={(e) => {
@@ -1390,6 +1424,26 @@ export const AdminDatasetPage: React.FC = () => {
           </div>
         </div>
       )}
+      <Camera360CaptureModal
+        open={camera360Mode !== null}
+        onClose={() => setCamera360Mode(null)}
+        venueName={venue.name}
+        targetLabel={
+          camera360Mode === 'node' && selectedNode
+            ? `${selectedNode.name} (${formatLevel(selectedNode.level)})`
+            : 'Auto-OCR Floor & 3D Model Builder'
+        }
+        submitting={uploading || autoMapping}
+        onSubmitFrames={async (files) => {
+          const target = camera360Mode;
+          setCamera360Mode(null);
+          if (target === 'node') {
+            await handleUploadFiles(files);
+          } else {
+            await handleAutoMapFiles(files);
+          }
+        }}
+      />
     </div>
   );
 };

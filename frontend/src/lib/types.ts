@@ -405,6 +405,7 @@ export interface AutoMapDatasetResponse {
     reason: string;
   }[];
   nodes_updated: number;
+  edges_created?: number;
   raw_mb: number;
   stored_mb: number;
   space_saved_mb: number;
