@@ -579,10 +579,10 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
                   />
                 )}
                 <text
-                  x={b.x + unit * 1.5}
-                  y={b.y + unit * 2.6}
+                  x={b.x + unit * 0.6}
+                  y={b.y - unit * 0.9}
                   fill={dark ? '#93c5fd' : '#475569'}
-                  fontSize={unit * 1.75}
+                  fontSize={unit * 1.55}
                   fontWeight={800}
                 >
                   {b.name} {fl ? `· ${fl.name}` : ''}

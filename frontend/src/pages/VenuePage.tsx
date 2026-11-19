@@ -467,7 +467,7 @@ export const VenuePage: React.FC = () => {
         : 'Directory & Staff On-Duty';
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-900 pb-24">
+    <div className="min-h-screen overflow-x-clip bg-slate-50 text-slate-900 pb-24">
       {/* =================================================================== */}
       {/* STICKY TOP VENUE HUB BAR                                            */}
       {/* =================================================================== */}
