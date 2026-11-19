@@ -18,6 +18,7 @@ from sqlmodel import Session, select
 
 from ..config import WALK_SPEED, WHEELCHAIR_SPEED
 from ..models import Building, Closure, Edge, Floor, LocalizeLog, Node, Photo, RouteLog, Venue
+from .vision.quality import pick_best_display_photo
 
 STRETCHER_SPEED = 0.82
 
@@ -296,11 +297,15 @@ def compute_venue_route(
     if to_node not in node_map:
         raise ValueError(f"Unknown destination '{to_node}'")
 
+    photos_by_node: Dict[str, list[Photo]] = {}
+    for p in photos:
+        photos_by_node.setdefault(p.node_id, []).append(p)
     node_photo: Dict[str, str] = {}
-    for p in sorted(photos, key=lambda x: x.quality, reverse=True):
-        if p.node_id not in node_photo:
-            thumb = p.thumbnail_path if (getattr(p, "media_type", "photo") == "video" and p.thumbnail_path) else p.path
-            node_photo[p.node_id] = f"/media/{thumb}"
+    for nid, n_obj in node_map.items():
+        best_p = pick_best_display_photo(n_obj, photos_by_node.get(nid, []))
+        if best_p is not None:
+            thumb = best_p.thumbnail_path if (getattr(best_p, "media_type", "photo") == "video" and best_p.thumbnail_path) else best_p.path
+            node_photo[nid] = f"/media/{thumb}"
 
     closed_ids = {c.edge_id for c in closures}
     closure_by_edge = {c.edge_id: c for c in closures}

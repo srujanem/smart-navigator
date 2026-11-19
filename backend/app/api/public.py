@@ -10,7 +10,9 @@ import uuid
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
+from starlette.concurrency import run_in_threadpool
 
+from ..auth import validate_media_upload
 from ..config import MEDIA_DIR
 from ..db import get_session
 from ..models import Building, Closure, Edge, Floor, LocalizeLog, Node, Person, Photo, Venue
@@ -21,10 +23,13 @@ from ..services.routing import (
 )
 from ..services.search import search_venue
 from ..services.vision.embedder import embedder_service
-from ..services.vision.localizer import localize_photo
+from ..services.vision.localizer import localize_photo_isolated
 from ..services.vision.ocr import ocr_service
-from ..services.vision.privacy import has_face_blur, save_clean_image
-from ..services.vision.quality import compute_sharpness_quality
+from ..services.vision.privacy import has_face_blur, save_clean_image_with_metrics
+from ..services.vision.quality import (
+    check_navigation_applicability,
+    pick_best_display_photo,
+)
 
 router = APIRouter()
 
@@ -67,7 +72,27 @@ def serialize_venue_summary(session: Session, v: Venue) -> dict:
     p_cnt = sum(1 for n in nodes if n.is_place)
     people_cnt = len(session.exec(select(Person).where(Person.venue_id == v.id)).all())
     photos = session.exec(select(Photo).where(Photo.venue_id == v.id)).all()
-    cover_url = f"/media/{v.cover_path}" if v.cover_path else (f"/media/{photos[0].path}" if photos else None)
+
+    cover_url: Optional[str] = f"/media/{v.cover_path}" if v.cover_path else None
+    if not cover_url and photos:
+        node_map = {n.id: n for n in nodes}
+        ent_photos = [p for p in photos if v.entrance_node_id and p.node_id == v.entrance_node_id]
+        if ent_photos and v.entrance_node_id in node_map:
+            best_cover = pick_best_display_photo(node_map[v.entrance_node_id], ent_photos)
+        else:
+            ranked_all = sorted(
+                photos,
+                key=lambda p: (
+                    1 if (p.ocr_text or "").strip() else 0,
+                    1 if (p.node_id in node_map and node_map[p.node_id].is_place) else 0,
+                    float(p.quality or 0.0),
+                ),
+                reverse=True,
+            )
+            best_cover = ranked_all[0] if ranked_all else None
+        if best_cover is not None:
+            thumb = best_cover.thumbnail_path if (best_cover.media_type == "video" and best_cover.thumbnail_path) else best_cover.path
+            cover_url = f"/media/{thumb}"
 
     return {
         "id": v.id,
@@ -78,7 +103,6 @@ def serialize_venue_summary(session: Session, v: Venue) -> dict:
         "tagline": v.tagline,
         "accent": v.accent,
         "cover_url": cover_url,
-        "owner_id": v.owner_id,
         "owner_name": v.owner_name or "Navigator Core Team",
         "stats": {
             "buildings": b_cnt,
@@ -191,14 +215,19 @@ def venue_graph(slug: str, session: Session = Depends(get_session)):
     closures = {c.edge_id for c in session.exec(select(Closure).where(Closure.venue_id == v.id)).all()}
     photos = session.exec(select(Photo).where(Photo.venue_id == v.id)).all()
 
+    photos_by_node: dict[str, list[Photo]] = {}
+    for p in photos:
+        photos_by_node.setdefault(p.node_id, []).append(p)
+
     photo_counts = Counter(p.node_id for p in photos)
     best_photo: dict[str, str] = {}
     best_media: dict[str, dict] = {}
-    for p in sorted(photos, key=lambda x: x.quality, reverse=True):
-        if p.node_id not in best_photo:
+    for n in nodes:
+        p = pick_best_display_photo(n, photos_by_node.get(n.id, []))
+        if p is not None:
             thumb = p.thumbnail_path if (p.media_type == "video" and p.thumbnail_path) else p.path
-            best_photo[p.node_id] = f"/media/{thumb}"
-            best_media[p.node_id] = {
+            best_photo[n.id] = f"/media/{thumb}"
+            best_media[n.id] = {
                 "media_type": p.media_type or "photo",
                 "video_url": f"/media/{p.path}" if p.media_type == "video" else None,
                 "duration_s": p.duration_s,
@@ -323,15 +352,14 @@ async def venue_localize(
 ):
     v = get_venue_or_404(session, slug)
     raw = await file.read()
-    if not raw:
-        raise HTTPException(status_code=400, detail="Uploaded image is empty")
+    validate_media_upload(raw, allow_video=False, max_bytes=15 * 1024 * 1024)
     try:
-        return localize_photo(
-            session,
-            v,
-            raw_bytes=raw,
-            level_hint=level,
-            prior_node_id=prior_node_id,
+        return await run_in_threadpool(
+            localize_photo_isolated,
+            v.id,
+            raw,
+            level,
+            prior_node_id,
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"Could not process image: {exc}") from exc
@@ -370,17 +398,24 @@ def confirm_localization(
     src_file = MEDIA_DIR / log_row.photo_path
 
     if payload.contribute and src_file.exists():
-        if len(existing_node_photos) >= 8:
+        if log_row.predicted_node != node.id or float(log_row.confidence or 0.0) < 0.80:
+            promotion_reason = "Dataset promotion requires >=80% verified AI match to prevent mislabeling"
+        elif len(existing_node_photos) >= 8:
             promotion_reason = "Node already has full reference coverage (8/8 cap)"
         else:
             dest_rel = f"venues/{v.slug}/photos/{uuid.uuid4().hex[:12]}.webp"
             dest_file = MEDIA_DIR / dest_rel
             dest_file.parent.mkdir(parents=True, exist_ok=True)
-            img, _ = save_clean_image(src_file.read_bytes(), dest_file, max_side=1600)
-            q_score = compute_sharpness_quality(img)
-            if q_score < 0.22:
+            img, _, face_ratio = save_clean_image_with_metrics(src_file.read_bytes(), dest_file, max_side=1600)
+            toks = ocr_service.extract_text(img)
+            app_ok, q_score, app_reason = check_navigation_applicability(
+                img,
+                face_area_ratio=face_ratio,
+                ocr_tokens=toks,
+            )
+            if not app_ok or q_score < 0.45:
                 dest_file.unlink(missing_ok=True)
-                promotion_reason = f"Skipped dataset promotion (sharpness {int(q_score * 100)}% below threshold)"
+                promotion_reason = app_reason or f"Skipped dataset promotion (quality {int(q_score * 100)}% below 45% threshold)"
             else:
                 vec = embedder_service.embed(img)
                 max_sim = 0.0
@@ -395,7 +430,6 @@ def confirm_localization(
                     dest_file.unlink(missing_ok=True)
                     promotion_reason = f"Near-duplicate angle already indexed ({int(max_sim * 100)}% match)"
                 else:
-                    toks = ocr_service.extract_text(img)
                     p_row = Photo(
                         venue_id=v.id,
                         node_id=node.id,

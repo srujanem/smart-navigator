@@ -7,6 +7,7 @@ import {
   Film,
   FlipHorizontal,
   Globe,
+  Image as ImageIcon,
   Loader2,
   Play,
   RefreshCw,
@@ -18,6 +19,7 @@ import {
   X,
   Zap,
 } from 'lucide-react';
+import { decodeImageWithExifOrientation } from '../lib/api';
 
 export interface Captured360Frame {
   id: string;
@@ -61,6 +63,8 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const panoInputRef = useRef<HTMLInputElement>(null);
+  const panoVideoInputRef = useRef<HTMLInputElement>(null);
+  const nativeCamInputRef = useRef<HTMLInputElement>(null);
 
   const [activeTab, setActiveTab] = useState<CaptureTab>('sweep360');
   const [showSettings, setShowSettings] = useState(false);
@@ -354,59 +358,69 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
       const generated: Captured360Frame[] = [];
 
       for (const f of incoming) {
-        if (f.type.startsWith('image/') && typeof createImageBitmap === 'function') {
-          const bmp = await createImageBitmap(f);
-          const ratio = bmp.width / Math.max(1, bmp.height);
+        const isImg =
+          f.type.startsWith('image/') ||
+          /\.(jpe?g|png|webp|heic|heif|avif|bmp)$/i.test(f.name);
+        if (isImg) {
+          const decoded = await decodeImageWithExifOrientation(f);
+          if (decoded) {
+            try {
+              const ratio = decoded.width / Math.max(1, decoded.height);
 
-          if (ratio >= 1.85) {
-            // Wide 360° Panorama -> Slice into 4 or 8 directional perspective views!
-            const numSlices = sectorCount;
-            const sliceHeadings =
-              numSlices === 8 ? [0, 45, 90, 135, 180, 225, 270, 315] : [0, 90, 180, 270];
-            const sliceW = Math.min(bmp.width, Math.max(Math.round(bmp.height * 1.15), Math.round(bmp.width / numSlices)));
-            const outH = Math.min(maxRes, bmp.height);
-            const outW = Math.round(sliceW * (outH / bmp.height));
+              if (ratio >= 1.85) {
+                // Wide 360° Panorama -> Slice into 4 or 8 directional perspective views!
+                const numSlices = sectorCount;
+                const sliceHeadings =
+                  numSlices === 8 ? [0, 45, 90, 135, 180, 225, 270, 315] : [0, 90, 180, 270];
+                const sliceW = Math.min(
+                  decoded.width,
+                  Math.max(Math.round(decoded.height * 1.15), Math.round(decoded.width / numSlices)),
+                );
+                const outH = Math.min(maxRes, decoded.height);
+                const outW = Math.round(sliceW * (outH / decoded.height));
 
-            for (let i = 0; i < sliceHeadings.length; i++) {
-              const hdg = sliceHeadings[i];
-              const x0 = Math.round((i * bmp.width) / numSlices);
-              const canvas = document.createElement('canvas');
-              canvas.width = outW;
-              canvas.height = outH;
-              const ctx = canvas.getContext('2d');
-              if (!ctx) continue;
+                for (let i = 0; i < sliceHeadings.length; i++) {
+                  const hdg = sliceHeadings[i];
+                  const x0 = Math.round((i * decoded.width) / numSlices);
+                  const canvas = document.createElement('canvas');
+                  canvas.width = outW;
+                  canvas.height = outH;
+                  const ctx = canvas.getContext('2d');
+                  if (!ctx) continue;
 
-              if (x0 + sliceW <= bmp.width) {
-                ctx.drawImage(bmp, x0, 0, sliceW, bmp.height, 0, 0, outW, outH);
-              } else {
-                const firstW = bmp.width - x0;
-                const remW = sliceW - firstW;
-                const outFirstW = Math.round(outW * (firstW / sliceW));
-                ctx.drawImage(bmp, x0, 0, firstW, bmp.height, 0, 0, outFirstW, outH);
-                ctx.drawImage(bmp, 0, 0, remW, bmp.height, outFirstW, 0, outW - outFirstW, outH);
+                  if (x0 + sliceW <= decoded.width) {
+                    ctx.drawImage(decoded.source, x0, 0, sliceW, decoded.height, 0, 0, outW, outH);
+                  } else {
+                    const firstW = decoded.width - x0;
+                    const remW = sliceW - firstW;
+                    const outFirstW = Math.round(outW * (firstW / sliceW));
+                    ctx.drawImage(decoded.source, x0, 0, firstW, decoded.height, 0, 0, outFirstW, outH);
+                    ctx.drawImage(decoded.source, 0, 0, remW, decoded.height, outFirstW, 0, outW - outFirstW, outH);
+                  }
+
+                  const blob = await new Promise<Blob | null>((res) =>
+                    canvas.toBlob(res, 'image/webp', 0.9),
+                  );
+                  if (!blob) continue;
+                  const hdgPad = String(hdg).padStart(3, '0');
+                  const baseName = f.name.replace(/\.[^.]+$/, '');
+                  const fname = `${prefix}${baseName}_360_hdg${hdgPad}.webp`;
+                  const sliceFile = new File([blob], fname, { type: 'image/webp' });
+                  generated.push({
+                    id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
+                    file: sliceFile,
+                    previewUrl: URL.createObjectURL(blob),
+                    headingDeg: hdg,
+                    roomHint: cleanRoom,
+                    label: `360° Slice · ${hdg}° ${CARDINAL_LABELS[hdg] || ''}`,
+                  });
+                }
+                continue;
               }
-
-              const blob = await new Promise<Blob | null>((res) =>
-                canvas.toBlob(res, 'image/webp', 0.9),
-              );
-              if (!blob) continue;
-              const hdgPad = String(hdg).padStart(3, '0');
-              const baseName = f.name.replace(/\.[^.]+$/, '');
-              const fname = `${prefix}${baseName}_360_hdg${hdgPad}.webp`;
-              const sliceFile = new File([blob], fname, { type: 'image/webp' });
-              generated.push({
-                id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
-                file: sliceFile,
-                previewUrl: URL.createObjectURL(blob),
-                headingDeg: hdg,
-                roomHint: cleanRoom,
-                label: `360° Slice · ${hdg}° ${CARDINAL_LABELS[hdg] || ''}`,
-              });
+            } finally {
+              decoded.cleanup();
             }
-            bmp.close();
-            continue;
           }
-          bmp.close();
         }
 
         // Standard photo or video file -> Tag with current selected heading & room prefix
@@ -419,7 +433,7 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
         generated.push({
           id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           file: taggedFile,
-          previewUrl: f.type.startsWith('image/') ? URL.createObjectURL(f) : '',
+          previewUrl: isImg ? URL.createObjectURL(f) : '',
           headingDeg: currentHeading,
           roomHint: cleanRoom,
           label: `${f.name} (${currentHeading}°)`,
@@ -429,6 +443,16 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
       setFrames((prev) => [...prev, ...generated]);
     } finally {
       setUnwrappingPano(false);
+    }
+  };
+
+  const handleNativePhoneSnap = async (incomingList: FileList | null) => {
+    if (!incomingList?.length) return;
+    await handlePanoramaFiles(incomingList);
+    if (liveCompassDeg === null) {
+      const curIdx = sectors.indexOf(nearestSector);
+      const nextSector = sectors[(curIdx + 1) % sectors.length];
+      setManualHeadingDeg(nextSector);
     }
   };
 
@@ -448,10 +472,21 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-2.5 sm:p-4 backdrop-blur-md overflow-y-auto">
-      <div className="relative w-full max-w-4xl overflow-hidden rounded-3xl bg-[#070B18] text-white ring-1 ring-cyan-400/35 shadow-2xl flex flex-col max-h-[94dvh]">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/90 p-0 sm:p-4 backdrop-blur-md">
+      <div className="relative w-full max-w-4xl h-[100dvh] sm:h-auto sm:max-h-[92dvh] overflow-hidden rounded-none sm:rounded-3xl bg-[#070B18] text-white ring-1 ring-cyan-400/35 shadow-2xl flex flex-col">
+        <input
+          ref={nativeCamInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          className="hidden"
+          onChange={(e) => {
+            void handleNativePhoneSnap(e.target.files);
+            e.target.value = '';
+          }}
+        />
         {/* Top Header */}
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 bg-slate-950/90 px-4 sm:px-6 py-3.5">
+        <div className="shrink-0 flex items-center justify-between gap-2 border-b border-white/10 bg-slate-950/90 px-3.5 sm:px-6 py-2.5 sm:py-3.5">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400 to-indigo-600 text-slate-950 shadow-lg shadow-cyan-500/25">
               <Globe className="h-5 w-5 text-white" />
@@ -582,47 +617,47 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
         )}
 
         {/* Mode Switcher Tabs + Optional Room Number Hint Input */}
-        <div className="flex flex-wrap items-center justify-between gap-2.5 border-b border-white/10 bg-slate-900/60 px-4 sm:px-6 py-2.5">
-          <div className="flex items-center gap-1 rounded-xl bg-white/[0.06] p-1 ring-1 ring-white/10 text-xs font-bold">
+        <div className="shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 bg-slate-900/60 px-3.5 sm:px-6 py-2">
+          <div className="flex flex-nowrap items-center gap-1 overflow-x-auto no-scrollbar rounded-xl bg-white/[0.06] p-1 ring-1 ring-white/10 text-[11px] sm:text-xs font-bold whitespace-nowrap">
             <button
               type="button"
               onClick={() => setActiveTab('sweep360')}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-1.5 transition ${
                 activeTab === 'sweep360'
                   ? 'bg-cyan-400 text-slate-950 shadow-sm'
                   : 'text-slate-300 hover:text-white'
               }`}
             >
-              <Compass className="h-3.5 w-3.5" />
-              <span>360° Compass Sweep</span>
+              <Compass className="h-3.5 w-3.5 shrink-0" />
+              <span>360° Sweep</span>
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('walkthrough')}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-1.5 transition ${
                 activeTab === 'walkthrough'
                   ? 'bg-emerald-400 text-slate-950 shadow-sm'
                   : 'text-slate-300 hover:text-white'
               }`}
             >
-              <Film className="h-3.5 w-3.5" />
-              <span>Corridor Walk Auto-Slicer</span>
+              <Film className="h-3.5 w-3.5 shrink-0" />
+              <span>Walk Auto-Slicer</span>
             </button>
             <button
               type="button"
               onClick={() => setActiveTab('panorama_import')}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-1.5 transition ${
                 activeTab === 'panorama_import'
                   ? 'bg-indigo-400 text-slate-950 shadow-sm'
                   : 'text-slate-300 hover:text-white'
               }`}
             >
-              <Globe className="h-3.5 w-3.5" />
-              <span>360° Panorama Unwrapper</span>
+              <Globe className="h-3.5 w-3.5 shrink-0" />
+              <span>Gallery / Video Unwrapper</span>
             </button>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between sm:justify-end gap-2">
             <span className="text-[11px] font-semibold text-slate-400">
               Room Tag (optional):
             </span>
@@ -637,7 +672,7 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
         </div>
 
         {/* Main Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-4">
+        <div className="flex-1 min-h-0 overflow-y-auto p-3.5 sm:p-6 space-y-3.5">
           {activeTab !== 'panorama_import' ? (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
               {/* Live Camera Viewfinder with 360° HUD Overlay */}
@@ -668,6 +703,15 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
+                      onClick={() => nativeCamInputRef.current?.click()}
+                      className="rounded-full bg-cyan-500/20 px-2.5 py-1 text-[11px] font-bold text-cyan-200 ring-1 ring-cyan-400/45 backdrop-blur-md hover:bg-cyan-500/30"
+                      title="Open native phone camera app"
+                    >
+                      <Camera className="h-3 w-3 inline mr-1" />
+                      Phone Cam
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => void toggleTorch()}
                       className={`rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 backdrop-blur-md ${
                         torchOn
@@ -691,7 +735,7 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
                 </div>
 
                 {cameraError && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 p-6 text-center space-y-3">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 p-5 text-center space-y-3">
                     <Camera className="h-9 w-9 text-cyan-400" />
                     <p className="text-xs sm:text-sm text-slate-300 max-w-md leading-relaxed">
                       {cameraError}
@@ -699,17 +743,24 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
                     <div className="flex flex-wrap items-center justify-center gap-2">
                       <button
                         type="button"
+                        onClick={() => nativeCamInputRef.current?.click()}
+                        className="rounded-xl bg-gradient-to-r from-cyan-400 to-emerald-400 px-3.5 py-2 text-xs font-extrabold text-slate-950"
+                      >
+                        📷 Open Phone Camera
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => void startCamera()}
                         className="rounded-xl bg-white/10 px-3.5 py-2 text-xs font-bold text-white ring-1 ring-white/15 hover:bg-white/15"
                       >
-                        Retry Camera Permission
+                        Retry Stream
                       </button>
                       <button
                         type="button"
                         onClick={() => setActiveTab('panorama_import')}
-                        className="rounded-xl bg-cyan-400 px-3.5 py-2 text-xs font-extrabold text-slate-950"
+                        className="rounded-xl bg-indigo-500/25 px-3.5 py-2 text-xs font-bold text-cyan-200 ring-1 ring-cyan-400/35"
                       >
-                        Switch to 360° Panorama / File Unwrapper →
+                        Gallery / Video →
                       </button>
                     </div>
                   </div>
@@ -842,16 +893,25 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
               </div>
             </div>
           ) : (
-            /* 360° Equirectangular Panorama / Video File Unwrapper Tab */
-            <div
-              onClick={() => panoInputRef.current?.click()}
-              className="cursor-pointer rounded-2xl border-2 border-dashed border-cyan-400/40 bg-white/[0.03] p-8 text-center hover:border-cyan-400 hover:bg-cyan-500/10 transition space-y-3"
-            >
+            /* 360° Equirectangular Panorama / Gallery Photos / Video Unwrapper Tab */
+            <div className="rounded-2xl border-2 border-dashed border-cyan-400/40 bg-white/[0.03] p-5 sm:p-8 text-center space-y-4">
               <input
                 ref={panoInputRef}
                 type="file"
-                accept="image/*,video/mp4,video/webm,video/quicktime"
+                accept="image/*"
                 multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length) {
+                    void handlePanoramaFiles(e.target.files);
+                  }
+                  e.target.value = '';
+                }}
+              />
+              <input
+                ref={panoVideoInputRef}
+                type="file"
+                accept="video/*"
                 className="hidden"
                 onChange={(e) => {
                   if (e.target.files?.length) {
@@ -864,22 +924,44 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
                 <div className="py-4 space-y-2">
                   <Loader2 className="h-8 w-8 animate-spin text-cyan-400 mx-auto" />
                   <p className="text-sm font-bold text-white">
-                    Unwrapping 360° Equirectangular Panorama into {sectorCount} directional perspective views...
+                    Processing photos &amp; unwrapping 360° panorama views...
                   </p>
                 </div>
               ) : (
                 <>
-                  <Globe className="h-10 w-10 text-cyan-400 mx-auto" />
+                  <Globe className="h-9 w-9 text-cyan-400 mx-auto" />
                   <h3 className="font-display text-base sm:text-lg font-extrabold text-white">
-                    Drop 360° Panorama Photos, Phone Panoramas, or Walkthrough Videos
+                    Add Phone Photos, 360° Panoramas, or Walkthrough Video
                   </h3>
                   <p className="text-xs text-slate-300 max-w-xl mx-auto leading-relaxed">
-                    Upload a wide <strong>360° / Panorama photo</strong> from your phone camera, Insta360, or Ricoh Theta. Navigator automatically slices it into <strong>{sectorCount} directional perspective views (0° N, 90° E, 180° S, 270° W)</strong> so DINOv2 & RapidOCR read every door signboard around the entire 360° room!
+                    Wide 360° panoramas auto-slice into <strong>{sectorCount} directional views</strong>, and regular portrait/landscape phone shots preserve their upright EXIF orientation automatically.
                   </p>
-                  <span className="inline-flex items-center gap-2 rounded-xl bg-cyan-400 px-4 py-2 text-xs font-extrabold text-slate-950">
-                    <Upload className="h-3.5 w-3.5" />
-                    Choose 360° Panorama / Photos / Video
-                  </span>
+                  <div className="flex flex-wrap items-center justify-center gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => panoInputRef.current?.click()}
+                      className="inline-flex items-center gap-2 rounded-xl bg-cyan-400 px-4 py-2.5 text-xs font-extrabold text-slate-950 shadow-md hover:brightness-105"
+                    >
+                      <ImageIcon className="h-3.5 w-3.5" />
+                      Choose Photos / 360° Pano
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => nativeCamInputRef.current?.click()}
+                      className="inline-flex items-center gap-2 rounded-xl bg-white/15 px-4 py-2.5 text-xs font-extrabold text-white ring-1 ring-white/25 hover:bg-white/20"
+                    >
+                      <Camera className="h-3.5 w-3.5 text-cyan-300" />
+                      Take Photo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => panoVideoInputRef.current?.click()}
+                      className="inline-flex items-center gap-2 rounded-xl bg-emerald-500/20 px-4 py-2.5 text-xs font-extrabold text-emerald-300 ring-1 ring-emerald-400/40 hover:bg-emerald-500/30"
+                    >
+                      <Film className="h-3.5 w-3.5" />
+                      Choose Video
+                    </button>
+                  </div>
                 </>
               )}
             </div>
@@ -989,13 +1071,13 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
         </div>
 
         {/* Footer Submit CTA */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-slate-950/90 px-4 sm:px-6 py-3.5">
-          <div className="text-xs text-slate-400">
-            All frames are auto-tagged with <strong>360° compass headings</strong> & compressed to{' '}
+        <div className="shrink-0 flex flex-wrap items-center justify-between gap-2.5 border-t border-white/10 bg-slate-950/95 px-3.5 sm:px-6 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div className="hidden sm:block text-xs text-slate-400">
+            All frames are auto-tagged with <strong>360° compass headings</strong> &amp; compressed to{' '}
             <strong>{maxRes}px WebP</strong>.
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex w-full sm:w-auto items-center gap-2.5">
             <button
               type="button"
               onClick={onClose}
@@ -1007,7 +1089,7 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
               type="button"
               disabled={frames.length === 0 || submitting}
               onClick={() => void handleFinishAndUpload()}
-              className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-400 to-emerald-400 px-5 py-2.5 text-xs sm:text-sm font-extrabold text-slate-950 shadow-lg hover:brightness-105 disabled:opacity-40 transition"
+              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-400 to-emerald-400 px-4 sm:px-5 py-2.5 text-xs sm:text-sm font-extrabold text-slate-950 shadow-lg hover:brightness-105 disabled:opacity-40 transition"
             >
               {submitting ? (
                 <>

@@ -104,14 +104,78 @@ def require_admin(authorization: str = Header(default=""), session: Session = De
 
 
 def assert_venue_write_access(user: User, venue: Venue, allow_staff: bool = False) -> None:
-    """Enforce strict account isolation: Uploaders can only edit venues they created."""
+    """Enforce strict account isolation: creators can only view/edit venues they own."""
     if user.role == "admin":
         return
-    if allow_staff and user.role == "staff":
-        return
-    if user.role == "uploader" and venue.owner_id and venue.owner_id == user.id:
+    if user.role in ("uploader", "staff") and venue.owner_id and venue.owner_id == user.id:
         return
     raise HTTPException(
         status_code=403,
-        detail="Access denied: You can only modify maps and datasets created under your uploader account.",
+        detail="Access denied: You can only view or modify maps and datasets created under your account.",
     )
+
+
+def sign_media_path(rel_path: str, ttl_seconds: int = 900) -> str:
+    """Return a short-lived HMAC-signed URL for private visitor query images."""
+    clean = rel_path.lstrip("/")
+    exp = int(time.time()) + ttl_seconds
+    sig = hmac.new(
+        SECRET_KEY.encode("utf-8"),
+        f"{clean}:{exp}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:32]
+    return f"/media/{clean}?exp={exp}&sig={sig}"
+
+
+def verify_media_signature(rel_path: str, exp_raw: str, sig: str) -> bool:
+    """Verify HMAC signature and expiry for a private /media path."""
+    if not rel_path or not exp_raw or not sig:
+        return False
+    try:
+        exp = int(exp_raw)
+    except (TypeError, ValueError):
+        return False
+    if exp < int(time.time()):
+        return False
+    clean = rel_path.lstrip("/")
+    expected = hmac.new(
+        SECRET_KEY.encode("utf-8"),
+        f"{clean}:{exp}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:32]
+    return hmac.compare_digest(sig, expected)
+
+
+def validate_media_upload(
+    raw: bytes,
+    allow_video: bool = False,
+    max_bytes: int = 25 * 1024 * 1024,
+) -> None:
+    """Verify upload payload size and binary magic-byte header to block spoofed files."""
+    if not raw:
+        raise HTTPException(status_code=400, detail="Uploaded media file is empty.")
+    if len(raw) > max_bytes:
+        limit_mb = max(1, round(max_bytes / (1024 * 1024)))
+        raise HTTPException(status_code=400, detail=f"File exceeds {limit_mb} MB maximum limit.")
+
+    head = raw[:16]
+    is_image = (
+        head.startswith(b"\xff\xd8\xff")
+        or head.startswith(b"\x89PNG\r\n\x1a\n")
+        or (head[:4] == b"RIFF" and head[8:12] == b"WEBP")
+        or head.startswith((b"GIF87a", b"GIF89a", b"BM"))
+        or (len(head) >= 8 and head[4:8] == b"ftyp")
+    )
+    if is_image:
+        return
+
+    if allow_video:
+        is_video = (
+            (len(head) >= 8 and head[4:8] == b"ftyp")
+            or head.startswith(b"\x1a\x45\xdf\xa3")
+            or (head[:4] == b"RIFF" and head[8:12] == b"AVI ")
+        )
+        if is_video:
+            return
+
+    raise HTTPException(status_code=400, detail="Unsupported or invalid media file format.")

@@ -16,7 +16,7 @@ import random
 from PIL import Image, ImageEnhance
 from sqlmodel import Session, select
 
-from .auth import hash_password
+from .auth import hash_password, verify_password
 from .config import ADMIN_EMAIL, ADMIN_PASSWORD, BASE_DIR, MEDIA_DIR, SEED_DIR
 from .models import (
     Building,
@@ -40,13 +40,19 @@ log = logging.getLogger(__name__)
 
 
 def ensure_seeded(session: Session) -> None:
-    if not session.exec(select(User).where(User.email == ADMIN_EMAIL)).first():
+    admin_user = session.exec(select(User).where(User.email == ADMIN_EMAIL.lower())).first()
+    if not admin_user:
         session.add(User(
             email=ADMIN_EMAIL.lower(),
             name="Facilities & AI Operations Admin",
             role="admin",
             password_hash=hash_password(ADMIN_PASSWORD),
         ))
+        session.commit()
+    elif ADMIN_PASSWORD != "admin123" and verify_password("admin123", admin_user.password_hash):
+        admin_user.password_hash = hash_password(ADMIN_PASSWORD)
+        admin_user.token_version = int(admin_user.token_version or 1) + 1
+        session.add(admin_user)
         session.commit()
 
     if session.exec(select(Venue)).first():

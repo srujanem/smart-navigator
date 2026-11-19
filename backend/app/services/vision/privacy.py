@@ -1,4 +1,5 @@
 from pathlib import Path
+import threading
 from typing import Tuple
 import io
 import urllib.request
@@ -8,46 +9,52 @@ from PIL import Image, ImageFilter, ImageOps
 
 from ...config import DATA_DIR
 
+Image.MAX_IMAGE_PIXELS = 40_000_000
+
 YUNET_URL = "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
 _DETECTOR = None
 _INIT_TRIED = False
+_FACE_LOCK = threading.Lock()
 
 
 def _get_face_detector():
     global _DETECTOR, _INIT_TRIED  # noqa: PLW0603
     if _INIT_TRIED:
         return _DETECTOR
-    _INIT_TRIED = True
-    try:
-        import cv2  # type: ignore
+    with _FACE_LOCK:
+        if _INIT_TRIED:
+            return _DETECTOR
+        _INIT_TRIED = True
+        try:
+            import cv2  # type: ignore
 
-        model_path = DATA_DIR / "models" / "yunet.onnx"
-        if not model_path.exists():
-            model_path.parent.mkdir(parents=True, exist_ok=True)
-            urllib.request.urlretrieve(YUNET_URL, str(model_path))
-        _DETECTOR = cv2.FaceDetectorYN.create(str(model_path), "", (320, 320), 0.65, 0.3, 5000)
-    except Exception:  # noqa: BLE001
-        _DETECTOR = None
-    return _DETECTOR
+            model_path = DATA_DIR / "models" / "yunet.onnx"
+            if not model_path.exists():
+                model_path.parent.mkdir(parents=True, exist_ok=True)
+                urllib.request.urlretrieve(YUNET_URL, str(model_path))
+            _DETECTOR = cv2.FaceDetectorYN.create(str(model_path), "", (320, 320), 0.65, 0.3, 5000)
+        except Exception:  # noqa: BLE001
+            _DETECTOR = None
+        return _DETECTOR
 
 
 def has_face_blur() -> bool:
     return _get_face_detector() is not None
 
 
-def preprocess_and_anonymize(
+def preprocess_and_anonymize_with_metrics(
     raw_bytes: bytes,
     max_side: int = 1600,
     output_format: str = "WEBP",
     quality: int = 90,
-) -> Tuple[Image.Image, bytes, int]:
+) -> Tuple[Image.Image, bytes, int, float]:
     """
     1. Fix phone camera orientation via EXIF transpose.
     2. Strip all EXIF / GPS metadata by creating a clean RGB image.
-    3. Resize to max_side (default 1600px for razor-sharp high-DPI retina display) while preserving aspect ratio.
-    4. Detect & blur human faces using YuNet neural face detector for patient/visitor privacy.
-    5. Encode to high-efficiency WebP (or JPEG fallback) with optimized compression.
-    Returns (clean_pil_image, encoded_bytes, faces_blurred_count).
+    3. Resize to max_side (default 1600px) while preserving aspect ratio.
+    4. Detect & blur human faces using thread-locked YuNet face detector.
+    5. Encode to WebP (or JPEG fallback).
+    Returns (clean_pil_image, encoded_bytes, faces_blurred_count, face_area_ratio).
     """
     src = Image.open(io.BytesIO(raw_bytes))
     src = ImageOps.exif_transpose(src).convert("RGB")
@@ -61,15 +68,18 @@ def preprocess_and_anonymize(
     clean.paste(src)
 
     faces_blurred = 0
+    face_area = 0.0
     det = _get_face_detector()
     if det is not None:
         try:
             bgr = np.asarray(clean)[:, :, ::-1].copy()
-            det.setInputSize((clean.width, clean.height))
-            _, faces = det.detect(bgr)
+            with _FACE_LOCK:
+                det.setInputSize((clean.width, clean.height))
+                _, faces = det.detect(bgr)
             if faces is not None:
                 for face in faces:
                     fx, fy, fw, fh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
+                    face_area += float(max(0, fw) * max(0, fh))
                     pad = int(0.18 * max(fw, fh))
                     x0, y0 = max(0, fx - pad), max(0, fy - pad)
                     x1, y1 = min(clean.width, fx + fw + pad), min(clean.height, fy + fh + pad)
@@ -80,13 +90,46 @@ def preprocess_and_anonymize(
         except Exception:  # noqa: BLE001
             pass
 
+    face_area_ratio = min(1.0, face_area / float(max(1, clean.width * clean.height)))
+
     fmt = output_format.upper()
     buf = io.BytesIO()
     if fmt == "WEBP":
         clean.save(buf, format="WEBP", quality=quality, method=5)
     else:
         clean.save(buf, format="JPEG", quality=quality, optimize=True)
-    return clean, buf.getvalue(), faces_blurred
+    return clean, buf.getvalue(), faces_blurred, round(face_area_ratio, 4)
+
+
+def preprocess_and_anonymize(
+    raw_bytes: bytes,
+    max_side: int = 1600,
+    output_format: str = "WEBP",
+    quality: int = 90,
+) -> Tuple[Image.Image, bytes, int]:
+    clean, encoded_bytes, faces_blurred, _ = preprocess_and_anonymize_with_metrics(
+        raw_bytes,
+        max_side=max_side,
+        output_format=output_format,
+        quality=quality,
+    )
+    return clean, encoded_bytes, faces_blurred
+
+
+def save_clean_image_with_metrics(
+    raw_bytes: bytes,
+    dest_path: Path,
+    max_side: int = 1600,
+    output_format: str = "WEBP",
+) -> Tuple[Image.Image, int, float]:
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    img, encoded_bytes, faces, face_area_ratio = preprocess_and_anonymize_with_metrics(
+        raw_bytes,
+        max_side=max_side,
+        output_format=output_format,
+    )
+    dest_path.write_bytes(encoded_bytes)
+    return img, faces, face_area_ratio
 
 
 def save_clean_image(
@@ -95,11 +138,10 @@ def save_clean_image(
     max_side: int = 1600,
     output_format: str = "WEBP",
 ) -> Tuple[Image.Image, int]:
-    dest_path.parent.mkdir(parents=True, exist_ok=True)
-    img, encoded_bytes, faces = preprocess_and_anonymize(
+    img, faces, _ = save_clean_image_with_metrics(
         raw_bytes,
+        dest_path,
         max_side=max_side,
         output_format=output_format,
     )
-    dest_path.write_bytes(encoded_bytes)
     return img, faces

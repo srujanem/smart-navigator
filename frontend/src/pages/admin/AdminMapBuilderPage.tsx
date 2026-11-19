@@ -83,7 +83,10 @@ export const AdminMapBuilderPage: React.FC = () => {
 
   const coverInputRef = useRef<HTMLInputElement>(null);
   const blueprintInputRef = useRef<HTMLInputElement>(null);
+  const newNodeGalleryRef = useRef<HTMLInputElement>(null);
+  const newNodeCameraRef = useRef<HTMLInputElement>(null);
   const inspectorPhotoRef = useRef<HTMLInputElement>(null);
+  const inspectorCameraRef = useRef<HTMLInputElement>(null);
 
   const [venue, setVenue] = useState<VenueDetail | null>(null);
   const [graph, setGraph] = useState<Graph | null>(null);
@@ -362,7 +365,7 @@ export const AdminMapBuilderPage: React.FC = () => {
       (f) =>
         f.type.startsWith('image/') ||
         f.type.startsWith('video/') ||
-        /\.(jpg|jpeg|png|webp|heic|mp4|webm|mov|mkv)$/i.test(f.name),
+        /\.(jpg|jpeg|png|webp|heic|heif|avif|mp4|webm|mov|mkv|m4v|3gp)$/i.test(f.name),
     );
     if (files.length === 0) return;
 
@@ -1164,21 +1167,59 @@ export const AdminMapBuilderPage: React.FC = () => {
 
                   {/* Immediate Real Photo Attachment + Camera Compass Heading */}
                   <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200 space-y-2.5">
-                    <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                      <Camera className="h-3.5 w-3.5 text-cyan-600" />
-                      Attach Real Reference Photos or Walkthrough Video (Optional)
+                    <div className="text-xs font-bold text-slate-800 flex items-center justify-between gap-1.5">
+                      <span className="flex items-center gap-1.5">
+                        <Camera className="h-3.5 w-3.5 text-cyan-600" />
+                        Attach Reference Photos (Optional)
+                      </span>
+                      {newNodeFiles.length > 0 && (
+                        <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-[10px] font-extrabold text-emerald-800">
+                          {newNodeFiles.length} queued
+                        </span>
+                      )}
                     </div>
                     <input
+                      ref={newNodeGalleryRef}
                       type="file"
-                      accept="image/*,video/mp4,video/webm,video/quicktime"
+                      accept="image/*"
                       multiple
-                      onChange={(e) =>
-                        setNewNodeFiles(
-                          e.target.files ? Array.from(e.target.files) : [],
-                        )
-                      }
-                      className="block w-full text-xs text-slate-600 file:mr-2 file:rounded-lg file:border-0 file:bg-slate-900 file:px-2.5 file:py-1.5 file:text-xs file:font-bold file:text-white"
+                      onChange={(e) => {
+                        const incoming = e.target.files ? Array.from(e.target.files) : [];
+                        if (incoming.length > 0) setNewNodeFiles((prev) => [...prev, ...incoming]);
+                        e.target.value = '';
+                      }}
+                      className="hidden"
                     />
+                    <input
+                      ref={newNodeCameraRef}
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={(e) => {
+                        const incoming = e.target.files ? Array.from(e.target.files) : [];
+                        if (incoming.length > 0) setNewNodeFiles((prev) => [...prev, ...incoming]);
+                        e.target.value = '';
+                      }}
+                      className="hidden"
+                    />
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => newNodeGalleryRef.current?.click()}
+                        className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white hover:bg-indigo-600 transition"
+                      >
+                        <ImageIcon className="h-3.5 w-3.5 text-cyan-400" />
+                        <span>Gallery Photos</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => newNodeCameraRef.current?.click()}
+                        className="flex items-center justify-center gap-1.5 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-800 ring-1 ring-slate-300 hover:bg-slate-100 transition"
+                      >
+                        <Camera className="h-3.5 w-3.5 text-indigo-600" />
+                        <span>Take Photo</span>
+                      </button>
+                    </div>
                     <div>
                       <label className="block text-[11px] font-semibold text-slate-600 mb-1">
                         Camera Facing Direction (for Step-1 Turn Hint)
@@ -1388,7 +1429,7 @@ export const AdminMapBuilderPage: React.FC = () => {
                 <input
                   ref={inspectorPhotoRef}
                   type="file"
-                  accept="image/*,video/mp4,video/webm,video/quicktime"
+                  accept="image/*"
                   multiple
                   className="hidden"
                   onChange={(e) => {
@@ -1396,19 +1437,41 @@ export const AdminMapBuilderPage: React.FC = () => {
                     e.target.value = '';
                   }}
                 />
-                <button
-                  type="button"
-                  disabled={uploadingPhotos}
-                  onClick={() => inspectorPhotoRef.current?.click()}
-                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 py-2 text-xs font-bold text-white hover:bg-indigo-600 transition"
-                >
-                  {uploadingPhotos ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Upload className="h-3.5 w-3.5 text-cyan-400" />
-                  )}
-                  {uploadingPhotos ? 'Indexing & Face-Blurring...' : 'Select Photos to Index'}
-                </button>
+                <input
+                  ref={inspectorCameraRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  className="hidden"
+                  onChange={(e) => {
+                    void handleUploadPhotosForSelectedNode(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={uploadingPhotos}
+                    onClick={() => inspectorPhotoRef.current?.click()}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 py-2 text-xs font-bold text-white hover:bg-indigo-600 disabled:opacity-50 transition"
+                  >
+                    {uploadingPhotos ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="h-3.5 w-3.5 text-cyan-400" />
+                    )}
+                    {uploadingPhotos ? 'Indexing...' : 'Gallery Photos'}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={uploadingPhotos}
+                    onClick={() => inspectorCameraRef.current?.click()}
+                    className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-white py-2 text-xs font-bold text-slate-800 ring-1 ring-slate-200 hover:bg-slate-100 disabled:opacity-50 transition"
+                  >
+                    <Camera className="h-3.5 w-3.5 text-indigo-600" />
+                    <span>Snap Camera</span>
+                  </button>
+                </div>
               </div>
 
               {/* Edit Pin Metadata Form */}

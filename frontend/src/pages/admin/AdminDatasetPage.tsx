@@ -9,6 +9,7 @@ import {
   Film,
   Globe,
   HardDrive,
+  Image as ImageIcon,
   Loader2,
   Route as RouteIcon,
   ScanText,
@@ -141,8 +142,12 @@ const QrCheckpointSvg: React.FC<{ seed: string }> = ({ seed }) => {
 
 export const AdminDatasetPage: React.FC = () => {
   const { selectedSlug } = useAdminVenue();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const autoMapInputRef = useRef<HTMLInputElement>(null);
+  const nodePhotosInputRef = useRef<HTMLInputElement>(null);
+  const nodeCameraInputRef = useRef<HTMLInputElement>(null);
+  const nodeVideoInputRef = useRef<HTMLInputElement>(null);
+  const autoPhotosInputRef = useRef<HTMLInputElement>(null);
+  const autoCameraInputRef = useRef<HTMLInputElement>(null);
+  const autoVideoInputRef = useRef<HTMLInputElement>(null);
 
   const [venue, setVenue] = useState<VenueDetail | null>(null);
   const [graph, setGraph] = useState<Graph | null>(null);
@@ -273,7 +278,7 @@ export const AdminDatasetPage: React.FC = () => {
       (f) =>
         f.type.startsWith('image/') ||
         f.type.startsWith('video/') ||
-        /\.(jpg|jpeg|png|webp|heic|mp4|webm|mov|mkv)$/i.test(f.name),
+        /\.(jpg|jpeg|png|webp|heic|heif|avif|mp4|webm|mov|mkv|m4v|3gp)$/i.test(f.name),
     );
     if (files.length === 0) return;
 
@@ -302,7 +307,7 @@ export const AdminDatasetPage: React.FC = () => {
       (f) =>
         f.type.startsWith('image/') ||
         f.type.startsWith('video/') ||
-        /\.(jpg|jpeg|png|webp|heic|mp4|webm|mov|mkv)$/i.test(f.name),
+        /\.(jpg|jpeg|png|webp|heic|heif|avif|mp4|webm|mov|mkv|m4v|3gp)$/i.test(f.name),
     );
     if (files.length === 0) return;
 
@@ -704,11 +709,11 @@ export const AdminDatasetPage: React.FC = () => {
             )}
           </div>
 
-          <div className="lg:col-span-5 space-y-2">
+          <div className="lg:col-span-5 space-y-2.5">
             <input
-              ref={autoMapInputRef}
+              ref={autoPhotosInputRef}
               type="file"
-              accept="video/mp4,video/webm,video/quicktime,image/*"
+              accept="image/*"
               multiple
               className="hidden"
               onChange={(e) => {
@@ -718,39 +723,73 @@ export const AdminDatasetPage: React.FC = () => {
                 e.target.value = '';
               }}
             />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <button
-                type="button"
-                disabled={autoMapping}
-                onClick={() => setCamera360Mode('automap')}
-                className="flex items-center justify-center gap-2 rounded-2xl bg-white/10 px-4 py-3.5 text-xs font-extrabold text-cyan-300 ring-1 ring-cyan-400/40 hover:bg-cyan-500/20 disabled:opacity-50 transition"
-              >
-                <Globe className="h-4 w-4 shrink-0" />
-                <span>🌐 Live 360° Camera</span>
-              </button>
-              <button
-                type="button"
-                disabled={autoMapping}
-                onClick={() => autoMapInputRef.current?.click()}
-                className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-cyan-400 to-emerald-400 px-4 py-3.5 text-xs font-extrabold text-slate-950 shadow-xl hover:brightness-105 disabled:opacity-50 transition"
-              >
-                {autoMapping ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-                    <span className="truncate">{autoMapStage || 'Auto-Mapping...'}</span>
-                  </>
-                ) : (
-                  <>
-                    <Upload className="h-4 w-4 shrink-0" />
-                    <span>
-                      {autoMode === 'route'
-                        ? 'Upload Walk Video/Photos'
-                        : 'Upload Photos / Video'}
-                    </span>
-                  </>
-                )}
-              </button>
-            </div>
+            <input
+              ref={autoCameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.length) {
+                  void handleAutoMapFiles(e.target.files);
+                }
+                e.target.value = '';
+              }}
+            />
+            <input
+              ref={autoVideoInputRef}
+              type="file"
+              accept="video/*"
+              className="hidden"
+              onChange={(e) => {
+                if (e.target.files?.length) {
+                  void handleAutoMapFiles(e.target.files);
+                }
+                e.target.value = '';
+              }}
+            />
+
+            {autoMapping ? (
+              <div className="flex items-center justify-center gap-2.5 rounded-2xl bg-cyan-500/20 px-4 py-4 text-xs font-extrabold text-cyan-200 ring-1 ring-cyan-400/50">
+                <Loader2 className="h-4 w-4 animate-spin shrink-0 text-cyan-300" />
+                <span className="truncate">{autoMapStage || 'Auto-Mapping floor media...'}</span>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => autoPhotosInputRef.current?.click()}
+                  className="flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-cyan-400 to-emerald-400 px-3 py-3 text-xs font-extrabold text-slate-950 shadow-lg hover:brightness-105 active:scale-[0.98] transition"
+                >
+                  <ImageIcon className="h-4 w-4 shrink-0" />
+                  <span>Gallery Photos</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => autoCameraInputRef.current?.click()}
+                  className="flex items-center justify-center gap-1.5 rounded-2xl bg-white/15 px-3 py-3 text-xs font-extrabold text-white ring-1 ring-white/25 hover:bg-white/20 active:scale-[0.98] transition"
+                >
+                  <Camera className="h-4 w-4 shrink-0 text-cyan-300" />
+                  <span>Take Photo</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => autoVideoInputRef.current?.click()}
+                  className="flex items-center justify-center gap-1.5 rounded-2xl bg-white/10 px-3 py-2.5 text-xs font-extrabold text-emerald-300 ring-1 ring-emerald-400/35 hover:bg-emerald-500/20 active:scale-[0.98] transition"
+                >
+                  <Film className="h-4 w-4 shrink-0" />
+                  <span>Walk Video</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCamera360Mode('automap')}
+                  className="flex items-center justify-center gap-1.5 rounded-2xl bg-white/10 px-3 py-2.5 text-xs font-extrabold text-cyan-300 ring-1 ring-cyan-400/40 hover:bg-cyan-500/20 active:scale-[0.98] transition"
+                >
+                  <Globe className="h-4 w-4 shrink-0" />
+                  <span>360° Studio</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1022,6 +1061,75 @@ export const AdminDatasetPage: React.FC = () => {
                   </button>
                 </div>
               </div>
+              <input
+                ref={nodePhotosInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length) {
+                    void handleUploadFiles(e.target.files);
+                  }
+                  e.target.value = '';
+                }}
+              />
+              <input
+                ref={nodeCameraInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length) {
+                    void handleUploadFiles(e.target.files);
+                  }
+                  e.target.value = '';
+                }}
+              />
+              <input
+                ref={nodeVideoInputRef}
+                type="file"
+                accept="video/*"
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length) {
+                    void handleUploadFiles(e.target.files);
+                  }
+                  e.target.value = '';
+                }}
+              />
+
+              <div className="grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  disabled={uploading}
+                  onClick={() => nodePhotosInputRef.current?.click()}
+                  className="flex items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-2.5 py-2.5 text-xs font-extrabold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50 transition"
+                >
+                  <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+                  <span>Gallery</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={uploading}
+                  onClick={() => nodeCameraInputRef.current?.click()}
+                  className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-2.5 py-2.5 text-xs font-extrabold text-cyan-300 hover:bg-slate-800 disabled:opacity-50 transition"
+                >
+                  <Camera className="h-3.5 w-3.5 shrink-0" />
+                  <span>Camera</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={uploading}
+                  onClick={() => nodeVideoInputRef.current?.click()}
+                  className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-100 px-2.5 py-2.5 text-xs font-extrabold text-slate-800 ring-1 ring-slate-200 hover:bg-slate-200 disabled:opacity-50 transition"
+                >
+                  <Film className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                  <span>Video</span>
+                </button>
+              </div>
+
               <div
                 onDragOver={(e) => {
                   e.preventDefault();
@@ -1035,41 +1143,28 @@ export const AdminDatasetPage: React.FC = () => {
                     void handleUploadFiles(e.dataTransfer.files);
                   }
                 }}
-                onClick={() => fileInputRef.current?.click()}
-                className={`cursor-pointer rounded-2xl border-2 border-dashed p-6 text-center transition ${
+                onClick={() => nodePhotosInputRef.current?.click()}
+                className={`cursor-pointer rounded-2xl border-2 border-dashed p-5 text-center transition ${
                   dragOver
                     ? 'border-cyan-500 bg-cyan-50/60'
                     : 'border-slate-300 bg-slate-50/70 hover:border-indigo-500 hover:bg-indigo-50/30'
                 }`}
               >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*,video/mp4,video/webm,video/quicktime"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    if (e.target.files?.length) {
-                      void handleUploadFiles(e.target.files);
-                    }
-                    e.target.value = '';
-                  }}
-                />
                 {uploading ? (
                   <div className="py-3 space-y-2">
                     <Loader2 className="h-7 w-7 animate-spin text-indigo-600 mx-auto" />
                     <p className="text-xs font-bold text-slate-700">
-                      Compressing to WebP, blurring faces & indexing...
+                      Compressing to WebP, blurring faces &amp; indexing...
                     </p>
                   </div>
                 ) : (
                   <>
-                    <Upload className="h-7 w-7 text-indigo-600 mx-auto mb-2" />
-                    <p className="text-sm font-bold text-slate-900">
-                      Drop Reference Photos or Short Room Videos
+                    <Upload className="h-6 w-6 text-indigo-600 mx-auto mb-1.5" />
+                    <p className="text-xs sm:text-sm font-bold text-slate-900">
+                      Drop Reference Photos Here or Tap Above
                     </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Capture 3–5 angles per spot (or a short 3–15s clip). High-res phone captures are auto-compressed on device to 1600px WebP.
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Capture 3–5 clear angles per spot. Phone captures auto-orient &amp; compress to 1600px WebP.
                     </p>
                   </>
                 )}

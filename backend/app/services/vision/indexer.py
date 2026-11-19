@@ -13,6 +13,7 @@ import numpy as np
 from sqlmodel import Session, select
 
 from ...config import MEDIA_DIR
+from ...db import engine
 from ...models import IndexReport as IndexReportModel, Node, Photo, Venue
 from .embedder import embedder_service
 from .ocr import ocr_service
@@ -159,6 +160,15 @@ def get_latest_report(session: Session, venue_id: str) -> dict | None:
         return None
     latest = max(rows, key=lambda r: r.created_at)
     return json.loads(latest.json)
+
+
+def rebuild_venue_index_isolated(venue_id: str, force: bool = False) -> dict | None:
+    """Thread-safe wrapper opening a dedicated SQLAlchemy Session for run_in_threadpool."""
+    with Session(engine) as bg_session:
+        venue = bg_session.exec(select(Venue).where(Venue.id == venue_id)).first()
+        if not venue:
+            return None
+        return rebuild_venue_index(bg_session, venue, force=force)
 
 
 def _save_report(session: Session, venue_id: str, report: dict) -> None:

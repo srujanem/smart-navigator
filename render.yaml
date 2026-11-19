@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: smart-navigator-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: navigator-data
+      mountPath: /var/data/navigator
+      sizeGB: 10
+    envVars:
+      - key: NAV_DATA_DIR
+        value: /var/data/navigator
+      - key: NAV_SECRET
+        generateValue: true
+      - key: NAV_ADMIN_PASSWORD
+        generateValue: true
+      - key: NAV_CORS
+        value: https://smart-navigator-vert.vercel.app
+      - key: NAV_DEBUG_DOCS
+        value: "0"

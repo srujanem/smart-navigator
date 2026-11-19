@@ -96,7 +96,7 @@ export function clearAdminSession(): void {
 
 export const API_BASE = (
   (import.meta as any).env?.VITE_API_URL ||
-  'https://cape-orlando-suse-velocity.trycloudflare.com'
+  'https://scheduled-organised-resident-shade.trycloudflare.com'
 ).replace(/\/$/, '');
 
 let apiServerDownUntil = 0;
@@ -328,41 +328,94 @@ export async function searchVenue(
   }
 }
 
+function isLikelyImageFile(file: File): boolean {
+  return (
+    file.type.startsWith('image/') ||
+    /\.(jpe?g|png|webp|heic|heif|avif|bmp|gif)$/i.test(file.name)
+  );
+}
+
+function isLikelyVideoFile(file: File): boolean {
+  return (
+    file.type.startsWith('video/') ||
+    /\.(mp4|webm|mov|mkv|avi|m4v|3gp)$/i.test(file.name)
+  );
+}
+
+export async function decodeImageWithExifOrientation(file: File): Promise<{
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+  cleanup: () => void;
+} | null> {
+  if (typeof window === 'undefined') return null;
+
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      return {
+        source: bmp,
+        width: bmp.width,
+        height: bmp.height,
+        cleanup: () => bmp.close(),
+      };
+    } catch {
+      // Fall through to Image() fallback (handles older iOS/Android browsers or unsupported options)
+    }
+  }
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    const objUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      resolve({
+        source: img,
+        width: img.naturalWidth || img.width,
+        height: img.naturalHeight || img.height,
+        cleanup: () => URL.revokeObjectURL(objUrl),
+      });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objUrl);
+      resolve(null);
+    };
+    img.src = objUrl;
+  });
+}
+
 export async function compressImageForUpload(
   file: File,
   maxSide = 1600,
   quality = 0.88,
 ): Promise<File> {
-  if (typeof window === 'undefined' || typeof createImageBitmap !== 'function') {
-    return file;
-  }
-  if (!file.type.startsWith('image/')) {
+  if (typeof window === 'undefined' || !isLikelyImageFile(file)) {
     return file;
   }
   if (file.size <= 350_000 && (file.type === 'image/webp' || file.type === 'image/jpeg')) {
     return file;
   }
+  const decoded = await decodeImageWithExifOrientation(file);
+  if (!decoded) return file;
+
   try {
-    const bmp = await createImageBitmap(file);
-    const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height, 1));
-    const w = Math.max(1, Math.round(bmp.width * scale));
-    const h = Math.max(1, Math.round(bmp.height * scale));
+    const scale = Math.min(1, maxSide / Math.max(decoded.width, decoded.height, 1));
+    const w = Math.max(1, Math.round(decoded.width * scale));
+    const h = Math.max(1, Math.round(decoded.height * scale));
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
-      bmp.close();
       return file;
     }
-    ctx.drawImage(bmp, 0, 0, w, h);
-    bmp.close();
+    ctx.drawImage(decoded.source, 0, 0, w, h);
+
     let blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, 'image/webp', quality),
     );
     let mime = 'image/webp';
     let ext = 'webp';
-    if (!blob) {
+    if (!blob || (blob.type && blob.type !== 'image/webp')) {
       blob = await new Promise<Blob | null>((resolve) =>
         canvas.toBlob(resolve, 'image/jpeg', quality),
       );
@@ -370,10 +423,12 @@ export async function compressImageForUpload(
       ext = 'jpg';
     }
     if (!blob) return file;
-    const cleanName = file.name.replace(/\.[^.]+$/, '') + `.${ext}`;
-    return new File([blob], cleanName, { type: mime });
+    const baseName = file.name.replace(/\.[^.]+$/, '') || 'capture';
+    return new File([blob], `${baseName}.${ext}`, { type: mime });
   } catch {
     return file;
+  } finally {
+    decoded.cleanup();
   }
 }
 
@@ -668,7 +723,6 @@ export async function registerUploader(payload: {
   password: string;
   organization?: string;
   bio?: string;
-  account_type?: 'uploader' | 'staff';
 }): Promise<AuthResponse> {
   const data = await request<AuthResponse>('/api/auth/register', {
     method: 'POST',
@@ -945,7 +999,7 @@ export async function uploadAdminPhotos(
       fd.append('heading_deg', String(headingDeg));
     }
     for (const f of rawChunk) {
-      if (f.type.startsWith('image/')) {
+      if (isLikelyImageFile(f)) {
         const opt = await compressImageForUpload(f, 1600, 0.88);
         fd.append('files', opt);
       } else {
@@ -1049,18 +1103,13 @@ export async function autoMapAdminDataset(
 
   for (let i = 0; i < totalInputs; i++) {
     const f = options.files[i];
-    const ext = f.name.split('.').pop()?.toLowerCase() || '';
-    const isVid =
-      f.type.startsWith('video/') ||
-      ['mp4', 'webm', 'mov', 'mkv', 'avi'].includes(ext);
-
-    if (isVid) {
+    if (isLikelyVideoFile(f)) {
       options.onProgressStage?.(
         `Slicing video "${f.name}" into sharp WebP keyframes on device...`,
       );
       const vidFrames = await extractVideoKeyframesInBrowser(f, 24, 1600);
       pendingChunk.push(...vidFrames);
-    } else if (f.type.startsWith('image/')) {
+    } else if (isLikelyImageFile(f)) {
       options.onProgressStage?.(
         `Preparing photo ${i + 1}/${totalInputs} (batch ${batchNum + 1}/${estBatches})...`,
       );

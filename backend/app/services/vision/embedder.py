@@ -8,6 +8,7 @@ Fallback: PyTorch transformers DINOv2 or spatial-cv-512 descriptor if offline.
 from __future__ import annotations
 
 import logging
+import threading
 import urllib.request
 from pathlib import Path
 import numpy as np
@@ -27,38 +28,42 @@ class EmbedderService:
         self._ready = False
         self._name = "uninitialized"
         self._ort_session = None
+        self._lock = threading.Lock()
 
     def _ensure_loaded(self) -> None:
         if self._ready:
             return
-        if EMBEDDER in ("auto", "dinov2"):
-            try:
-                import onnxruntime as ort  # type: ignore
-
-                onnx_path: Path = DATA_DIR / "models" / "dinov2_vits14_q8.onnx"
-                if not onnx_path.exists():
-                    onnx_path.parent.mkdir(parents=True, exist_ok=True)
-                    log.info("Downloading DINOv2 ViT-S/14 ONNX weights (~24MB) to %s ...", onnx_path)
-                    urllib.request.urlretrieve(ONNX_MODEL_URL, str(onnx_path))
-
-                opts = ort.SessionOptions()
-                opts.intra_op_num_threads = 4
-                self._ort_session = ort.InferenceSession(
-                    str(onnx_path),
-                    sess_options=opts,
-                    providers=["CPUExecutionProvider"],
-                )
-                self._name = "dinov2-vits14"
-                self._ready = True
-                log.info("DINOv2 ViT-S/14 ONNX session initialized.")
+        with self._lock:
+            if self._ready:
                 return
-            except Exception as exc:  # noqa: BLE001
-                if EMBEDDER == "dinov2":
-                    raise
-                log.warning("Falling back to spatial-cv-512 embedder (%s)", exc)
+            if EMBEDDER in ("auto", "dinov2"):
+                try:
+                    import onnxruntime as ort  # type: ignore
 
-        self._name = "spatial-cv-512"
-        self._ready = True
+                    onnx_path: Path = DATA_DIR / "models" / "dinov2_vits14_q8.onnx"
+                    if not onnx_path.exists():
+                        onnx_path.parent.mkdir(parents=True, exist_ok=True)
+                        log.info("Downloading DINOv2 ViT-S/14 ONNX weights (~24MB) to %s ...", onnx_path)
+                        urllib.request.urlretrieve(ONNX_MODEL_URL, str(onnx_path))
+
+                    opts = ort.SessionOptions()
+                    opts.intra_op_num_threads = 4
+                    self._ort_session = ort.InferenceSession(
+                        str(onnx_path),
+                        sess_options=opts,
+                        providers=["CPUExecutionProvider"],
+                    )
+                    self._name = "dinov2-vits14"
+                    self._ready = True
+                    log.info("DINOv2 ViT-S/14 ONNX session initialized.")
+                    return
+                except Exception as exc:  # noqa: BLE001
+                    if EMBEDDER == "dinov2":
+                        raise
+                    log.warning("Falling back to spatial-cv-512 embedder (%s)", exc)
+
+            self._name = "spatial-cv-512"
+            self._ready = True
 
     @property
     def name(self) -> str:
@@ -86,7 +91,8 @@ class EmbedderService:
                 arr = np.asarray(pil_224, dtype=np.float32) / 255.0
                 chw = np.transpose(arr, (2, 0, 1))
                 normed = ((chw - IMAGENET_MEAN) / IMAGENET_STD)[None, ...]  # [1, 3, 224, 224]
-                hidden = self._ort_session.run(["last_hidden_state"], {"pixel_values": normed})[0]  # [1, 257, 384]
+                with self._lock:
+                    hidden = self._ort_session.run(["last_hidden_state"], {"pixel_values": normed})[0]  # [1, 257, 384]
                 cls_tok = hidden[0, 0]
                 patches = hidden[0, 1:]
                 mean_tok = patches.mean(axis=0)

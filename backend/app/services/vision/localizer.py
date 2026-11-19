@@ -14,11 +14,14 @@ import numpy as np
 from rapidfuzz import fuzz
 from sqlmodel import Session, select
 
+from ...auth import sign_media_path
 from ...config import CONFIDENT_THRESHOLD, MEDIA_DIR, MIN_MARGIN, NO_MATCH_SIMILARITY
+from ...db import engine
 from ...models import Building, Edge, Floor, LocalizeLog, Node, Photo, Venue
 from .embedder import embedder_service
 from .ocr import ocr_service
 from .privacy import has_face_blur, save_clean_image
+from .quality import pick_best_display_photo
 
 
 def _ocr_match_score(ocr_lines: List[str], node: Node, node_photo_texts: List[str]) -> tuple[float, Optional[str]]:
@@ -37,6 +40,13 @@ def _ocr_match_score(ocr_lines: List[str], node: Node, node_photo_texts: List[st
     if primary_nums:
         hit = sorted(primary_nums, key=len, reverse=True)[0].upper()
         return 0.99, f"Signboard number '{hit}'"
+
+    # Handle trailing white-emblem OCR artifact next to 3-digit door plaque (e.g. "3081" -> "308")
+    ocr_prefix3 = {tok[:3] for tok in ocr_numbers if len(tok) == 4 and tok.isdigit()}
+    prefix_hits = ocr_prefix3 & name_numbers
+    if prefix_hits:
+        hit = sorted(prefix_hits, key=len, reverse=True)[0].upper()
+        return 0.95, f"Signboard number '{hit}'"
 
     # Secondary match: OCR number appears in adjacent/opposite keywords or photo OCR tags
     common_nums = ocr_numbers & secondary_numbers
@@ -216,7 +226,7 @@ def localize_photo(
         else:
             raw_vis = 0.0
             vis_score = 0.0
-            any_p = next((p for p in photos if p.node_id == node.id), None)
+            any_p = pick_best_display_photo(node, [p for p in photos if p.node_id == node.id])
             if any_p:
                 ap_rel = any_p.thumbnail_path if (getattr(any_p, "media_type", "photo") == "video" and any_p.thumbnail_path) else any_p.path
                 best_photo_url = f"/media/{ap_rel}"
@@ -352,5 +362,25 @@ def localize_photo(
             "ocr": ocr_service.name,
             "face_blur": has_face_blur(),
         },
-        "query_photo_url": f"/media/{rel_query}",
+        "query_photo_url": sign_media_path(rel_query, ttl_seconds=900),
     }
+
+
+def localize_photo_isolated(
+    venue_id: str,
+    raw_bytes: bytes,
+    level_hint: Optional[int] = None,
+    prior_node_id: Optional[str] = None,
+) -> dict:
+    """Thread-safe wrapper opening a dedicated SQLAlchemy Session for run_in_threadpool."""
+    with Session(engine) as bg_session:
+        venue = bg_session.exec(select(Venue).where(Venue.id == venue_id)).first()
+        if not venue:
+            raise ValueError("Venue not found")
+        return localize_photo(
+            bg_session,
+            venue,
+            raw_bytes=raw_bytes,
+            level_hint=level_hint,
+            prior_node_id=prior_node_id,
+        )

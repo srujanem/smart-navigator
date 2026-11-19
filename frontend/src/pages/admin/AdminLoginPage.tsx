@@ -10,7 +10,6 @@ import {
   Loader2,
   Lock,
   ShieldCheck,
-  Sparkles,
   UserPlus,
 } from 'lucide-react';
 import { adminLogin, registerUploader } from '../../lib/api';
@@ -68,7 +67,6 @@ export const AdminLoginPage: React.FC = () => {
   const [regConfirmPassword, setRegConfirmPassword] = useState('');
   const [regOrg, setRegOrg] = useState('');
   const [regBio, setRegBio] = useState('');
-  const [regAccountType, setRegAccountType] = useState<'uploader' | 'staff'>('uploader');
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,13 +83,6 @@ export const AdminLoginPage: React.FC = () => {
     if (next === 'register') params.set('mode', 'register');
     else params.delete('mode');
     setSearchParams(params, { replace: true });
-  };
-
-  const fillDemo = () => {
-    setTab('login');
-    setEmail('admin@navigator.dev');
-    setPassword('admin123');
-    setError(null);
   };
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -135,7 +126,6 @@ export const AdminLoginPage: React.FC = () => {
         password: regPassword,
         organization: regOrg.trim(),
         bio: regBio.trim(),
-        account_type: regAccountType,
       });
       navigate('/admin/profile', { replace: true });
     } catch (err) {
@@ -215,60 +205,48 @@ export const AdminLoginPage: React.FC = () => {
           )}
 
           {tab === 'login' ? (
-            <div className="space-y-4">
-              {/* 1-Click Demo Credentials Helper */}
+            <form onSubmit={(e) => void handleLogin(e)} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                  Account Email
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="creator@yourvenue.org"
+                  className="input-dark"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="input-dark"
+                />
+              </div>
+
               <button
-                type="button"
-                onClick={fillDemo}
-                className="w-full flex items-center justify-center gap-2 rounded-xl bg-cyan-500/15 px-4 py-2.5 text-xs font-bold text-cyan-300 ring-1 ring-cyan-400/35 hover:bg-cyan-500/25 transition"
+                type="submit"
+                disabled={loading}
+                className="w-full btn-primary py-3 text-sm font-bold shadow-lg shadow-cyan-500/20"
               >
-                <Sparkles className="h-3.5 w-3.5" />
-                Fill Demo Super-Admin Credentials
+                {loading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <KeyRound className="h-4 w-4" />
+                )}
+                Sign In to Secure Studio
               </button>
-
-              <form onSubmit={(e) => void handleLogin(e)} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                    Account Email
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="creator@yourvenue.org"
-                    className="input-dark"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                    Password
-                  </label>
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="input-dark"
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full btn-primary py-3 text-sm font-bold shadow-lg shadow-cyan-500/20"
-                >
-                  {loading ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <KeyRound className="h-4 w-4" />
-                  )}
-                  Sign In to Secure Studio
-                </button>
-              </form>
-            </div>
+            </form>
           ) : (
             <form onSubmit={(e) => void handleRegister(e)} className="space-y-3.5">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -300,40 +278,19 @@ export const AdminLoginPage: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
-                    Organization / Venue
-                  </label>
-                  <div className="relative">
-                    <Building2 className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
-                    <input
-                      type="text"
-                      value={regOrg}
-                      onChange={(e) => setRegOrg(e.target.value)}
-                      placeholder="Hospital, Campus, Tech Hub"
-                      className="input-dark pl-9 py-2.5 text-xs"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
-                    Account Role
-                  </label>
-                  <select
-                    value={regAccountType}
-                    onChange={(e) =>
-                      setRegAccountType(e.target.value as 'uploader' | 'staff')
-                    }
-                    className="input-dark py-2.5 text-xs"
-                  >
-                    <option value="uploader" className="text-slate-900">
-                      Map Creator / Uploader (Own Venues)
-                    </option>
-                    <option value="staff" className="text-slate-900">
-                      Facility / Operations Staff
-                    </option>
-                  </select>
+              <div>
+                <label className="block text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1">
+                  Organization / Venue (Optional)
+                </label>
+                <div className="relative">
+                  <Building2 className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
+                  <input
+                    type="text"
+                    value={regOrg}
+                    onChange={(e) => setRegOrg(e.target.value)}
+                    placeholder="Hospital, Campus, Tech Hub"
+                    className="input-dark pl-9 py-2.5 text-xs"
+                  />
                 </div>
               </div>
 
