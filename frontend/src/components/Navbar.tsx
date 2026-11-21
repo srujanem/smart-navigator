@@ -20,8 +20,8 @@ export const Navbar: React.FC<NavbarProps> = ({ variant = 'dark' }) => {
     <header
       className={`sticky top-0 z-40 transition-colors ${
         isDark
-          ? 'bg-[#070B18]/80 backdrop-blur-xl border-b border-white/[0.08] text-white'
-          : 'bg-white/85 backdrop-blur-xl border-b border-slate-200/80 text-slate-900'
+          ? 'bg-[#070B18] sm:bg-[#070B18]/85 sm:backdrop-blur-xl border-b border-white/[0.08] text-white'
+          : 'bg-white sm:bg-white/90 sm:backdrop-blur-xl border-b border-slate-200/80 text-slate-900'
       }`}
     >
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-2 px-4 sm:px-6 lg:px-8">

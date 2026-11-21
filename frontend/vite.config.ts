@@ -13,6 +13,10 @@ export default defineConfig({
   },
   build: {
     chunkSizeWarningLimit: 1500,
+    modulePreload: {
+      resolveDependencies: (_filename, deps) =>
+        deps.filter((d) => !d.includes('three-') && !d.includes('motion-')),
+    },
     rollupOptions: {
       output: {
         manualChunks: {

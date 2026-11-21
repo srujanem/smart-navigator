@@ -472,7 +472,7 @@ export const VenuePage: React.FC = () => {
       {/* =================================================================== */}
       {/* STICKY TOP VENUE HUB BAR                                            */}
       {/* =================================================================== */}
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#070B18]/95 backdrop-blur-md text-white">
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#070B18] sm:bg-[#070B18]/95 sm:backdrop-blur-md text-white">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2.5 sm:gap-3 px-3.5 sm:px-6 lg:px-8 py-2.5 sm:py-3">
           {/* Left: Back + Venue Identity */}
           <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
