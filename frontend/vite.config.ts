@@ -19,11 +19,41 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
-        manualChunks: {
-          three: ['three', '@react-three/fiber', '@react-three/drei'],
-          motion: ['framer-motion'],
-          icons: ['lucide-react'],
-          vendor: ['react', 'react-dom', 'react-router-dom'],
+        manualChunks(id) {
+          const norm = id.replace(/\\/g, '/');
+          if (norm.includes('vite/preload-helper')) {
+            return 'vendor';
+          }
+          if (!norm.includes('/node_modules/')) return undefined;
+          if (
+            norm.includes('/node_modules/three/') ||
+            norm.includes('/node_modules/@react-three/') ||
+            norm.includes('/node_modules/three-stdlib/') ||
+            norm.includes('/node_modules/troika-') ||
+            norm.includes('/node_modules/maath/') ||
+            norm.includes('/node_modules/meshline/')
+          ) {
+            return 'three';
+          }
+          if (
+            norm.includes('/node_modules/framer-motion/') ||
+            norm.includes('/node_modules/motion-dom/') ||
+            norm.includes('/node_modules/motion-utils/')
+          ) {
+            return 'motion';
+          }
+          if (norm.includes('/node_modules/lucide-react/')) {
+            return 'icons';
+          }
+          if (
+            norm.includes('/node_modules/react/') ||
+            norm.includes('/node_modules/react-dom/') ||
+            norm.includes('/node_modules/react-router') ||
+            norm.includes('/node_modules/scheduler/')
+          ) {
+            return 'vendor';
+          }
+          return undefined;
         },
       },
     },
