@@ -208,18 +208,19 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
         const res = await localizePhoto(venue.slug, file, parsedLevel, priorNodeId);
         setResult(res);
 
-        // Sequence the AI trace steps over ~900ms so visitors see the real pipeline clearly
+        // Keep trace snappy on phones so visitors reach confirmation immediately
+        const isSmall = typeof window !== 'undefined' && window.innerWidth < 768;
         const totalSteps = Math.max(res.trace.length, 1);
         const elapsed = performance.now() - startedAt;
-        const minTotalMs = 920;
-        const remainingMs = Math.max(minTotalMs - elapsed, 320);
-        const stepDelay = Math.max(Math.floor(remainingMs / totalSteps), 140);
+        const minTotalMs = isSmall ? 340 : 920;
+        const remainingMs = Math.max(minTotalMs - elapsed, isSmall ? 120 : 320);
+        const stepDelay = Math.max(Math.floor(remainingMs / totalSteps), isSmall ? 45 : 140);
 
         for (let i = 1; i <= totalSteps; i++) {
           await new Promise((r) => setTimeout(r, stepDelay));
           setVisibleTraceCount(i);
         }
-        await new Promise((r) => setTimeout(r, 180));
+        await new Promise((r) => setTimeout(r, isSmall ? 60 : 180));
         setStage('result');
       } catch (err) {
         setStage('idle');
@@ -414,7 +415,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
           )}
 
           {/* Body Content */}
-          <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5 thin-scrollbar">
+          <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-5 thin-scrollbar smooth-scroll">
             {error && (
               <div className="flex items-start gap-3 rounded-2xl bg-rose-50 p-4 text-sm text-rose-800 ring-1 ring-rose-200">
                 <AlertTriangle className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
@@ -899,8 +900,8 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-slate-200 shadow-md">
-                      <div className="relative h-52 w-full">
+                    <div className="overflow-hidden rounded-2xl bg-slate-950 ring-1 ring-slate-200 shadow-md">
+                      <div className="relative h-52 w-full bg-slate-950">
                         <img
                           src={
                             result.query_photo_url
@@ -908,7 +909,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                               : previewUrl || ''
                           }
                           alt="Your uploaded photo"
-                          className="h-full w-full object-cover hdr-photo"
+                          className="h-full w-full object-contain"
                         />
                         {/* Smart AI Viewfinder Corner Brackets */}
                         <span className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 border-l-2 border-t-2 border-cyan-300/75" />
@@ -959,13 +960,13 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                       </div>
                     </div>
 
-                    <div className="overflow-hidden rounded-2xl bg-slate-900 ring-2 ring-emerald-500/65 shadow-[0_10px_28px_-8px_rgba(16,185,129,0.28)]">
-                      <div className="relative h-52 w-full flex items-center justify-center">
+                    <div className="overflow-hidden rounded-2xl bg-slate-950 ring-2 ring-emerald-500/65 shadow-[0_10px_28px_-8px_rgba(16,185,129,0.28)]">
+                      <div className="relative h-52 w-full flex items-center justify-center bg-slate-950">
                         {result.best.matched_photo_url ? (
                           <img
                             src={mediaUrl(result.best.matched_photo_url)}
                             alt={result.best.name}
-                            className="h-full w-full object-cover hdr-photo"
+                            className="h-full w-full object-contain"
                           />
                         ) : (
                           <div className="text-center text-slate-400 p-4">

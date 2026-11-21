@@ -96,7 +96,7 @@ export function clearAdminSession(): void {
 
 export const API_BASE = (
   (import.meta as any).env?.VITE_API_URL ||
-  'https://native-member-properties-senators.trycloudflare.com'
+  'https://slim-adopted-curve-bras.trycloudflare.com'
 ).replace(/\/$/, '');
 
 let apiServerDownUntil = 0;
@@ -533,7 +533,12 @@ export async function localizePhoto(
   level?: number | null,
   priorNodeId?: string | null,
 ): Promise<LocalizeResult> {
-  const optimizedFile = await compressImageForUpload(file, 1600, 0.88);
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+  const optimizedFile = await compressImageForUpload(
+    file,
+    isMobile ? 1280 : 1600,
+    isMobile ? 0.85 : 0.88,
+  );
   const fd = new FormData();
   fd.append('file', optimizedFile);
   if (level !== undefined && level !== null) {
@@ -542,10 +547,15 @@ export async function localizePhoto(
   if (priorNodeId) {
     fd.append('prior_node_id', priorNodeId);
   }
-  return request<LocalizeResult>(`/api/venues/${encodeURIComponent(slug)}/localize`, {
-    method: 'POST',
-    body: fd,
-  });
+  return request<LocalizeResult>(
+    `/api/venues/${encodeURIComponent(slug)}/localize`,
+    {
+      method: 'POST',
+      body: fd,
+    },
+    false,
+    25000,
+  );
 }
 
 export async function fetchSamplePhotoAsFile(

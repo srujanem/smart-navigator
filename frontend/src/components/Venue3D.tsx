@@ -1156,9 +1156,32 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
   const [showRoomVolumes, setShowRoomVolumes] = useState<boolean>(() => !isSmallScreen);
   const [radarFilter, setRadarFilter] = useState<Radar3DFilter>('none');
   const [daylight, setDaylight] = useState(false);
-  const [mobileTouchOrbit, setMobileTouchOrbit] = useState(true);
+  const [mobileTouchOrbit, setMobileTouchOrbit] = useState(() => !isSmallScreen);
   const [inspectedNode, setInspectedNode] = useState<GNode | null>(null);
   const [hoveredNode, setHoveredNode] = useState<GNode | null>(null);
+  const [inView, setInView] = useState(true);
+  const [tabVisible, setTabVisible] = useState(true);
+  const [contextLost, setContextLost] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(
+      (entries) => setInView(entries[0]?.isIntersecting ?? true),
+      { threshold: 0.05 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const onVis = () => setTabVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
+  const shouldRender = inView && tabVisible && !contextLost;
 
   useEffect(() => {
     return () => {
@@ -1223,24 +1246,50 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
 
   return (
     <div
+      ref={containerRef}
       className={`relative h-full w-full select-none rounded-2xl overflow-hidden transition-colors duration-300 ${
         daylight
           ? 'bg-gradient-to-b from-sky-100 via-slate-100 to-slate-200 ring-1 ring-slate-300'
           : 'bg-[#060A16]'
       }`}
     >
-      <Canvas
-        camera={{ position: [34, 30, 38], fov: 41 }}
-        dpr={isSmallScreen ? 1 : [1, 1.25]}
-        performance={{ min: 0.55 }}
-        style={{ touchAction: mobileTouchOrbit ? 'none' : 'pan-y' }}
-        gl={{
-          antialias: !isSmallScreen,
-          powerPreference: 'high-performance',
-          stencil: false,
-          depth: true,
-        }}
-      >
+      {contextLost ? (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-3 p-6 text-center text-white">
+          <p className="text-xs font-bold text-slate-300">
+            3D WebGL graphics paused to save phone memory.
+          </p>
+          <button
+            type="button"
+            onClick={() => setContextLost(false)}
+            className="rounded-xl bg-cyan-500 px-4 py-2 text-xs font-extrabold text-slate-950"
+          >
+            Reload 3D View
+          </button>
+        </div>
+      ) : (
+        <Canvas
+          camera={{ position: [34, 30, 38], fov: 41 }}
+          dpr={isSmallScreen ? 1 : [1, 1.25]}
+          frameloop={shouldRender ? 'always' : 'never'}
+          performance={{ min: 0.55 }}
+          style={{ touchAction: mobileTouchOrbit ? 'none' : 'pan-y' }}
+          gl={{
+            antialias: !isSmallScreen,
+            powerPreference: isSmallScreen ? 'default' : 'high-performance',
+            stencil: false,
+            depth: true,
+          }}
+          onCreated={({ gl }) => {
+            const canvas = gl.domElement;
+            const onLost = (e: Event) => {
+              e.preventDefault();
+              setContextLost(true);
+            };
+            const onRestored = () => setContextLost(false);
+            canvas.addEventListener('webglcontextlost', onLost, false);
+            canvas.addEventListener('webglcontextrestored', onRestored, false);
+          }}
+        >
         <color
           attach="background"
           args={[daylight ? '#eef4fb' : '#060A16']}
@@ -1290,6 +1339,7 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
           />
         )}
       </Canvas>
+      )}
 
       {/* Top Left: 4-Mode Camera Ribbon */}
       <div className="absolute top-2.5 left-2.5 z-10 flex items-center gap-1 rounded-xl bg-slate-950/90 p-1 text-xs ring-1 ring-white/10 shadow-lg">
@@ -1419,12 +1469,14 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
         <button
           type="button"
           onClick={() => setMobileTouchOrbit((v) => !v)}
-          className={`sm:hidden inline-flex items-center rounded-lg p-1 text-xs font-bold transition ${
-            mobileTouchOrbit ? 'text-cyan-400' : 'text-slate-400'
+          className={`sm:hidden inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-bold transition ${
+            mobileTouchOrbit
+              ? 'bg-cyan-500 text-slate-950'
+              : 'bg-white/10 text-slate-200'
           }`}
           title="Toggle 3D Orbit vs Page Scroll on Mobile"
         >
-          {mobileTouchOrbit ? '🕹️' : '📜'}
+          {mobileTouchOrbit ? '🕹️ Orbit' : '📜 Scroll'}
         </button>
 
         <button
@@ -1500,7 +1552,7 @@ const Venue3D: React.FC<Venue3DProps> = (props) => {
                 src={mediaUrl(inspectedNode.photo_url)}
                 alt={inspectedNode.name}
                 loading="lazy"
-                className="h-full w-full object-cover hdr-photo"
+                className="h-full w-full object-contain bg-slate-950"
               />
             ) : (
               <div className="flex h-full items-center justify-center text-xs text-slate-400">

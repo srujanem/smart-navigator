@@ -54,6 +54,7 @@ import { FloorPlan2D } from '../components/FloorPlan2D';
 import { IsometricVenueArt } from '../components/VenueCard';
 import { PhotoLocateModal, type ConfirmedSpot } from '../components/PhotoLocateModal';
 import { ErrorState, Skeleton3D } from '../components/ErrorState';
+import { Canvas3DErrorBoundary } from '../components/ErrorBoundary';
 import {
   computeMultiStopRoute,
   computeNearestRoute,
@@ -1914,25 +1915,35 @@ export const RoutePage: React.FC = () => {
                   ) : twinMode === '3d' ? (
                     /* 3D INTERACTIVE TWIN (Full Frame + Floating PiP Card) */
                     <div className="relative h-full w-full">
-                      <Suspense fallback={<Skeleton3D />}>
-                        <Venue3D
-                          venue={venue}
-                          graph={graph}
-                          selectedLevel={selectedLevel}
-                          selectedNodeId={activeStep?.node_id}
-                          startNodeId={route.from_node}
-                          endNodeId={route.to_node}
-                          routePath={activePath}
-                          walkerProgress={scrubProgress}
-                          isPlayingWalker={isPlayingWalker}
-                          onSelectNode={(n) => {
-                            const idx = route.steps.findIndex(
-                              (s) => s.node_id === n.id,
-                            );
-                            if (idx >= 0) handleStepClick(route.steps[idx], idx);
-                          }}
-                        />
-                      </Suspense>
+                      <Canvas3DErrorBoundary
+                        fallbackTitle="3D Twin Paused"
+                        onFallbackTo2D={() => {
+                          setTwinMode('2d');
+                          if (selectedLevel === 'all') {
+                            setSelectedLevel(activeStep?.level ?? 0);
+                          }
+                        }}
+                      >
+                        <Suspense fallback={<Skeleton3D />}>
+                          <Venue3D
+                            venue={venue}
+                            graph={graph}
+                            selectedLevel={selectedLevel}
+                            selectedNodeId={activeStep?.node_id}
+                            startNodeId={route.from_node}
+                            endNodeId={route.to_node}
+                            routePath={activePath}
+                            walkerProgress={scrubProgress}
+                            isPlayingWalker={isPlayingWalker}
+                            onSelectNode={(n) => {
+                              const idx = route.steps.findIndex(
+                                (s) => s.node_id === n.id,
+                              );
+                              if (idx >= 0) handleStepClick(route.steps[idx], idx);
+                            }}
+                          />
+                        </Suspense>
+                      </Canvas3DErrorBoundary>
 
                       {/* Floating Step Picture-in-Picture Landmark Card */}
                       {activeStep && (

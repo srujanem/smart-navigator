@@ -42,6 +42,7 @@ import { IsometricVenueArt } from '../components/VenueCard';
 import { PhotoLocateModal, type ConfirmedSpot } from '../components/PhotoLocateModal';
 import { StatusChip, VenueTypeBadge } from '../components/StatusChip';
 import { ErrorState, Skeleton3D, VenueHubSkeleton } from '../components/ErrorState';
+import { Canvas3DErrorBoundary } from '../components/ErrorBoundary';
 import {
   computeNearestRoute,
   getVenue,
@@ -467,7 +468,7 @@ export const VenuePage: React.FC = () => {
         : 'Directory & Staff On-Duty';
 
   return (
-    <div className="min-h-screen overflow-x-clip bg-slate-50 text-slate-900 pb-24">
+    <div className="min-h-[100dvh] w-full max-w-[100vw] overflow-x-clip bg-slate-50 text-slate-900 pb-24">
       {/* =================================================================== */}
       {/* STICKY TOP VENUE HUB BAR                                            */}
       {/* =================================================================== */}
@@ -1198,16 +1199,26 @@ export const VenuePage: React.FC = () => {
 
           <div className="relative h-[450px] sm:h-[530px] w-full">
             {twinMode === '3d' ? (
-              <Suspense fallback={<Skeleton3D />}>
-                <Venue3D
-                  venue={venue}
-                  graph={graph}
-                  selectedLevel={selectedLevel}
-                  selectedNodeId={inspectedNode?.id}
-                  startNodeId={visitorLoc?.nodeId}
-                  onSelectNode={(n) => setInspectedNode(n)}
-                />
-              </Suspense>
+              <Canvas3DErrorBoundary
+                fallbackTitle="3D Twin Paused"
+                onFallbackTo2D={() => {
+                  setTwinMode('2d');
+                  if (selectedLevel === 'all') {
+                    setSelectedLevel(visitorLoc?.level ?? allLevels[0] ?? 0);
+                  }
+                }}
+              >
+                <Suspense fallback={<Skeleton3D />}>
+                  <Venue3D
+                    venue={venue}
+                    graph={graph}
+                    selectedLevel={selectedLevel}
+                    selectedNodeId={inspectedNode?.id}
+                    startNodeId={visitorLoc?.nodeId}
+                    onSelectNode={(n) => setInspectedNode(n)}
+                  />
+                </Suspense>
+              </Canvas3DErrorBoundary>
             ) : (
               <FloorPlan2D
                 venue={venue}
@@ -1228,13 +1239,13 @@ export const VenuePage: React.FC = () => {
             {/* Selected Node Inspector Overlay Card (Mobile Bottom Sheet / Desktop Top-Right Floating) */}
             {inspectedNode && (
               <div className="absolute inset-x-3 bottom-3 sm:bottom-auto sm:top-3 sm:right-3 sm:left-auto sm:w-80 z-20 overflow-hidden rounded-2xl bg-white/95 shadow-2xl ring-1 ring-slate-900/10 backdrop-blur-xl transition-all">
-                <div className="relative h-36 w-full bg-slate-900 overflow-hidden">
+                <div className="relative h-40 w-full bg-slate-950 overflow-hidden">
                   {inspectedNode.photo_url && !failedPhotoUrls.has(inspectedNode.photo_url) ? (
                     <img
                       src={mediaUrl(inspectedNode.photo_url)}
                       alt={inspectedNode.name}
                       onError={() => markPhotoFailed(inspectedNode.photo_url!)}
-                      className="h-full w-full object-cover hdr-photo"
+                      className="h-full w-full object-contain bg-slate-950"
                     />
                   ) : (
                     <IsometricVenueArt
@@ -1535,7 +1546,7 @@ export const VenuePage: React.FC = () => {
 
       {/* MOBILE THUMB-FRIENDLY BOTTOM QUICK ACTION BAR */}
       {tripStops.length === 0 && (
-        <div className="sm:hidden fixed bottom-0 inset-x-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur-md px-3 pt-2 safe-bottom shadow-[0_-4px_20px_rgba(15,23,42,0.08)]">
+        <div className="sm:hidden fixed bottom-0 inset-x-0 z-30 border-t border-slate-200 bg-white px-3 pt-2 pb-2.5 safe-bottom shadow-[0_-4px_20px_rgba(15,23,42,0.08)]">
           <div className="grid grid-cols-3 gap-2">
             <button
               type="button"

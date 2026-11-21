@@ -26,8 +26,9 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { Navbar } from '../components/Navbar';
-import { VenueCard } from '../components/VenueCard';
+import { IsometricVenueArt, VenueCard } from '../components/VenueCard';
 import { ErrorState, Skeleton3D } from '../components/ErrorState';
+import { Canvas3DErrorBoundary } from '../components/ErrorBoundary';
 import { getHealth, getVenues } from '../lib/api';
 import type { HealthStatus, VenueSummary } from '../lib/types';
 
@@ -147,6 +148,10 @@ export const LandingPage: React.FC = () => {
   const [venuesError, setVenuesError] = useState<string | null>(null);
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [activeStep, setActiveStep] = useState(0);
+  // On mobile phones, defer heavy 1.1MB Three.js WebGL until user taps "Launch Live 3D Twin" for instant 0-lag load
+  const [showInteractive3D, setShowInteractive3D] = useState<boolean>(() =>
+    typeof window !== 'undefined' ? window.innerWidth >= 768 : true,
+  );
 
   const loadData = useCallback(async () => {
     setLoadingVenues(true);
@@ -174,17 +179,17 @@ export const LandingPage: React.FC = () => {
   }, [loadData]);
 
   return (
-    <div className="min-h-screen overflow-x-clip bg-[#070B18] text-white selection:bg-cyan-500/30 selection:text-cyan-200">
+    <div className="min-h-[100dvh] w-full max-w-[100vw] overflow-x-clip bg-[#070B18] text-white selection:bg-cyan-500/30 selection:text-cyan-200">
       <Navbar variant="dark" />
 
       {/* =================================================================== */}
       {/* HERO SECTION WITH INTERACTIVE 3D ARCHITECTURAL TWIN                 */}
       {/* =================================================================== */}
       <section className="relative overflow-hidden border-b border-white/[0.08] spatial-grid-dark">
-        {/* Animated Aurora Light Orbs */}
+        {/* Animated Aurora Light Orbs (Desktop GPU Only) */}
         <div className="aurora-orb pointer-events-none absolute -top-36 left-1/5 h-[36rem] w-[36rem] rounded-full bg-cyan-500/20 blur-[135px]" />
         <div className="aurora-orb pointer-events-none absolute top-20 right-1/5 h-[32rem] w-[32rem] rounded-full bg-indigo-600/25 blur-[145px]" />
-        <div className="pointer-events-none absolute -bottom-28 left-1/2 -translate-x-1/2 h-[22rem] w-[44rem] rounded-full bg-emerald-500/10 blur-[130px]" />
+        <div className="aurora-orb pointer-events-none absolute -bottom-28 left-1/2 -translate-x-1/2 h-[22rem] w-[44rem] rounded-full bg-emerald-500/10 blur-[130px]" />
 
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-10 pb-16 lg:py-20">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-8 items-center">
@@ -269,38 +274,64 @@ export const LandingPage: React.FC = () => {
               </div>
             </motion.div>
 
-            {/* Interactive 3D Architectural Glass Hologram */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.96 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.65, delay: 0.1 }}
-              className="lg:col-span-6 relative h-[420px] sm:h-[490px] lg:h-[540px] rounded-3xl bg-[#0A1024]/90 ring-1 ring-white/15 shadow-[0_25px_70px_-15px_rgba(14,165,233,0.28)] overflow-hidden"
-            >
-              <Suspense
-                fallback={
-                  <Skeleton3D label="Rendering 3D Architectural Glass Twin..." />
-                }
-              >
-                <Hero3D />
-              </Suspense>
+            {/* Interactive 3D Architectural Glass Hologram (Zero-Lag Isometric Preview on Mobile + 1-Tap 3D Launch) */}
+            <div className="lg:col-span-6 relative h-[320px] sm:h-[490px] lg:h-[540px] rounded-3xl bg-[#0A1024]/95 ring-1 ring-white/15 shadow-[0_25px_70px_-15px_rgba(14,165,233,0.28)] overflow-hidden">
+              {showInteractive3D ? (
+                <Canvas3DErrorBoundary
+                  fallbackTitle="3D Twin Paused"
+                  onFallbackTo2D={() => setShowInteractive3D(false)}
+                >
+                  <Suspense
+                    fallback={
+                      <Skeleton3D label="Rendering 3D Architectural Glass Twin..." />
+                    }
+                  >
+                    <Hero3D />
+                  </Suspense>
+                </Canvas3DErrorBoundary>
+              ) : (
+                <div className="relative h-full w-full">
+                  <IsometricVenueArt
+                    accent="#06b6d4"
+                    buildings={3}
+                    floors={4}
+                    venueType="campus"
+                  />
+                  <div className="absolute inset-0 flex flex-col items-center justify-center p-4 bg-slate-950/20">
+                    <button
+                      type="button"
+                      onClick={() => setShowInteractive3D(true)}
+                      className="inline-flex items-center gap-2 rounded-2xl bg-slate-950/90 px-4 py-3 text-xs font-extrabold text-cyan-200 ring-1 ring-cyan-400/50 shadow-xl active:scale-[0.97] transition"
+                    >
+                      <Cuboid className="h-4 w-4 text-cyan-400" />
+                      Tap to Launch Live 3D Twin
+                    </button>
+                    <span className="mt-2 text-[11px] font-medium text-slate-300">
+                      Paused by default on mobile for instant zero-lag loading
+                    </span>
+                  </div>
+                </div>
+              )}
 
               {/* Floating Hologram HUD Badges */}
-              <div className="pointer-events-none absolute top-3.5 left-3.5 flex items-center gap-2 rounded-xl bg-slate-950/80 px-3 py-1.5 text-xs font-semibold text-cyan-300 ring-1 ring-cyan-400/30 backdrop-blur-md">
-                <span className="h-2 w-2 rounded-full bg-cyan-400 animate-ping" />
-                Live 3D Architectural Twin · Drag to Orbit
+              <div className="pointer-events-none absolute top-3.5 left-3.5 flex items-center gap-2 rounded-xl bg-slate-950/85 px-3 py-1.5 text-[11px] sm:text-xs font-semibold text-cyan-300 ring-1 ring-cyan-400/30">
+                <span className="h-2 w-2 rounded-full bg-cyan-400" />
+                {showInteractive3D
+                  ? 'Live 3D Architectural Twin · Drag to Orbit'
+                  : 'Fast Mobile Digital Twin Preview'}
               </div>
 
-              <div className="pointer-events-none absolute bottom-3.5 left-3.5 right-3.5 flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-slate-950/80 px-4 py-2.5 text-xs ring-1 ring-white/15 backdrop-blur-md">
+              <div className="pointer-events-none absolute bottom-3 left-3 right-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-slate-950/85 px-3.5 py-2 text-[11px] sm:text-xs ring-1 ring-white/15">
                 <div className="flex items-center gap-2 text-slate-200">
-                  <span className="h-2.5 w-2.5 rounded-full bg-sky-400" />
-                  <span>Photo Pinpointed: Atrium Entrance</span>
+                  <span className="h-2 w-2 rounded-full bg-sky-400" />
+                  <span>Photo Pinpointed: Entrance</span>
                 </div>
                 <div className="flex items-center gap-2 text-emerald-300 font-semibold">
-                  <span>Glass Lift Core → Level 2 Wing</span>
-                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                  <span>Lift Core → Level 2 Wing</span>
+                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
                 </div>
               </div>
-            </motion.div>
+            </div>
           </div>
         </div>
       </section>
@@ -328,7 +359,7 @@ export const LandingPage: React.FC = () => {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
             {/* Large Bento 1: Cinema Street-View & 3D Glass Twin */}
             <div className="lg:col-span-7 relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0F1B3D] via-[#0A1228] to-[#060A16] p-6 sm:p-8 ring-1 ring-white/12 shadow-2xl flex flex-col justify-between">
-              <div className="pointer-events-none absolute -right-16 -top-16 h-60 w-60 rounded-full bg-cyan-500/20 blur-3xl" />
+              <div className="aurora-orb pointer-events-none absolute -right-16 -top-16 h-60 w-60 rounded-full bg-cyan-500/20 blur-3xl" />
               <div className="relative z-10 space-y-3">
                 <span className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-500/15 px-2.5 py-1 text-[11px] font-bold text-cyan-300 ring-1 ring-cyan-400/30">
                   <Cuboid className="h-3.5 w-3.5" />

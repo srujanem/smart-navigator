@@ -120,6 +120,7 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
   const svgRef = useRef<SVGSVGElement>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [mobilePanUnlocked, setMobilePanUnlocked] = useState(false);
   const [draggingPan, setDraggingPan] = useState<{
     startX: number;
     startY: number;
@@ -138,11 +139,13 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
     startX: number;
     startY: number;
     initPan: { x: number; y: number };
+    moved: boolean;
     initDist?: number;
     initZoom?: number;
   } | null>(null);
 
   const isEditing = editorMode !== 'view';
+  const allowSingleTouchPan = isEditing || mobilePanUnlocked || zoom > 1.05;
 
   const clientToSvgPoint = (clientX: number, clientY: number) => {
     const svg = svgRef.current;
@@ -343,6 +346,22 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
         </div>
 
         <div className="flex items-center gap-1">
+          {!isEditing && (
+            <button
+              type="button"
+              onClick={() => setMobilePanUnlocked((v) => !v)}
+              className={`sm:hidden rounded-lg px-2 py-1 text-[11px] font-bold transition ${
+                allowSingleTouchPan
+                  ? 'bg-cyan-500 text-slate-950'
+                  : dark
+                    ? 'bg-white/10 text-slate-200'
+                    : 'bg-slate-200/80 text-slate-700'
+              }`}
+              title="Toggle Map Pan vs Page Scroll on Mobile"
+            >
+              {allowSingleTouchPan ? '✋ Pan' : '📜 Scroll'}
+            </button>
+          )}
           {isEditing && cursorWorld && (
             <span className="mr-2 rounded-md bg-slate-900/80 px-2 py-0.5 font-mono text-[10px] text-cyan-300">
               x:{cursorWorld.x.toFixed(1)}, y:{cursorWorld.y.toFixed(1)}
@@ -383,7 +402,7 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
 
       {/* Interactive SVG Blueprint */}
       <div
-        style={{ touchAction: 'none' }}
+        style={{ touchAction: allowSingleTouchPan ? 'none' : 'pan-y' }}
         className={`relative flex-1 overflow-hidden ${
           editorMode === 'add_node'
             ? 'cursor-crosshair'
@@ -397,12 +416,14 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
           setZoom((z) => Math.max(0.65, Math.min(3.8, +(z + delta).toFixed(2))));
         }}
         onTouchStart={(e) => {
+          if (draggingNode) return;
           if (e.touches.length === 1) {
             const t = e.touches[0];
             touchRef.current = {
               startX: t.clientX,
               startY: t.clientY,
               initPan: { ...pan },
+              moved: false,
             };
           } else if (e.touches.length === 2) {
             const t1 = e.touches[0];
@@ -412,17 +433,35 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
               startX: (t1.clientX + t2.clientX) / 2,
               startY: (t1.clientY + t2.clientY) / 2,
               initPan: { ...pan },
+              moved: true,
               initDist: dist,
               initZoom: zoom,
             };
           }
         }}
         onTouchMove={(e) => {
+          if (draggingNode && e.touches.length === 1) {
+            const t = e.touches[0];
+            const wpt = clientToSvgPoint(t.clientX, t.clientY);
+            if (wpt) {
+              setDraggingNode({
+                ...draggingNode,
+                x: wpt.x,
+                y: wpt.y,
+                moved: true,
+              });
+            }
+            return;
+          }
           if (!touchRef.current) return;
           if (e.touches.length === 1 && touchRef.current.initDist === undefined) {
             const t = e.touches[0];
             const dx = t.clientX - touchRef.current.startX;
             const dy = t.clientY - touchRef.current.startY;
+            if (Math.hypot(dx, dy) > 6) {
+              touchRef.current.moved = true;
+            }
+            if (!allowSingleTouchPan) return;
             setPan({
               x: touchRef.current.initPan.x + dx,
               y: touchRef.current.initPan.y + dy,
@@ -436,8 +475,25 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
             setZoom(nextZoom);
           }
         }}
-        onTouchEnd={() => {
+        onTouchEnd={(e) => {
+          if (draggingNode) {
+            const dn = draggingNode;
+            setDraggingNode(null);
+            if (dn.moved && onNodeDragEnd) {
+              onNodeDragEnd(dn.node, dn.x, dn.y);
+            }
+            touchRef.current = null;
+            return;
+          }
+          const wasMoved = touchRef.current?.moved ?? true;
           touchRef.current = null;
+          if (!wasMoved && editorMode === 'add_node' && onCanvasClick) {
+            const t = e.changedTouches[0];
+            if (t) {
+              const pt = clientToSvgPoint(t.clientX, t.clientY);
+              if (pt) onCanvasClick(pt.x, pt.y);
+            }
+          }
         }}
         onMouseDown={(e) => {
           if (draggingNode) return;
@@ -915,6 +971,17 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
                     });
                   }
                 }}
+                onTouchStart={(ev) => {
+                  if (editorMode === 'select' && onNodeDragEnd && ev.touches.length === 1) {
+                    ev.stopPropagation();
+                    setDraggingNode({
+                      node: n,
+                      x: n.x,
+                      y: n.y,
+                      moved: false,
+                    });
+                  }
+                }}
                 onClick={(ev) => {
                   ev.stopPropagation();
                   onSelectNode?.(n);
@@ -923,6 +990,8 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
                   cursor: editorMode === 'select' && onNodeDragEnd ? 'move' : 'pointer',
                 }}
               >
+                {/* Wider invisible touch hit area so tapping room pins on phones is effortless */}
+                <circle r={r * 1.95} fill="transparent" />
                 {/* Google-Maps-Style Directional Facing View Cone + Animated Radar Ripple */}
                 {isRadarAnchor && (
                   <>

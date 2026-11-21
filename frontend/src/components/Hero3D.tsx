@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Float, Line, OrbitControls } from '@react-three/drei';
 import { Moon, Sun } from 'lucide-react';
@@ -475,52 +475,105 @@ const HologramComplex: React.FC<{ daylight: boolean }> = ({ daylight }) => {
 
 const Hero3D: React.FC = () => {
   const [daylight, setDaylight] = useState(false);
+  const [inView, setInView] = useState(true);
+  const [tabVisible, setTabVisible] = useState(true);
+  const [contextLost, setContextLost] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
   const isSmallScreen =
     typeof window !== 'undefined' && window.innerWidth < 768;
 
+  // Pause 3D render loop immediately when scrolled out of view or backgrounded on phones
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        setInView(entries[0]?.isIntersecting ?? true);
+      },
+      { threshold: 0.05 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const onVis = () => setTabVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
+  const shouldRender = inView && tabVisible && !contextLost;
+
   return (
     <div
+      ref={containerRef}
       className={`relative h-full w-full select-none transition-colors duration-500 ${
         daylight
           ? 'bg-gradient-to-b from-sky-100 via-slate-100 to-slate-200'
           : 'bg-transparent'
       }`}
     >
-      <Canvas
-        camera={{ position: [14.5, 10.6, 16.5], fov: 39 }}
-        dpr={isSmallScreen ? 1 : [1, 1.25]}
-        performance={{ min: 0.55 }}
-        gl={{
-          antialias: !isSmallScreen,
-          alpha: true,
-          powerPreference: 'high-performance',
-          stencil: false,
-        }}
-      >
-        <ambientLight intensity={daylight ? 1.35 : 0.9} />
-        <directionalLight
-          position={[14, 22, 12]}
-          intensity={daylight ? 1.8 : 1.45}
-          color={daylight ? '#ffffff' : '#e0f2fe'}
-        />
-        <pointLight
-          position={[-10, 6, -8]}
-          intensity={daylight ? 0.6 : 1.2}
-          color="#6366f1"
-        />
-        <pointLight
-          position={[8, 8, 6]}
-          intensity={daylight ? 0.6 : 1.1}
-          color="#38bdf8"
-        />
-        <HologramComplex daylight={daylight} />
-        <OrbitControls
-          enableZoom={false}
-          enablePan={false}
-          minPolarAngle={Math.PI / 5}
-          maxPolarAngle={Math.PI / 2.22}
-        />
-      </Canvas>
+      {contextLost ? (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-6 text-center text-white">
+          <p className="text-xs font-bold text-slate-300">
+            3D WebGL context paused by device GPU.
+          </p>
+          <button
+            type="button"
+            onClick={() => setContextLost(false)}
+            className="rounded-xl bg-cyan-500 px-3.5 py-2 text-xs font-extrabold text-slate-950"
+          >
+            Resume 3D Twin
+          </button>
+        </div>
+      ) : (
+        <Canvas
+          camera={{ position: [14.5, 10.6, 16.5], fov: 39 }}
+          dpr={isSmallScreen ? 1 : [1, 1.25]}
+          frameloop={shouldRender ? 'always' : 'never'}
+          performance={{ min: 0.55 }}
+          gl={{
+            antialias: !isSmallScreen,
+            alpha: true,
+            powerPreference: isSmallScreen ? 'default' : 'high-performance',
+            stencil: false,
+          }}
+          onCreated={({ gl }) => {
+            const canvas = gl.domElement;
+            const handleLost = (e: Event) => {
+              e.preventDefault();
+              setContextLost(true);
+            };
+            const handleRestored = () => setContextLost(false);
+            canvas.addEventListener('webglcontextlost', handleLost, false);
+            canvas.addEventListener('webglcontextrestored', handleRestored, false);
+          }}
+        >
+          <ambientLight intensity={daylight ? 1.35 : 0.9} />
+          <directionalLight
+            position={[14, 22, 12]}
+            intensity={daylight ? 1.8 : 1.45}
+            color={daylight ? '#ffffff' : '#e0f2fe'}
+          />
+          <pointLight
+            position={[-10, 6, -8]}
+            intensity={daylight ? 0.6 : 1.2}
+            color="#6366f1"
+          />
+          <pointLight
+            position={[8, 8, 6]}
+            intensity={daylight ? 0.6 : 1.1}
+            color="#38bdf8"
+          />
+          <HologramComplex daylight={daylight} />
+          <OrbitControls
+            enableZoom={false}
+            enablePan={false}
+            minPolarAngle={Math.PI / 5}
+            maxPolarAngle={Math.PI / 2.22}
+          />
+        </Canvas>
+      )}
 
       {/* Architectural Lighting Switcher */}
       <button

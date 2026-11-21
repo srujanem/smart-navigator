@@ -179,7 +179,7 @@ export const PeoplePage: React.FC = () => {
         : 'People & Officer Directory';
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 pb-16">
+    <div className="min-h-[100dvh] w-full max-w-[100vw] overflow-x-clip bg-slate-50 text-slate-900 pb-16">
       {/* Sticky Top Bar */}
       <header className="sticky top-0 z-40 border-b border-white/10 bg-[#070B18]/95 text-white backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 sm:px-6 lg:px-8 py-3.5">

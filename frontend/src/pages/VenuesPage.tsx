@@ -85,7 +85,7 @@ export const VenuesPage: React.FC = () => {
   }, [venues]);
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-slate-50 text-slate-900 flex flex-col">
+    <div className="min-h-[100dvh] w-full max-w-[100vw] overflow-x-clip bg-slate-50 text-slate-900 flex flex-col">
       <Navbar variant="dark" />
 
       {/* Cinema Aurora Header Banner */}
