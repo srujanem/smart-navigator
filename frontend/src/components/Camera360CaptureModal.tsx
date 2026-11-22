@@ -308,7 +308,7 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
   const spinPct = Math.min(100, Math.round((recordSeconds / MAX_360_SECONDS) * 100));
 
   return (
-    <div className="fixed inset-0 z-50 h-[100dvh] w-screen bg-black text-white overflow-hidden select-none">
+    <div className="fixed inset-0 !m-0 z-50 h-[100dvh] w-screen bg-black text-white overflow-hidden select-none">
       {/* Hidden native inputs for Gallery / Fallback Native Camera */}
       <input
         ref={galleryInputRef}

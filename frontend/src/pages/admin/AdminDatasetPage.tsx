@@ -776,7 +776,7 @@ export const AdminDatasetPage: React.FC = () => {
       {/* 5. LIVE 0% -> 100% UPLOAD PROGRESS MODAL                          */}
       {/* ================================================================= */}
       {progressState?.active && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4">
+        <div className="fixed inset-0 !m-0 z-50 flex items-center justify-center bg-slate-950/85 p-4">
           <div className="w-full max-w-md rounded-3xl bg-white p-6 text-slate-900 shadow-2xl ring-1 ring-slate-200 space-y-5">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
