@@ -1041,8 +1041,16 @@ export async function uploadAdminPhotos(
   files: File[],
   headingDeg?: number | null,
   _exactNode = true,
+  onProgress?: (pct: number, stage: string) => void,
 ): Promise<UploadPhotosResponse> {
-  return vaultUploadPhotosToNode(slug, nodeId, files, compressImageForUpload, headingDeg);
+  return vaultUploadPhotosToNode(
+    slug,
+    nodeId,
+    files,
+    compressImageForUpload,
+    headingDeg,
+    onProgress,
+  );
 }
 
 export async function autoMapAdminDataset(

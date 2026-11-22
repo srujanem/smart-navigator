@@ -1,32 +1,22 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Camera,
   Check,
-  CheckCircle2,
-  Compass,
-  Film,
   FlipHorizontal,
-  Globe,
   Image as ImageIcon,
-  Loader2,
-  Play,
   RefreshCw,
-  Settings2,
-  Sparkles,
-  Square,
   Trash2,
-  Upload,
+  Video,
   X,
   Zap,
 } from 'lucide-react';
-import { decodeImageWithExifOrientation } from '../lib/api';
+import { isVideoFile } from '../lib/panorama360';
 
-export interface Captured360Frame {
+export interface CapturedItem {
   id: string;
   file: File;
   previewUrl: string;
-  headingDeg: number;
-  roomHint: string;
+  isVideo: boolean;
   label: string;
 }
 
@@ -39,105 +29,48 @@ interface Camera360CaptureModalProps {
   onSubmitFrames: (files: File[]) => Promise<void> | void;
 }
 
-type CaptureTab = 'sweep360' | 'walkthrough' | 'panorama_import';
-
-const CARDINAL_LABELS: Record<number, string> = {
-  0: 'N · Front',
-  45: 'NE',
-  90: 'E · Right',
-  135: 'SE',
-  180: 'S · Back',
-  225: 'SW',
-  270: 'W · Left',
-  315: 'NW',
-};
-
 export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
   open,
   onClose,
   venueName,
-  targetLabel = 'Auto-OCR Floor Model Builder',
+  targetLabel = 'Room',
   submitting = false,
   onSubmitFrames,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const panoInputRef = useRef<HTMLInputElement>(null);
-  const panoVideoInputRef = useRef<HTMLInputElement>(null);
-  const nativeCamInputRef = useRef<HTMLInputElement>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const nativePhotoInputRef = useRef<HTMLInputElement>(null);
+  const nativeVideoInputRef = useRef<HTMLInputElement>(null);
 
-  const [activeTab, setActiveTab] = useState<CaptureTab>('sweep360');
-  const [showSettings, setShowSettings] = useState(false);
-
-  // 360° Camera Settings State
-  const [sectorCount, setSectorCount] = useState<4 | 8>(4);
+  const [mode, setMode] = useState<'photo' | 'video360'>('photo');
   const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
-  const [maxRes, setMaxRes] = useState<1600 | 1280>(1600);
-  const [walkIntervalMs, setWalkIntervalMs] = useState<800 | 1200 | 2000>(1200);
-  const [autoSnapCompass, setAutoSnapCompass] = useState<boolean>(false);
-  const [torchOn, setTorchOn] = useState<boolean>(false);
-  const [roomTag, setRoomTag] = useState<string>('');
-
-  // Camera & Sensor State
+  const [torchOn, setTorchOn] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [liveCompassDeg, setLiveCompassDeg] = useState<number | null>(null);
-  const [manualHeadingDeg, setManualHeadingDeg] = useState<number>(0);
-  const [isRecordingWalk, setIsRecordingWalk] = useState(false);
-  const [unwrappingPano, setUnwrappingPano] = useState(false);
-  const [panoScrubX, setPanoScrubX] = useState<number>(0);
+  const [flashEffect, setFlashEffect] = useState(false);
 
-  // Captured 360° / Walkthrough Frames
-  const [frames, setFrames] = useState<Captured360Frame[]>([]);
+  // 360° Spin Video Recording State
+  const [isRecording360, setIsRecording360] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const MAX_360_SECONDS = 10;
 
-  const sectors = useMemo(
-    () => (sectorCount === 8 ? [0, 45, 90, 135, 180, 225, 270, 315] : [0, 90, 180, 270]),
-    [sectorCount],
-  );
-
-  const currentHeading = useMemo(() => {
-    if (liveCompassDeg !== null) return Math.round(liveCompassDeg) % 360;
-    return manualHeadingDeg % 360;
-  }, [liveCompassDeg, manualHeadingDeg]);
-
-  const nearestSector = useMemo(() => {
-    let best = sectors[0];
-    let bestDiff = 360;
-    for (const s of sectors) {
-      const diff = Math.min(
-        Math.abs(currentHeading - s),
-        360 - Math.abs(currentHeading - s),
-      );
-      if (diff < bestDiff) {
-        bestDiff = diff;
-        best = s;
-      }
-    }
-    return best;
-  }, [sectors, currentHeading]);
-
-  const capturedSectorSet = useMemo(() => {
-    const set = new Set<number>();
-    for (const f of frames) {
-      let best = sectors[0];
-      let bestDiff = 360;
-      for (const s of sectors) {
-        const diff = Math.min(
-          Math.abs(f.headingDeg - s),
-          360 - Math.abs(f.headingDeg - s),
-        );
-        if (diff < bestDiff) {
-          bestDiff = diff;
-          best = s;
-        }
-      }
-      if (bestDiff <= 25) set.add(best);
-    }
-    return set;
-  }, [frames, sectors]);
+  // Captured Queue inside camera session
+  const [items, setItems] = useState<CapturedItem[]>([]);
+  const [showTray, setShowTray] = useState(false);
 
   const stopCamera = useCallback(() => {
-    setIsRecordingWalk(false);
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      try {
+        recorderRef.current.stop();
+      } catch {
+        // Ignore
+      }
+    }
+    recorderRef.current = null;
+    setIsRecording360(false);
     setCameraReady(false);
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((tr) => tr.stop());
@@ -152,9 +85,7 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
     stopCamera();
     setCameraError(null);
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-      setCameraError(
-        'Live camera stream is unavailable on this browser. You can still use the "360° Panorama / Video Unwrapper" tab below!',
-      );
+      setCameraError('Live browser camera is unavailable on this device. Use Phone Camera or Gallery below.');
       return;
     }
     try {
@@ -173,51 +104,56 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
       }
       setCameraReady(true);
     } catch {
-      setCameraError(
-        'Camera permission denied or no webcam attached. Use the "360° Panorama / File Unwrapper" tab to import 360° photos or videos from your device.',
-      );
+      setCameraError('Camera access was blocked or unavailable. Tap "Phone Camera" or "Gallery" below.');
     }
   }, [facingMode, stopCamera]);
 
   useEffect(() => {
-    if (open && activeTab !== 'panorama_import') {
+    if (open) {
       void startCamera();
     } else {
       stopCamera();
+      setItems((prev) => {
+        prev.forEach((it) => {
+          if (it.previewUrl) URL.revokeObjectURL(it.previewUrl);
+        });
+        return [];
+      });
+      setShowTray(false);
+      setRecordSeconds(0);
     }
     return () => {
       stopCamera();
     };
-  }, [open, activeTab, startCamera, stopCamera]);
+  }, [open, startCamera, stopCamera]);
 
-  // Cleanup preview object URLs when modal closes
-  useEffect(() => {
-    if (!open) {
-      setFrames((prev) => {
-        prev.forEach((f) => URL.revokeObjectURL(f.previewUrl));
-        return [];
-      });
-      setIsRecordingWalk(false);
-    }
-  }, [open]);
-
-  // Device compass orientation listener
-  useEffect(() => {
-    if (!open) return;
-    const handleOrientation = (ev: DeviceOrientationEvent) => {
-      const webkitCompass = (ev as unknown as { webkitCompassHeading?: number })
-        .webkitCompassHeading;
-      if (typeof webkitCompass === 'number' && Number.isFinite(webkitCompass)) {
-        setLiveCompassDeg(Math.round(webkitCompass) % 360);
-      } else if (typeof ev.alpha === 'number' && Number.isFinite(ev.alpha)) {
-        setLiveCompassDeg((360 - Math.round(ev.alpha)) % 360);
+  const stop360Recording = useCallback(() => {
+    const rec = recorderRef.current;
+    if (rec && rec.state !== 'inactive') {
+      try {
+        rec.stop();
+      } catch {
+        // Ignore
       }
-    };
-    window.addEventListener('deviceorientation', handleOrientation, true);
-    return () => {
-      window.removeEventListener('deviceorientation', handleOrientation, true);
-    };
-  }, [open]);
+    }
+    setIsRecording360(false);
+  }, []);
+
+  // Countdown timer for 360° spin video recording
+  useEffect(() => {
+    if (!isRecording360) return;
+    const timer = window.setInterval(() => {
+      setRecordSeconds((prev) => {
+        const next = prev + 1;
+        if (next >= MAX_360_SECONDS) {
+          stop360Recording();
+          return MAX_360_SECONDS;
+        }
+        return next;
+      });
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [isRecording360, stop360Recording]);
 
   const toggleTorch = async () => {
     const track = streamRef.current?.getVideoTracks()?.[0];
@@ -229,883 +165,479 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
       });
       setTorchOn(next);
     } catch {
-      // Torch not supported on desktop/some cameras
+      // Torch unsupported on some devices
     }
   };
 
-  const captureFrameAtHeading = useCallback(
-    async (headingToTag: number, customTag?: string) => {
-      const video = videoRef.current;
-      if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) return;
+  const snapPhoto = useCallback(async () => {
+    const video = videoRef.current;
+    if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
+      nativePhotoInputRef.current?.click();
+      return;
+    }
 
-      const scale = Math.min(1, maxRes / Math.max(video.videoWidth, video.videoHeight, 1));
-      const w = Math.max(1, Math.round(video.videoWidth * scale));
-      const h = Math.max(1, Math.round(video.videoHeight * scale));
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      ctx.drawImage(video, 0, 0, w, h);
+    setFlashEffect(true);
+    window.setTimeout(() => setFlashEffect(false), 160);
 
-      let blob = await new Promise<Blob | null>((resolve) =>
-        canvas.toBlob(resolve, 'image/webp', 0.9),
-      );
-      let mime = 'image/webp';
-      let ext = 'webp';
-      if (!blob) {
-        blob = await new Promise<Blob | null>((resolve) =>
-          canvas.toBlob(resolve, 'image/jpeg', 0.9),
-        );
-        mime = 'image/jpeg';
-        ext = 'jpg';
-      }
-      if (!blob) return;
+    const maxSide = 1600;
+    const scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight, 1));
+    const w = Math.max(1, Math.round(video.videoWidth * scale));
+    const h = Math.max(1, Math.round(video.videoHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.drawImage(video, 0, 0, w, h);
 
-      const cleanRoom = (customTag ?? roomTag).trim().replace(/[^a-zA-Z0-9-]/g, '');
-      const hdgPadded = String(Math.round(headingToTag) % 360).padStart(3, '0');
-      const prefix = cleanRoom ? `room_${cleanRoom}_` : 'scan360_';
-      const fname = `${prefix}hdg${hdgPadded}_${Date.now().toString().slice(-4)}.${ext}`;
-      const file = new File([blob], fname, { type: mime });
-      const previewUrl = URL.createObjectURL(blob);
+    let blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/webp', 0.88));
+    let mime = 'image/webp';
+    let ext = 'webp';
+    if (!blob || (blob.type && blob.type !== 'image/webp')) {
+      blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/jpeg', 0.88));
+      mime = 'image/jpeg';
+      ext = 'jpg';
+    }
+    if (!blob) return;
 
-      const newFrame: Captured360Frame = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    const cleanName = targetLabel.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 24) || 'room';
+    const file = new File([blob], `${cleanName}_${Date.now().toString().slice(-4)}.${ext}`, {
+      type: mime,
+    });
+    setItems((prev) => [
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
         file,
-        previewUrl,
-        headingDeg: Math.round(headingToTag) % 360,
-        roomHint: cleanRoom,
-        label: `${cleanRoom ? `Room ${cleanRoom} · ` : ''}${Math.round(headingToTag) % 360}° ${
-          CARDINAL_LABELS[nearestSector] || ''
-        }`,
+        previewUrl: URL.createObjectURL(blob!),
+        isVideo: false,
+        label: `Photo ${prev.length + 1}`,
+      },
+    ]);
+  }, [targetLabel]);
+
+  const start360Recording = useCallback(() => {
+    if (!streamRef.current || typeof MediaRecorder === 'undefined') {
+      nativeVideoInputRef.current?.click();
+      return;
+    }
+
+    try {
+      const candidates = [
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm',
+        'video/mp4',
+      ];
+      const mimeType = candidates.find((c) => MediaRecorder.isTypeSupported(c)) || '';
+      const recorder = mimeType
+        ? new MediaRecorder(streamRef.current, { mimeType })
+        : new MediaRecorder(streamRef.current);
+
+      recordedChunksRef.current = [];
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) {
+          recordedChunksRef.current.push(ev.data);
+        }
+      };
+      recorder.onstop = () => {
+        const type = recorder.mimeType || 'video/webm';
+        const ext = type.includes('mp4') ? 'mp4' : 'webm';
+        const blob = new Blob(recordedChunksRef.current, { type });
+        if (blob.size > 0) {
+          const cleanName = targetLabel.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 24) || 'room';
+          const file = new File([blob], `${cleanName}_360spin_${Date.now().toString().slice(-4)}.${ext}`, {
+            type,
+          });
+          setItems((prev) => [
+            ...prev,
+            {
+              id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+              file,
+              previewUrl: '',
+              isVideo: true,
+              label: `360° Spin Video`,
+            },
+          ]);
+        }
+        setIsRecording360(false);
+        setRecordSeconds(0);
       };
 
-      setFrames((prev) => [...prev, newFrame]);
-    },
-    [maxRes, roomTag, nearestSector],
-  );
+      recorderRef.current = recorder;
+      setRecordSeconds(0);
+      setIsRecording360(true);
+      recorder.start(250);
+    } catch {
+      nativeVideoInputRef.current?.click();
+    }
+  }, [targetLabel]);
 
-  // Auto-snap when rotating into an uncaptured 360° sector
-  useEffect(() => {
-    if (
-      !open ||
-      activeTab !== 'sweep360' ||
-      !autoSnapCompass ||
-      !cameraReady ||
-      liveCompassDeg === null
-    ) {
-      return;
+  const addExternalFiles = (fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    const added: CapturedItem[] = [];
+    for (const f of Array.from(fileList)) {
+      const vid = isVideoFile(f);
+      added.push({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        file: f,
+        previewUrl: vid ? '' : URL.createObjectURL(f),
+        isVideo: vid,
+        label: vid ? '360° Video' : f.name,
+      });
     }
-    const diff = Math.min(
-      Math.abs(currentHeading - nearestSector),
-      360 - Math.abs(currentHeading - nearestSector),
-    );
-    if (diff <= 8 && !capturedSectorSet.has(nearestSector)) {
-      const timer = window.setTimeout(() => {
-        void captureFrameAtHeading(nearestSector);
-      }, 380);
-      return () => window.clearTimeout(timer);
-    }
-  }, [
-    open,
-    activeTab,
-    autoSnapCompass,
-    cameraReady,
-    liveCompassDeg,
-    currentHeading,
-    nearestSector,
-    capturedSectorSet,
-    captureFrameAtHeading,
-  ]);
-
-  // Continuous walkthrough auto-slicer interval
-  useEffect(() => {
-    if (!open || activeTab !== 'walkthrough' || !isRecordingWalk || !cameraReady) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      void captureFrameAtHeading(currentHeading);
-    }, walkIntervalMs);
-    return () => window.clearInterval(timer);
-  }, [
-    open,
-    activeTab,
-    isRecordingWalk,
-    cameraReady,
-    walkIntervalMs,
-    currentHeading,
-    captureFrameAtHeading,
-  ]);
-
-  const handleSnapAndAdvanceSector = async () => {
-    const hdg = liveCompassDeg !== null ? nearestSector : manualHeadingDeg;
-    await captureFrameAtHeading(hdg);
-    if (liveCompassDeg === null) {
-      const curIdx = sectors.indexOf(nearestSector);
-      const nextSector = sectors[(curIdx + 1) % sectors.length];
-      setManualHeadingDeg(nextSector);
-    }
+    setItems((prev) => [...prev, ...added]);
   };
 
-  // Unwrap uploaded 360° Panorama image (or multi-angle photos) into directional perspective frames
-  const handlePanoramaFiles = async (fileList: FileList | File[]) => {
-    const incoming = Array.from(fileList);
-    if (incoming.length === 0) return;
-    setUnwrappingPano(true);
-    try {
-      const cleanRoom = roomTag.trim().replace(/[^a-zA-Z0-9-]/g, '');
-      const prefix = cleanRoom ? `room_${cleanRoom}_` : '';
-      const generated: Captured360Frame[] = [];
-
-      for (const f of incoming) {
-        const isImg =
-          f.type.startsWith('image/') ||
-          /\.(jpe?g|png|webp|heic|heif|avif|bmp)$/i.test(f.name);
-        if (isImg) {
-          const decoded = await decodeImageWithExifOrientation(f);
-          if (decoded) {
-            try {
-              const ratio = decoded.width / Math.max(1, decoded.height);
-
-              if (ratio >= 1.85) {
-                // Wide 360° Panorama -> Slice into 4 or 8 directional perspective views!
-                const numSlices = sectorCount;
-                const sliceHeadings =
-                  numSlices === 8 ? [0, 45, 90, 135, 180, 225, 270, 315] : [0, 90, 180, 270];
-                const sliceW = Math.min(
-                  decoded.width,
-                  Math.max(Math.round(decoded.height * 1.15), Math.round(decoded.width / numSlices)),
-                );
-                const outH = Math.min(maxRes, decoded.height);
-                const outW = Math.round(sliceW * (outH / decoded.height));
-
-                for (let i = 0; i < sliceHeadings.length; i++) {
-                  const hdg = sliceHeadings[i];
-                  const x0 = Math.round((i * decoded.width) / numSlices);
-                  const canvas = document.createElement('canvas');
-                  canvas.width = outW;
-                  canvas.height = outH;
-                  const ctx = canvas.getContext('2d');
-                  if (!ctx) continue;
-
-                  if (x0 + sliceW <= decoded.width) {
-                    ctx.drawImage(decoded.source, x0, 0, sliceW, decoded.height, 0, 0, outW, outH);
-                  } else {
-                    const firstW = decoded.width - x0;
-                    const remW = sliceW - firstW;
-                    const outFirstW = Math.round(outW * (firstW / sliceW));
-                    ctx.drawImage(decoded.source, x0, 0, firstW, decoded.height, 0, 0, outFirstW, outH);
-                    ctx.drawImage(decoded.source, 0, 0, remW, decoded.height, outFirstW, 0, outW - outFirstW, outH);
-                  }
-
-                  const blob = await new Promise<Blob | null>((res) =>
-                    canvas.toBlob(res, 'image/webp', 0.9),
-                  );
-                  if (!blob) continue;
-                  const hdgPad = String(hdg).padStart(3, '0');
-                  const baseName = f.name.replace(/\.[^.]+$/, '');
-                  const fname = `${prefix}${baseName}_360_hdg${hdgPad}.webp`;
-                  const sliceFile = new File([blob], fname, { type: 'image/webp' });
-                  generated.push({
-                    id: `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 6)}`,
-                    file: sliceFile,
-                    previewUrl: URL.createObjectURL(blob),
-                    headingDeg: hdg,
-                    roomHint: cleanRoom,
-                    label: `360° Slice · ${hdg}° ${CARDINAL_LABELS[hdg] || ''}`,
-                  });
-                }
-                continue;
-              }
-            } finally {
-              decoded.cleanup();
-            }
-          }
-        }
-
-        // Standard photo or video file -> Tag with current selected heading & room prefix
-        const hdgPad = String(currentHeading).padStart(3, '0');
-        const ext = f.name.split('.').pop() || 'webp';
-        const stem = f.name.replace(/\.[^.]+$/, '');
-        const taggedFile = new File([f], `${prefix}${stem}_hdg${hdgPad}.${ext}`, {
-          type: f.type,
-        });
-        generated.push({
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          file: taggedFile,
-          previewUrl: isImg ? URL.createObjectURL(f) : '',
-          headingDeg: currentHeading,
-          roomHint: cleanRoom,
-          label: `${f.name} (${currentHeading}°)`,
-        });
-      }
-
-      setFrames((prev) => [...prev, ...generated]);
-    } finally {
-      setUnwrappingPano(false);
-    }
-  };
-
-  const handleNativePhoneSnap = async (incomingList: FileList | null) => {
-    if (!incomingList?.length) return;
-    await handlePanoramaFiles(incomingList);
-    if (liveCompassDeg === null) {
-      const curIdx = sectors.indexOf(nearestSector);
-      const nextSector = sectors[(curIdx + 1) % sectors.length];
-      setManualHeadingDeg(nextSector);
-    }
-  };
-
-  const removeFrame = (id: string) => {
-    setFrames((prev) => {
-      const target = prev.find((f) => f.id === id);
+  const removeItem = (id: string) => {
+    setItems((prev) => {
+      const target = prev.find((x) => x.id === id);
       if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
-      return prev.filter((f) => f.id !== id);
+      return prev.filter((x) => x.id !== id);
     });
   };
 
-  const handleFinishAndUpload = async () => {
-    if (frames.length === 0 || submitting) return;
-    await onSubmitFrames(frames.map((f) => f.file));
+  const handleDone = async () => {
+    if (items.length === 0 || submitting) return;
+    await onSubmitFrames(items.map((x) => x.file));
   };
 
   if (!open) return null;
 
+  const latestItem = items[items.length - 1] ?? null;
+  const spinPct = Math.min(100, Math.round((recordSeconds / MAX_360_SECONDS) * 100));
+
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-950/90 p-0 sm:p-4 backdrop-blur-md">
-      <div className="relative w-full max-w-4xl h-[100dvh] sm:h-auto sm:max-h-[92dvh] overflow-hidden rounded-none sm:rounded-3xl bg-[#070B18] text-white ring-1 ring-cyan-400/35 shadow-2xl flex flex-col">
-        <input
-          ref={nativeCamInputRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="hidden"
-          onChange={(e) => {
-            void handleNativePhoneSnap(e.target.files);
-            e.target.value = '';
-          }}
-        />
-        {/* Top Header */}
-        <div className="shrink-0 flex items-center justify-between gap-2 border-b border-white/10 bg-slate-950/90 px-3.5 sm:px-6 py-2.5 sm:py-3.5">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400 to-indigo-600 text-slate-950 shadow-lg shadow-cyan-500/25">
-              <Globe className="h-5 w-5 text-white" />
+    <div className="fixed inset-0 z-50 h-[100dvh] w-screen bg-black text-white overflow-hidden select-none">
+      {/* Hidden native inputs for Gallery / Fallback Native Camera */}
+      <input
+        ref={galleryInputRef}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          addExternalFiles(e.target.files);
+          e.target.value = '';
+        }}
+      />
+      <input
+        ref={nativePhotoInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => {
+          addExternalFiles(e.target.files);
+          e.target.value = '';
+        }}
+      />
+      <input
+        ref={nativeVideoInputRef}
+        type="file"
+        accept="video/*"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => {
+          addExternalFiles(e.target.files);
+          e.target.value = '';
+        }}
+      />
+
+      {/* ================================================================= */}
+      {/* 1. FULL-BLEED 100% SCREEN LIVE CAMERA VIEWFINDER                  */}
+      {/* ================================================================= */}
+      <video
+        ref={videoRef}
+        muted
+        playsInline
+        autoPlay
+        className="absolute inset-0 h-full w-full object-cover bg-black"
+      />
+
+      {/* Shutter Flash Feedback */}
+      {flashEffect && (
+        <div className="pointer-events-none absolute inset-0 z-30 bg-white/80 transition-opacity" />
+      )}
+
+      {/* Subtle Top & Bottom Gradient Scrims so Floating Controls Stay Crisp */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-28 z-10 bg-gradient-to-b from-black/80 via-black/40 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-52 z-10 bg-gradient-to-t from-black/90 via-black/55 to-transparent" />
+
+      {/* ================================================================= */}
+      {/* 2. FLOATING TOP BAR (ROOM BADGE + FLIP + TORCH + CLOSE)           */}
+      {/* ================================================================= */}
+      <div className="absolute top-3 inset-x-3 z-20 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0 rounded-full bg-black/65 px-3.5 py-2 ring-1 ring-white/20">
+          <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shrink-0" />
+          <div className="min-w-0">
+            <div className="text-xs font-extrabold text-white truncate max-w-[170px] sm:max-w-xs">
+              {targetLabel}
             </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <h2 className="font-display text-base sm:text-lg font-extrabold truncate">
-                  360° Spatial Camera & Floor Model Studio
-                </h2>
-                <span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-cyan-500/15 px-2.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wider text-cyan-300 ring-1 ring-cyan-400/30">
-                  <Sparkles className="h-2.5 w-2.5" />
-                  Auto-3D Ready
+            <div className="text-[10px] text-slate-300 truncate">{venueName}</div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => void toggleTorch()}
+            className={`flex h-10 w-10 items-center justify-center rounded-full ring-1 transition ${
+              torchOn
+                ? 'bg-amber-400 text-slate-950 ring-amber-200'
+                : 'bg-black/65 text-white ring-white/20'
+            }`}
+            title="Flashlight"
+          >
+            <Zap className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setFacingMode((m) => (m === 'environment' ? 'user' : 'environment'))}
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-black/65 text-white ring-1 ring-white/20"
+            title="Switch Camera"
+          >
+            <FlipHorizontal className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-black/65 text-white ring-1 ring-white/20"
+            title="Close Camera"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
+
+      {/* ================================================================= */}
+      {/* 3. LIVE 360° SPIN RECORDING GUIDE OVERLAY                         */}
+      {/* ================================================================= */}
+      {mode === 'video360' && !cameraError && (
+        <div className="pointer-events-none absolute top-20 inset-x-4 z-20 flex flex-col items-center gap-2">
+          {isRecording360 ? (
+            <div className="w-full max-w-xs rounded-2xl bg-rose-600/90 px-4 py-2.5 text-center ring-2 ring-rose-300 shadow-2xl space-y-1.5">
+              <div className="flex items-center justify-center gap-2 text-xs font-extrabold uppercase tracking-wider">
+                <span className="h-2.5 w-2.5 rounded-full bg-white animate-ping" />
+                <span>
+                  Recording 360° · {recordSeconds}s / {MAX_360_SECONDS}s
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400 truncate">
-                {venueName} · Target: <strong className="text-cyan-300">{targetLabel}</strong>
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setShowSettings((v) => !v)}
-              className={`inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold ring-1 transition ${
-                showSettings
-                  ? 'bg-cyan-400 text-slate-950 ring-cyan-300'
-                  : 'bg-white/10 text-slate-200 ring-white/15 hover:bg-white/15'
-              }`}
-            >
-              <Settings2 className="h-3.5 w-3.5" />
-              <span>360° Settings</span>
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-xl bg-white/10 p-2 text-slate-300 hover:bg-white/15 hover:text-white"
-              aria-label="Close 360 Camera"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-
-        {/* Expandable 360° Camera Settings Drawer */}
-        {showSettings && (
-          <div className="border-b border-white/10 bg-slate-900/95 px-4 sm:px-6 py-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-            <div className="space-y-1">
-              <label className="block text-[10px] font-extrabold uppercase tracking-wider text-cyan-300">
-                360° Sweep Density
-              </label>
-              <select
-                value={sectorCount}
-                onChange={(e) => setSectorCount(Number(e.target.value) as 4 | 8)}
-                className="w-full rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white ring-1 ring-white/15"
-              >
-                <option value={4}>4 Cardinal Angles (90° steps)</option>
-                <option value={8}>8 Full-360° Angles (45° steps)</option>
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-[10px] font-extrabold uppercase tracking-wider text-cyan-300">
-                Walk Auto-Slice Speed
-              </label>
-              <select
-                value={walkIntervalMs}
-                onChange={(e) =>
-                  setWalkIntervalMs(Number(e.target.value) as 800 | 1200 | 2000)
-                }
-                className="w-full rounded-xl bg-slate-950 px-3 py-2 text-xs font-bold text-white ring-1 ring-white/15"
-              >
-                <option value={800}>Every 0.8s (Fast Walk)</option>
-                <option value={1200}>Every 1.2s (Balanced Walk)</option>
-                <option value={2000}>Every 2.0s (Careful Scan)</option>
-              </select>
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-[10px] font-extrabold uppercase tracking-wider text-cyan-300">
-                Capture Resolution & Lens
-              </label>
-              <div className="flex gap-1.5">
-                <select
-                  value={maxRes}
-                  onChange={(e) => setMaxRes(Number(e.target.value) as 1600 | 1280)}
-                  className="flex-1 rounded-xl bg-slate-950 px-2.5 py-2 text-xs font-bold text-white ring-1 ring-white/15"
-                >
-                  <option value={1600}>1600px HD OCR</option>
-                  <option value={1280}>1280px Fast</option>
-                </select>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setFacingMode((m) => (m === 'environment' ? 'user' : 'environment'))
-                  }
-                  className="inline-flex items-center gap-1 rounded-xl bg-white/10 px-2.5 py-2 text-xs font-bold text-cyan-300 ring-1 ring-white/15 hover:bg-white/15"
-                  title="Switch Rear / Front Camera"
-                >
-                  <FlipHorizontal className="h-3.5 w-3.5" />
-                  {facingMode === 'environment' ? 'Rear' : 'Front'}
-                </button>
+              <div className="text-[11px] font-semibold text-rose-100">
+                Slowly turn around in a full circle (360°) ↻
               </div>
-            </div>
-
-            <div className="space-y-1">
-              <label className="block text-[10px] font-extrabold uppercase tracking-wider text-emerald-300">
-                Compass Auto-Snap
-              </label>
-              <button
-                type="button"
-                onClick={() => setAutoSnapCompass((v) => !v)}
-                className={`w-full flex items-center justify-between rounded-xl px-3 py-2 text-xs font-bold ring-1 transition ${
-                  autoSnapCompass
-                    ? 'bg-emerald-500/20 text-emerald-200 ring-emerald-400/50'
-                    : 'bg-slate-950 text-slate-300 ring-white/15'
-                }`}
-              >
-                <span>{autoSnapCompass ? 'Auto-Snap on Turn: ON' : 'Manual Tap Mode'}</span>
-                <span
-                  className={`h-2.5 w-2.5 rounded-full ${
-                    autoSnapCompass ? 'bg-emerald-400' : 'bg-slate-600'
-                  }`}
+              <div className="h-1.5 w-full rounded-full bg-black/30 overflow-hidden">
+                <div
+                  className="h-full bg-white transition-all duration-300"
+                  style={{ width: `${spinPct}%` }}
                 />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Mode Switcher Tabs + Optional Room Number Hint Input */}
-        <div className="shrink-0 flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/10 bg-slate-900/60 px-3.5 sm:px-6 py-2">
-          <div className="flex flex-nowrap items-center gap-1 overflow-x-auto no-scrollbar rounded-xl bg-white/[0.06] p-1 ring-1 ring-white/10 text-[11px] sm:text-xs font-bold whitespace-nowrap">
-            <button
-              type="button"
-              onClick={() => setActiveTab('sweep360')}
-              className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-1.5 transition ${
-                activeTab === 'sweep360'
-                  ? 'bg-cyan-400 text-slate-950 shadow-sm'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              <Compass className="h-3.5 w-3.5 shrink-0" />
-              <span>360° Sweep</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('walkthrough')}
-              className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-1.5 transition ${
-                activeTab === 'walkthrough'
-                  ? 'bg-emerald-400 text-slate-950 shadow-sm'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              <Film className="h-3.5 w-3.5 shrink-0" />
-              <span>Walk Auto-Slicer</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('panorama_import')}
-              className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2.5 sm:px-3 py-1.5 transition ${
-                activeTab === 'panorama_import'
-                  ? 'bg-indigo-400 text-slate-950 shadow-sm'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              <Globe className="h-3.5 w-3.5 shrink-0" />
-              <span>Gallery / Video Unwrapper</span>
-            </button>
-          </div>
-
-          <div className="flex items-center justify-between sm:justify-end gap-2">
-            <span className="text-[11px] font-semibold text-slate-400">
-              Room Tag (optional):
-            </span>
-            <input
-              type="text"
-              value={roomTag}
-              onChange={(e) => setRoomTag(e.target.value)}
-              placeholder="e.g. 308 or Lab-2"
-              className="w-32 rounded-xl bg-slate-950 px-2.5 py-1.5 text-xs font-bold text-cyan-300 ring-1 ring-white/15 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-400"
-            />
-          </div>
-        </div>
-
-        {/* Main Body */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-3.5 sm:p-6 space-y-3.5">
-          {activeTab !== 'panorama_import' ? (
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
-              {/* Live Camera Viewfinder with 360° HUD Overlay */}
-              <div className="lg:col-span-8 relative overflow-hidden rounded-2xl bg-slate-950 ring-1 ring-white/15 aspect-video flex items-center justify-center">
-                <video
-                  ref={videoRef}
-                  muted
-                  playsInline
-                  autoPlay
-                  className="h-full w-full object-cover"
-                />
-
-                {/* HUD Viewfinder Grid & Corner Brackets */}
-                <div className="pointer-events-none absolute inset-0 ai-hud-grid opacity-35" />
-                <span className="pointer-events-none absolute left-3 top-3 h-5 w-5 border-l-2 border-t-2 border-cyan-400" />
-                <span className="pointer-events-none absolute right-3 top-3 h-5 w-5 border-r-2 border-t-2 border-cyan-400" />
-                <span className="pointer-events-none absolute left-3 bottom-3 h-5 w-5 border-l-2 border-b-2 border-cyan-400" />
-                <span className="pointer-events-none absolute right-3 bottom-3 h-5 w-5 border-r-2 border-b-2 border-cyan-400" />
-
-                {/* Top Camera Status Bar */}
-                <div className="absolute top-3 inset-x-4 flex items-center justify-between gap-2 text-xs">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-950/85 px-3 py-1 font-mono font-bold text-cyan-300 ring-1 ring-cyan-400/40 backdrop-blur-md">
-                    <Compass className="h-3.5 w-3.5" />
-                    {currentHeading}° {CARDINAL_LABELS[nearestSector] || ''}
-                    {liveCompassDeg !== null ? ' (Live Sensor)' : ' (Stepped)'}
-                  </span>
-
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => nativeCamInputRef.current?.click()}
-                      className="rounded-full bg-cyan-500/20 px-2.5 py-1 text-[11px] font-bold text-cyan-200 ring-1 ring-cyan-400/45 backdrop-blur-md hover:bg-cyan-500/30"
-                      title="Open native phone camera app"
-                    >
-                      <Camera className="h-3 w-3 inline mr-1" />
-                      Phone Cam
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void toggleTorch()}
-                      className={`rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 backdrop-blur-md ${
-                        torchOn
-                          ? 'bg-amber-400 text-slate-950 ring-amber-300'
-                          : 'bg-slate-950/80 text-slate-300 ring-white/15'
-                      }`}
-                      title="Toggle camera flashlight"
-                    >
-                      <Zap className="h-3 w-3 inline mr-0.5" />
-                      Torch
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void startCamera()}
-                      className="rounded-full bg-slate-950/80 p-1.5 text-slate-300 ring-1 ring-white/15 hover:text-white"
-                      title="Restart camera stream"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                </div>
-
-                {cameraError && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-950/90 p-5 text-center space-y-3">
-                    <Camera className="h-9 w-9 text-cyan-400" />
-                    <p className="text-xs sm:text-sm text-slate-300 max-w-md leading-relaxed">
-                      {cameraError}
-                    </p>
-                    <div className="flex flex-wrap items-center justify-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => nativeCamInputRef.current?.click()}
-                        className="rounded-xl bg-gradient-to-r from-cyan-400 to-emerald-400 px-3.5 py-2 text-xs font-extrabold text-slate-950"
-                      >
-                        📷 Open Phone Camera
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void startCamera()}
-                        className="rounded-xl bg-white/10 px-3.5 py-2 text-xs font-bold text-white ring-1 ring-white/15 hover:bg-white/15"
-                      >
-                        Retry Stream
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab('panorama_import')}
-                        className="rounded-xl bg-indigo-500/25 px-3.5 py-2 text-xs font-bold text-cyan-200 ring-1 ring-cyan-400/35"
-                      >
-                        Gallery / Video →
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Bottom Shutter Controls inside Viewfinder */}
-                {!cameraError && (
-                  <div className="absolute bottom-3 inset-x-4 flex items-center justify-center">
-                    {activeTab === 'sweep360' ? (
-                      <button
-                        type="button"
-                        disabled={!cameraReady}
-                        onClick={() => void handleSnapAndAdvanceSector()}
-                        className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-cyan-400 to-emerald-400 px-5 py-3 text-xs sm:text-sm font-extrabold text-slate-950 shadow-xl hover:brightness-105 active:scale-95 disabled:opacity-40 transition"
-                      >
-                        <Camera className="h-4 w-4" />
-                        <span>
-                          Snap {currentHeading}° ({CARDINAL_LABELS[nearestSector] || 'Sector'}) & Advance
-                        </span>
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={!cameraReady}
-                        onClick={() => setIsRecordingWalk((v) => !v)}
-                        className={`inline-flex items-center gap-2 rounded-2xl px-6 py-3 text-xs sm:text-sm font-extrabold shadow-xl transition ${
-                          isRecordingWalk
-                            ? 'bg-rose-600 text-white animate-pulse'
-                            : 'bg-gradient-to-r from-emerald-400 to-cyan-400 text-slate-950'
-                        }`}
-                      >
-                        {isRecordingWalk ? (
-                          <>
-                            <Square className="h-4 w-4 fill-current" />
-                            <span>Stop Walk Auto-Slicer ({frames.length} frames)</span>
-                          </>
-                        ) : (
-                          <>
-                            <Play className="h-4 w-4 fill-current" />
-                            <span>Start Hands-Free Walk Auto-Slicer</span>
-                          </>
-                        )}
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Right Column: Interactive 360° Compass Radar Ring & Sector Dial */}
-              <div className="lg:col-span-4 rounded-2xl bg-white/[0.04] p-4 ring-1 ring-white/10 flex flex-col items-center space-y-3">
-                <div className="text-xs font-extrabold uppercase tracking-wider text-cyan-300">
-                  360° Coverage Radar ({capturedSectorSet.size}/{sectors.length} Angles)
-                </div>
-
-                {/* Interactive SVG 360° Sector Wheel */}
-                <svg viewBox="0 0 180 180" className="h-40 w-40">
-                  <circle
-                    cx="90"
-                    cy="90"
-                    r="72"
-                    fill="rgba(15,23,42,0.8)"
-                    stroke="rgba(56,189,248,0.25)"
-                    strokeWidth="1.5"
-                  />
-                  {sectors.map((deg) => {
-                    const rad = ((deg - 90) * Math.PI) / 180;
-                    const x = 90 + Math.cos(rad) * 56;
-                    const y = 90 + Math.sin(rad) * 56;
-                    const done = capturedSectorSet.has(deg);
-                    const isCur = nearestSector === deg;
-                    return (
-                      <g
-                        key={deg}
-                        onClick={() => setManualHeadingDeg(deg)}
-                        style={{ cursor: 'pointer' }}
-                      >
-                        <line
-                          x1="90"
-                          y1="90"
-                          x2={x}
-                          y2={y}
-                          stroke={done ? '#10b981' : isCur ? '#22d3ee' : '#334155'}
-                          strokeWidth={isCur ? '2.5' : '1.5'}
-                          strokeDasharray={done ? undefined : '3 3'}
-                        />
-                        <circle
-                          cx={x}
-                          cy={y}
-                          r={isCur ? 14 : 11}
-                          fill={
-                            done
-                              ? '#10b981'
-                              : isCur
-                                ? '#0ea5e9'
-                                : '#1e293b'
-                          }
-                          stroke="#ffffff"
-                          strokeWidth={isCur ? '2' : '1'}
-                        />
-                        <text
-                          x={x}
-                          y={y + 3}
-                          textAnchor="middle"
-                          fontSize="7.5"
-                          fontWeight="800"
-                          fill="#ffffff"
-                        >
-                          {done ? '✓' : `${deg}°`}
-                        </text>
-                      </g>
-                    );
-                  })}
-                  <circle cx="90" cy="90" r="16" fill="#0f172a" stroke="#38bdf8" strokeWidth="1.5" />
-                  <text
-                    x="90"
-                    y="93"
-                    textAnchor="middle"
-                    fontSize="8.5"
-                    fontWeight="800"
-                    fill="#38bdf8"
-                  >
-                    360°
-                  </text>
-                </svg>
-
-                <p className="text-[11px] text-slate-400 text-center leading-relaxed">
-                  Click any angle on the ring (or rotate your phone) and tap{' '}
-                  <strong className="text-white">Snap & Advance</strong> to capture a complete 360° room/corridor signature.
-                </p>
               </div>
             </div>
           ) : (
-            /* 360° Equirectangular Panorama / Gallery Photos / Video Unwrapper Tab */
-            <div className="rounded-2xl border-2 border-dashed border-cyan-400/40 bg-white/[0.03] p-5 sm:p-8 text-center space-y-4">
-              <input
-                ref={panoInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files?.length) {
-                    void handlePanoramaFiles(e.target.files);
-                  }
-                  e.target.value = '';
-                }}
-              />
-              <input
-                ref={panoVideoInputRef}
-                type="file"
-                accept="video/*"
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files?.length) {
-                    void handlePanoramaFiles(e.target.files);
-                  }
-                  e.target.value = '';
-                }}
-              />
-              {unwrappingPano ? (
-                <div className="py-4 space-y-2">
-                  <Loader2 className="h-8 w-8 animate-spin text-cyan-400 mx-auto" />
-                  <p className="text-sm font-bold text-white">
-                    Processing photos &amp; unwrapping 360° panorama views...
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <Globe className="h-9 w-9 text-cyan-400 mx-auto" />
-                  <h3 className="font-display text-base sm:text-lg font-extrabold text-white">
-                    Add Phone Photos, 360° Panoramas, or Walkthrough Video
-                  </h3>
-                  <p className="text-xs text-slate-300 max-w-xl mx-auto leading-relaxed">
-                    Wide 360° panoramas auto-slice into <strong>{sectorCount} directional views</strong>, and regular portrait/landscape phone shots preserve their upright EXIF orientation automatically.
-                  </p>
-                  <div className="flex flex-wrap items-center justify-center gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() => panoInputRef.current?.click()}
-                      className="inline-flex items-center gap-2 rounded-xl bg-cyan-400 px-4 py-2.5 text-xs font-extrabold text-slate-950 shadow-md hover:brightness-105"
-                    >
-                      <ImageIcon className="h-3.5 w-3.5" />
-                      Choose Photos / 360° Pano
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => nativeCamInputRef.current?.click()}
-                      className="inline-flex items-center gap-2 rounded-xl bg-white/15 px-4 py-2.5 text-xs font-extrabold text-white ring-1 ring-white/25 hover:bg-white/20"
-                    >
-                      <Camera className="h-3.5 w-3.5 text-cyan-300" />
-                      Take Photo
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => panoVideoInputRef.current?.click()}
-                      className="inline-flex items-center gap-2 rounded-xl bg-emerald-500/20 px-4 py-2.5 text-xs font-extrabold text-emerald-300 ring-1 ring-emerald-400/40 hover:bg-emerald-500/30"
-                    >
-                      <Film className="h-3.5 w-3.5" />
-                      Choose Video
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Interactive 360° Stitched Panorama Strip + Captured Frames Filmstrip */}
-          {frames.length > 0 && (
-            <div className="rounded-2xl bg-white/[0.04] p-4 ring-1 ring-white/10 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs font-extrabold text-emerald-300 flex items-center gap-1.5">
-                  <CheckCircle2 className="h-4 w-4" />
-                  <span>
-                    {frames.length} Directional Frame{frames.length > 1 ? 's' : ''} Ready for 3D Model Builder
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    frames.forEach((f) => URL.revokeObjectURL(f.previewUrl));
-                    setFrames([]);
-                  }}
-                  className="text-[11px] font-bold text-rose-300 hover:text-rose-200"
-                >
-                  Clear All
-                </button>
-              </div>
-
-              {/* Interactive 360° Panorama Scrubbable Viewer when >= 2 image frames */}
-              {frames.filter((f) => f.previewUrl).length >= 2 && (
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-[11px] text-cyan-300 font-semibold">
-                    <span>🌐 Live 360° Panoramic Horizon Preview (Drag slider to look around)</span>
-                    <span className="font-mono">{panoScrubX}°</span>
-                  </div>
-                  <div className="relative h-28 w-full overflow-hidden rounded-xl bg-slate-950 ring-1 ring-cyan-400/40">
-                    <div
-                      className="flex h-full transition-transform duration-150"
-                      style={{
-                        width: `${Math.max(100, frames.length * 45)}%`,
-                        transform: `translateX(-${(panoScrubX / 360) * 50}%)`,
-                      }}
-                    >
-                      {[...frames]
-                        .sort((a, b) => a.headingDeg - b.headingDeg)
-                        .map((f) =>
-                          f.previewUrl ? (
-                            <div key={`pano-${f.id}`} className="relative h-full flex-1 min-w-[120px]">
-                              <img
-                                src={f.previewUrl}
-                                alt={f.label}
-                                className="h-full w-full object-cover"
-                              />
-                              <span className="absolute bottom-1.5 left-1.5 rounded bg-slate-950/80 px-1.5 py-0.5 text-[9px] font-mono font-bold text-cyan-300">
-                                {f.headingDeg}°
-                              </span>
-                            </div>
-                          ) : null,
-                        )}
-                    </div>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={360}
-                    value={panoScrubX}
-                    onChange={(e) => setPanoScrubX(Number(e.target.value))}
-                    className="w-full accent-cyan-400 h-1.5 cursor-ew-resize"
-                    aria-label="Pan 360 preview"
-                  />
-                </div>
-              )}
-
-              {/* Individual Frame Cards */}
-              <div className="flex gap-2.5 overflow-x-auto pb-1 thin-scrollbar">
-                {frames.map((f) => (
-                  <div
-                    key={f.id}
-                    className="relative w-32 shrink-0 overflow-hidden rounded-xl bg-slate-900 ring-1 ring-white/15"
-                  >
-                    {f.previewUrl ? (
-                      <img
-                        src={f.previewUrl}
-                        alt={f.label}
-                        className="h-20 w-full object-cover"
-                      />
-                    ) : (
-                      <div className="h-20 w-full flex items-center justify-center bg-slate-950 text-cyan-400 text-xs font-bold">
-                        🎥 Video
-                      </div>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => removeFrame(f.id)}
-                      className="absolute top-1 right-1 rounded-md bg-slate-950/80 p-1 text-slate-300 hover:text-rose-400"
-                      title="Remove frame"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                    <div className="p-1.5 text-[10px] font-bold text-slate-200 truncate">
-                      {f.label}
-                    </div>
-                  </div>
-                ))}
-              </div>
+            <div className="rounded-full bg-black/70 px-4 py-1.5 text-xs font-bold text-cyan-200 ring-1 ring-cyan-400/40 text-center">
+              🌐 Tap Red Record &amp; turn slowly in a full 360° circle (6–10s)
             </div>
           )}
         </div>
+      )}
 
-        {/* Footer Submit CTA */}
-        <div className="shrink-0 flex flex-wrap items-center justify-between gap-2.5 border-t border-white/10 bg-slate-950/95 px-3.5 sm:px-6 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
-          <div className="hidden sm:block text-xs text-slate-400">
-            All frames are auto-tagged with <strong>360° compass headings</strong> &amp; compressed to{' '}
-            <strong>{maxRes}px WebP</strong>.
+      {/* ================================================================= */}
+      {/* 4. FALLBACK IF BROWSER CAMERA IS BLOCKED / UNAVAILABLE            */}
+      {/* ================================================================= */}
+      {cameraError && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-slate-950 px-6 text-center space-y-4">
+          <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-cyan-500/20 text-cyan-300 ring-1 ring-cyan-400/40">
+            <Camera className="h-8 w-8" />
           </div>
-
-          <div className="flex w-full sm:w-auto items-center gap-2.5">
+          <p className="text-sm font-semibold text-slate-200 max-w-sm leading-relaxed">
+            {cameraError}
+          </p>
+          <div className="flex flex-col sm:flex-row gap-2.5 w-full max-w-xs">
             <button
               type="button"
-              onClick={onClose}
-              className="rounded-xl bg-white/10 px-4 py-2.5 text-xs font-bold text-slate-300 hover:bg-white/15"
+              onClick={() => nativePhotoInputRef.current?.click()}
+              className="flex-1 flex items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-4 py-3.5 text-sm font-extrabold text-slate-950 shadow-lg"
             >
-              Cancel
+              <Camera className="h-4 w-4" />
+              <span>Phone Camera</span>
             </button>
             <button
               type="button"
-              disabled={frames.length === 0 || submitting}
-              onClick={() => void handleFinishAndUpload()}
-              className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-400 via-sky-400 to-emerald-400 px-4 sm:px-5 py-2.5 text-xs sm:text-sm font-extrabold text-slate-950 shadow-lg hover:brightness-105 disabled:opacity-40 transition"
+              onClick={() => nativeVideoInputRef.current?.click()}
+              className="flex-1 flex items-center justify-center gap-2 rounded-2xl bg-rose-500 px-4 py-3.5 text-sm font-extrabold text-white shadow-lg"
             >
-              {submitting ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Processing 360° Frames & Building 3D Model...</span>
-                </>
+              <Video className="h-4 w-4" />
+              <span>360° Video</span>
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={() => void startCamera()}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-4 py-2 text-xs font-bold text-slate-200"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            <span>Retry Live Camera</span>
+          </button>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* 5. CAPTURED PREVIEW TRAY (ONLY WHEN USER TAPS THUMBNAIL)          */}
+      {/* ================================================================= */}
+      {showTray && items.length > 0 && (
+        <div className="absolute bottom-44 inset-x-3 z-20 rounded-2xl bg-slate-950/95 p-3 ring-1 ring-white/20 shadow-2xl space-y-2">
+          <div className="flex items-center justify-between text-xs font-bold text-slate-200">
+            <span>Captured for {targetLabel} ({items.length})</span>
+            <button
+              type="button"
+              onClick={() => setShowTray(false)}
+              className="text-cyan-300 font-extrabold"
+            >
+              Hide
+            </button>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {items.map((it) => (
+              <div
+                key={it.id}
+                className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-slate-900 ring-1 ring-white/20 flex items-center justify-center"
+              >
+                {it.isVideo ? (
+                  <div className="text-center px-1">
+                    <Video className="h-5 w-5 text-rose-400 mx-auto" />
+                    <span className="text-[9px] font-extrabold text-rose-200 block mt-0.5">
+                      360° Vid
+                    </span>
+                  </div>
+                ) : (
+                  <img
+                    src={it.previewUrl}
+                    alt={it.label}
+                    className="h-full w-full object-cover"
+                  />
+                )}
+                <button
+                  type="button"
+                  onClick={() => removeItem(it.id)}
+                  className="absolute top-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-rose-600 text-white"
+                  title="Remove"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* 6. FLOATING BOTTOM CAMERA CONTROLS (NATIVE PHONE FEEL)            */}
+      {/* ================================================================= */}
+      <div className="absolute bottom-0 inset-x-0 z-20 px-4 pb-6 pt-3 flex flex-col items-center gap-4">
+        {/* Clean 2-Mode Toggle: Photo vs 360° Spin Video */}
+        <div className="inline-flex items-center gap-1 rounded-full bg-black/70 p-1 ring-1 ring-white/20">
+          <button
+            type="button"
+            disabled={isRecording360}
+            onClick={() => setMode('photo')}
+            className={`rounded-full px-4 py-1.5 text-xs font-extrabold transition ${
+              mode === 'photo'
+                ? 'bg-white text-slate-950 shadow'
+                : 'text-slate-300 hover:text-white'
+            }`}
+          >
+            📷 Photo
+          </button>
+          <button
+            type="button"
+            disabled={isRecording360}
+            onClick={() => setMode('video360')}
+            className={`rounded-full px-4 py-1.5 text-xs font-extrabold transition ${
+              mode === 'video360'
+                ? 'bg-rose-500 text-white shadow'
+                : 'text-slate-300 hover:text-white'
+            }`}
+          >
+            🌐 360° Video
+          </button>
+        </div>
+
+        {/* 3-Column Shutter Row: Gallery | Giant Shutter | Done (N) */}
+        <div className="w-full max-w-md flex items-center justify-between gap-4">
+          {/* Left: Gallery Picker */}
+          <button
+            type="button"
+            disabled={isRecording360}
+            onClick={() => galleryInputRef.current?.click()}
+            className="flex flex-col items-center justify-center gap-1 rounded-2xl bg-black/65 px-3.5 py-2.5 ring-1 ring-white/20 active:scale-95 transition min-w-[76px]"
+          >
+            <ImageIcon className="h-5 w-5 text-cyan-300" />
+            <span className="text-[11px] font-bold text-white">Gallery</span>
+          </button>
+
+          {/* Center: Giant Native Shutter / 360° Record Button */}
+          {mode === 'photo' ? (
+            <button
+              type="button"
+              onClick={() => void snapPhoto()}
+              disabled={!cameraReady && !cameraError}
+              aria-label="Take Photo"
+              className="relative flex h-20 w-20 items-center justify-center rounded-full border-4 border-white bg-white/20 p-1.5 shadow-2xl active:scale-90 transition"
+            >
+              <span className="h-full w-full rounded-full bg-white" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => (isRecording360 ? stop360Recording() : start360Recording())}
+              aria-label={isRecording360 ? 'Stop 360 Video' : 'Record 360 Video'}
+              className="relative flex h-20 w-20 items-center justify-center rounded-full border-4 border-white bg-black/40 p-2 shadow-2xl active:scale-90 transition"
+            >
+              {isRecording360 ? (
+                <span className="h-8 w-8 rounded-lg bg-rose-500 shadow-lg" />
               ) : (
-                <>
-                  <Check className="h-4 w-4" />
-                  <span>
-                    Upload {frames.length} Frame{frames.length !== 1 ? 's' : ''} & Build 3D Model
-                  </span>
-                </>
+                <span className="h-full w-full rounded-full bg-rose-600 shadow-lg" />
               )}
             </button>
-          </div>
+          )}
+
+          {/* Right: Done / Add to Upload Queue */}
+          {items.length > 0 ? (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setShowTray((v) => !v)}
+                className="relative h-12 w-12 overflow-hidden rounded-xl bg-slate-900 ring-2 ring-cyan-400 shrink-0 flex items-center justify-center"
+                title="Preview captured items"
+              >
+                {latestItem?.previewUrl ? (
+                  <img
+                    src={latestItem.previewUrl}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <Video className="h-5 w-5 text-rose-400" />
+                )}
+                <span className="absolute -top-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-cyan-400 px-1 text-[10px] font-black text-slate-950">
+                  {items.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={isRecording360 || submitting}
+                onClick={() => void handleDone()}
+                className="flex items-center gap-1 rounded-2xl bg-emerald-500 px-3.5 py-3 text-xs font-extrabold text-slate-950 shadow-xl active:scale-95 transition"
+              >
+                <Check className="h-4 w-4 stroke-[3]" />
+                <span>Add ({items.length})</span>
+              </button>
+            </div>
+          ) : (
+            <div className="min-w-[76px] text-center text-[10px] font-bold text-slate-400">
+              {mode === 'photo' ? 'Tap circle to snap' : 'Tap red to spin 360°'}
+            </div>
+          )}
         </div>
       </div>
     </div>

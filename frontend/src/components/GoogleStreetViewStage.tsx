@@ -97,6 +97,7 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
   const [miniMapExpanded, setMiniMapExpanded] = useState(false);
   const [gyroEnabled, setGyroEnabled] = useState(false);
   const [signboardZoom, setSignboardZoom] = useState(false);
+  const [isTruePanorama, setIsTruePanorama] = useState(false);
   const [failedUrls, setFailedUrls] = useState<Set<string>>(() => new Set());
   const gyroBaseRef = useRef<{ alpha: number; beta: number } | null>(null);
 
@@ -448,58 +449,101 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
       {/* ===================================================================== */}
       <div className="absolute inset-0 overflow-hidden bg-[#060A14]">
         {currentPhotoUrl ? (
-          <div
-            style={{
-              transform: `scale(${
-                (signboardZoom ? 1.65 : fovZoom) * (dollyTransition ? 1.24 : 1.04)
-              }) translate3d(${panShiftPct}%, ${signboardZoom ? 16 : tiltShiftPct}%, 0)`,
-              transition: isDraggingLook
-                ? 'none'
-                : dollyTransition
-                  ? 'transform 420ms cubic-bezier(0.22, 1, 0.36, 1)'
-                  : 'transform 220ms ease-out',
-            }}
-            className="relative h-full w-[170%] -left-[35%] flex items-center justify-center"
-          >
-            {/* Ambient 360° peripheral surround backdrop */}
-            <img
-              src={currentPhotoUrl}
-              alt=""
-              aria-hidden="true"
-              className="absolute inset-0 h-full w-full object-cover blur-2xl scale-110 opacity-55"
-            />
-            {/* Mirrored Left Peripheral Wing for 360° look-around continuity */}
-            <img
-              src={currentPhotoUrl}
-              alt=""
-              aria-hidden="true"
-              style={{ transform: 'scaleX(-1)' }}
-              className="hidden sm:block h-full w-1/4 object-cover opacity-50 blur-[1px]"
-            />
-            {/* Primary Un-Cropped High-Clarity Corridor / Doorway Frame */}
-            <div className="relative h-full w-full sm:w-2/4 flex items-center justify-center overflow-hidden">
+          isTruePanorama ? (
+            /* TRUE 360° CYLINDRICAL WRAP-AROUND PANORAMA (From 360° Spin Video or Phone Pano!) */
+            <div
+              style={{
+                backgroundImage: `url("${currentPhotoUrl}")`,
+                backgroundRepeat: 'repeat-x',
+                backgroundSize: 'auto 100%',
+                backgroundPosition: `${50 - (yaw / 180) * 50}% ${50 + tiltShiftPct * 2}%`,
+                transform: `scale(${
+                  (signboardZoom ? 1.55 : fovZoom) * (dollyTransition ? 1.24 : 1.02)
+                })`,
+                transition: isDraggingLook
+                  ? 'none'
+                  : dollyTransition
+                    ? 'transform 420ms cubic-bezier(0.22, 1, 0.36, 1)'
+                    : 'background-position 90ms linear, transform 220ms ease-out',
+              }}
+              className="relative h-full w-full"
+            >
+              {/* Hidden probe img to re-detect aspect ratio whenever step photo URL changes */}
               <img
                 src={currentPhotoUrl}
                 alt={activeStep?.name || venue.name}
+                onLoad={(e) => {
+                  const ratio =
+                    e.currentTarget.naturalWidth / Math.max(1, e.currentTarget.naturalHeight);
+                  setIsTruePanorama(ratio >= 1.75);
+                }}
                 onError={() => {
                   if (activeStep?.photo_url) {
                     setFailedUrls((prev) => new Set(prev).add(activeStep.photo_url!));
                   }
                 }}
-                className={`relative z-[2] h-full w-full object-contain sm:object-cover transition-all duration-300 ${
-                  dollyTransition ? 'scale-110 blur-[1.5px]' : 'scale-100'
-                }`}
+                className="sr-only"
               />
             </div>
-            {/* Mirrored Right Peripheral Wing for 360° look-around continuity */}
-            <img
-              src={currentPhotoUrl}
-              alt=""
-              aria-hidden="true"
-              style={{ transform: 'scaleX(-1)' }}
-              className="hidden sm:block h-full w-1/4 object-cover opacity-50 blur-[1px]"
-            />
-          </div>
+          ) : (
+            <div
+              style={{
+                transform: `scale(${
+                  (signboardZoom ? 1.65 : fovZoom) * (dollyTransition ? 1.24 : 1.04)
+                }) translate3d(${panShiftPct}%, ${signboardZoom ? 16 : tiltShiftPct}%, 0)`,
+                transition: isDraggingLook
+                  ? 'none'
+                  : dollyTransition
+                    ? 'transform 420ms cubic-bezier(0.22, 1, 0.36, 1)'
+                    : 'transform 220ms ease-out',
+              }}
+              className="relative h-full w-[170%] -left-[35%] flex items-center justify-center"
+            >
+              {/* Ambient 360° peripheral surround backdrop */}
+              <img
+                src={currentPhotoUrl}
+                alt=""
+                aria-hidden="true"
+                className="absolute inset-0 h-full w-full object-cover blur-2xl scale-110 opacity-55"
+              />
+              {/* Mirrored Left Peripheral Wing for 360° look-around continuity */}
+              <img
+                src={currentPhotoUrl}
+                alt=""
+                aria-hidden="true"
+                style={{ transform: 'scaleX(-1)' }}
+                className="hidden sm:block h-full w-1/4 object-cover opacity-50 blur-[1px]"
+              />
+              {/* Primary Un-Cropped High-Clarity Corridor / Doorway Frame */}
+              <div className="relative h-full w-full sm:w-2/4 flex items-center justify-center overflow-hidden">
+                <img
+                  src={currentPhotoUrl}
+                  alt={activeStep?.name || venue.name}
+                  onLoad={(e) => {
+                    const ratio =
+                      e.currentTarget.naturalWidth / Math.max(1, e.currentTarget.naturalHeight);
+                    setIsTruePanorama(ratio >= 1.75);
+                  }}
+                  onError={() => {
+                    if (activeStep?.photo_url) {
+                      setFailedUrls((prev) => new Set(prev).add(activeStep.photo_url!));
+                    }
+                  }}
+                  className={`relative z-[2] h-full w-full object-contain sm:object-cover transition-all duration-300 ${
+                    dollyTransition ? 'scale-110 blur-[1.5px]' : 'scale-100'
+                  }`}
+                />
+              </div>
+              {/* Mirrored Right Peripheral Wing for 360° look-around continuity */}
+              <img
+                src={currentPhotoUrl}
+                alt=""
+                aria-hidden="true"
+                style={{ transform: 'scaleX(-1)' }}
+                className="hidden sm:block h-full w-1/4 object-cover opacity-50 blur-[1px]"
+              />
+            </div>
+          )
         ) : (
           <IsometricVenueArt
             accent={venue.accent || '#0ea5e9'}

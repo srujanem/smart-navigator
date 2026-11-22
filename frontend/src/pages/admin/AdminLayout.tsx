@@ -42,21 +42,21 @@ const SELECTED_VENUE_KEY = 'navigator_admin_selected_venue';
 
 const NAV_ITEMS = [
   {
-    to: '/admin/map-editor',
-    exact: false,
-    label: 'Visual Map Builder',
-    icon: MapIcon,
-  },
-  {
     to: '/admin/dataset',
     exact: false,
-    label: 'Photo Dataset & AI Index',
+    label: 'Room Photos & 360°',
     icon: Camera,
+  },
+  {
+    to: '/admin/map-editor',
+    exact: false,
+    label: 'Map Editor (Rooms & Paths)',
+    icon: MapIcon,
   },
   {
     to: '/admin',
     exact: true,
-    label: 'Overview & Analytics',
+    label: 'Overview',
     icon: BarChart3,
   },
   {

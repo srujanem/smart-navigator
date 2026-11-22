@@ -20,6 +20,7 @@ import {
   computeBrowserImageSignature,
   loadBundledOfflineSnapshot,
 } from './offlineRouter';
+import { optimizePhotoOrPanorama } from './panorama360';
 
 const IDB_NAME = 'navigator_admin_vault_v1';
 const IDB_STORE = 'kv';
@@ -35,6 +36,7 @@ interface VaultPhotoRecord {
   quality: number;
   source: string;
   sig: number[];
+  is_360?: boolean;
 }
 
 interface VaultState {
@@ -140,12 +142,15 @@ export async function syncVaultIntoBundle(): Promise<BundledOfflineSnapshot | nu
   for (const slug of Object.keys(bundle.graphs)) {
     const graph = bundle.graphs[slug];
     const nodeMap = new Map<string, GNode>(graph.nodes.map((n) => [n.id, n]));
-    const baseSigs = (bundle.photo_index[slug] ?? []).filter(
-      (s) => !deletedSet.has(s.photo_id),
+    const addedIds = new Set(vault.addedPhotos.map((ap) => ap.id));
+
+    // Keep base (bundled) photos that haven't been deleted (excluding already-merged vault photos)
+    const staticBase = (bundle.photo_index[slug] ?? []).filter(
+      (s) => !deletedSet.has(s.photo_id) && !addedIds.has(s.photo_id),
     );
 
     // Apply moves/updates to existing bundled photos
-    for (const s of baseSigs) {
+    for (const s of staticBase) {
       const mv = vault.movedPhotos[s.photo_id];
       if (mv) {
         if (mv.node_id && nodeMap.has(mv.node_id)) {
@@ -161,48 +166,46 @@ export async function syncVaultIntoBundle(): Promise<BundledOfflineSnapshot | nu
       }
     }
 
-    // Add newly uploaded vault photos for this venue
+    // Build newest-first list of vault-added photos for this venue
+    const vaultSigs: BundledPhotoSig[] = [];
     for (const ap of vault.addedPhotos) {
       if (ap.slug !== slug || deletedSet.has(ap.id)) continue;
       const mv = vault.movedPhotos[ap.id];
       const effNodeId = mv?.node_id ?? ap.node_id;
       const targetN = nodeMap.get(effNodeId) ?? graph.nodes[0];
       if (!targetN) continue;
-      if (!baseSigs.some((x) => x.photo_id === ap.id)) {
-        baseSigs.unshift({
-          photo_id: ap.id,
-          node_id: targetN.id,
-          node_name: targetN.name,
-          building_name: targetN.building_name,
-          floor_name: targetN.floor_name,
-          level: targetN.level,
-          photo_url: ap.url,
-          ocr_text: mv?.ocr_text ?? ap.ocr_text,
-          heading_deg: mv?.heading_deg !== undefined ? mv.heading_deg : ap.heading_deg,
-          sig: ap.sig,
-        });
-      }
+      vaultSigs.push({
+        photo_id: ap.id,
+        node_id: targetN.id,
+        node_name: targetN.name,
+        building_name: targetN.building_name,
+        floor_name: targetN.floor_name,
+        level: targetN.level,
+        photo_url: ap.url,
+        ocr_text: mv?.ocr_text ?? ap.ocr_text,
+        heading_deg: mv?.heading_deg !== undefined ? mv.heading_deg : ap.heading_deg,
+        sig: ap.sig,
+      });
     }
 
-    bundle.photo_index[slug] = baseSigs;
+    const mergedSigs = [...vaultSigs, ...staticBase];
+    bundle.photo_index[slug] = mergedSigs;
 
-    // Refresh node photo_url and photo_count on the live graph
+    // Refresh node photo_url and photo_count on the live graph (clear photo_url if all deleted!)
     const byNode = new Map<string, BundledPhotoSig[]>();
-    for (const s of baseSigs) {
+    for (const s of mergedSigs) {
       if (!byNode.has(s.node_id)) byNode.set(s.node_id, []);
       byNode.get(s.node_id)!.push(s);
     }
     for (const n of graph.nodes) {
       const list = byNode.get(n.id) ?? [];
       n.photo_count = list.length;
-      if (list.length > 0) {
-        n.photo_url = list[0].photo_url;
-      }
+      n.photo_url = list.length > 0 ? list[0].photo_url : null;
     }
 
     const vSum = bundle.venues.find((v) => v.slug === slug);
-    if (vSum) vSum.stats.photos = baseSigs.length;
-    if (bundle.details[slug]) bundle.details[slug].stats.photos = baseSigs.length;
+    if (vSum) vSum.stats.photos = mergedSigs.length;
+    if (bundle.details[slug]) bundle.details[slug].stats.photos = mergedSigs.length;
   }
 
   return bundle;
@@ -210,6 +213,7 @@ export async function syncVaultIntoBundle(): Promise<BundledOfflineSnapshot | nu
 
 export async function vaultGetAdminDataset(slug: string): Promise<DatasetResponse> {
   const bundle = await syncVaultIntoBundle();
+  const vault = await getVaultState();
   const graph = bundle?.graphs?.[slug];
   if (!bundle || !graph) {
     return {
@@ -219,6 +223,7 @@ export async function vaultGetAdminDataset(slug: string): Promise<DatasetRespons
     };
   }
 
+  const is360Set = new Set(vault.addedPhotos.filter((p) => p.is_360).map((p) => p.id));
   const sigs = bundle.photo_index?.[slug] ?? [];
   const byNode = new Map<string, DatasetPhoto[]>();
   for (const s of sigs) {
@@ -227,10 +232,10 @@ export async function vaultGetAdminDataset(slug: string): Promise<DatasetRespons
       id: s.photo_id,
       url: s.photo_url,
       thumbnail_url: s.photo_url,
-      media_type: 'photo',
-      ocr_text: s.ocr_text || '',
+      media_type: is360Set.has(s.photo_id) ? 'video' : 'photo',
+      ocr_text: is360Set.has(s.photo_id) ? '360° Panorama' : s.ocr_text || '',
       source: s.photo_id.startsWith('local-') ? 'uploader' : 'admin',
-      quality: 0.92,
+      quality: 0.94,
       heading_deg: s.heading_deg,
     });
   }
@@ -249,19 +254,6 @@ export async function vaultGetAdminDataset(slug: string): Promise<DatasetRespons
 
   const dsNodes: DatasetNode[] = graph.nodes.map((n) => {
     const pList = byNode.get(n.id) ?? [];
-    // If node had a photo_url in graph but wasn't in photo_index, include it
-    if (pList.length === 0 && n.photo_url) {
-      pList.push({
-        id: `graph-${n.id}`,
-        url: n.photo_url,
-        thumbnail_url: n.photo_url,
-        media_type: 'photo',
-        ocr_text: '',
-        source: 'admin',
-        quality: 0.9,
-        heading_deg: null,
-      });
-    }
     const count = pList.length;
     if (count > 0) covered++;
     const cov = count >= 2 ? 'good' : count === 1 ? 'low' : 'none';
@@ -311,13 +303,15 @@ export async function vaultUploadPhotosToNode(
   slug: string,
   nodeId: string,
   files: File[],
-  compressFn: (f: File, maxSide?: number, quality?: number) => Promise<File>,
+  _compressFn?: (f: File, maxSide?: number, quality?: number) => Promise<File>,
   headingDeg?: number | null,
+  onProgress?: (pct: number, stage: string) => void,
 ): Promise<UploadPhotosResponse> {
   const bundle = await syncVaultIntoBundle();
   const vault = await getVaultState();
   const graph = bundle?.graphs?.[slug];
   const targetNode = graph?.nodes.find((n) => n.id === nodeId) ?? graph?.nodes[0];
+  const roomName = targetNode?.name || 'Room';
 
   const accepted: UploadPhotosResponse['accepted'] = [];
   const rejected: UploadPhotosResponse['rejected'] = [];
@@ -325,43 +319,58 @@ export async function vaultUploadPhotosToNode(
   const roomDigitsMatch = targetNode?.name.match(/\b(30\d|310|\d{3})\b/);
   const roomOcr = roomDigitsMatch ? roomDigitsMatch[1] : '';
 
-  for (const rawFile of files) {
+  const total = Math.max(1, files.length);
+
+  for (let i = 0; i < files.length; i++) {
+    const rawFile = files[i];
+    const basePct = Math.round((i / total) * 88);
+    const sliceSpan = Math.round(88 / total);
+
     try {
-      const opt = await compressFn(rawFile, 1280, 0.84);
-      const dataUrl = await fileToDataUrl(opt);
-      const sig = await computeBrowserImageSignature(opt);
-      const pid = `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+      const processed = await optimizePhotoOrPanorama(rawFile, (subPct, stage) => {
+        onProgress?.(
+          Math.min(90, basePct + Math.round((subPct / 100) * sliceSpan)),
+          `${roomName} (${i + 1}/${total}): ${stage}`,
+        );
+      });
+
+      const dataUrl = await fileToDataUrl(processed.file);
+      const sig = await computeBrowserImageSignature(processed.file);
+      const pid = `local-${Date.now().toString(36)}-${i}-${Math.random().toString(36).slice(2, 6)}`;
 
       vault.addedPhotos.unshift({
         id: pid,
         slug,
         node_id: targetNode ? targetNode.id : nodeId,
         url: dataUrl,
-        ocr_text: roomOcr,
+        ocr_text: processed.isPanorama360 ? '360° Panorama' : roomOcr,
         heading_deg: headingDeg ?? null,
-        quality: 0.94,
+        quality: 0.95,
         source: 'uploader',
         sig,
+        is_360: processed.isPanorama360,
       });
 
       accepted.push({
         id: pid,
         url: dataUrl,
         thumbnail_url: dataUrl,
-        media_type: 'photo',
-        quality: 0.94,
+        media_type: processed.isPanorama360 ? 'video' : 'photo',
+        quality: 0.95,
         heading_deg: headingDeg ?? null,
       });
-    } catch {
+    } catch (err) {
       rejected.push({
         filename: rawFile.name,
-        reason: 'Could not decode image on device.',
+        reason: err instanceof Error ? err.message : 'Could not decode image or video on device.',
       });
     }
   }
 
+  onProgress?.(94, `Saving ${accepted.length} item(s) to Admin Vault...`);
   await saveVaultState(vault);
   await syncVaultIntoBundle();
+  onProgress?.(100, 'Upload complete!');
   return { accepted, rejected };
 }
 

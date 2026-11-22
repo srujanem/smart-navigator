@@ -1,1800 +1,877 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle,
-  ArrowRight,
   Camera,
   CheckCircle2,
-  Compass,
-  Cpu,
-  Film,
-  Globe,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
   HardDrive,
   Image as ImageIcon,
   Loader2,
-  Route as RouteIcon,
-  ScanText,
   Search,
-  Sparkles,
   Trash2,
   Upload,
+  Video,
+  X,
   XCircle,
 } from 'lucide-react';
 import {
-  autoConnectAdminGraph,
-  autoMapAdminDataset,
-  cleanAdminVenueData,
   deleteAdminPhoto,
   downloadUpdatedStaticBundle,
   getAdminDataset,
-  getAdminIndexReport,
   getVenue,
-  getVenueGraph,
   mediaUrl,
-  rebuildAdminIndex,
   updateAdminPhoto,
   uploadAdminPhotos,
 } from '../../lib/api';
+import { isVideoFile } from '../../lib/panorama360';
 import { formatLevel } from '../../lib/locationStore';
-import { FloorPlan2D } from '../../components/FloorPlan2D';
 import { Camera360CaptureModal } from '../../components/Camera360CaptureModal';
 import { ErrorState } from '../../components/ErrorState';
 import { useAdminVenue } from './adminVenueContext';
-import type {
-  AutoMapDatasetResponse,
-  CoverageLevel,
-  DatasetNode,
-  DatasetResponse,
-  Graph,
-  IndexReport,
-  UploadPhotosResponse,
-  VenueDetail,
-} from '../../lib/types';
+import type { DatasetNode, DatasetResponse, VenueDetail } from '../../lib/types';
 
-const RadialGauge: React.FC<{
-  label: string;
-  value: number; // 0..1
-  color: string;
-}> = ({ label, value, color }) => {
-  const pct = Math.round(Math.max(0, Math.min(1, value)) * 100);
-  const r = 34;
-  const circ = 2 * Math.PI * r;
-  const offset = circ - (pct / 100) * circ;
+interface StagedUploadItem {
+  id: string;
+  nodeId: string;
+  roomName: string;
+  file: File;
+  previewUrl: string;
+  isVideo: boolean;
+}
 
-  return (
-    <div className="flex items-center gap-3.5 rounded-2xl bg-slate-50 p-3.5 ring-1 ring-slate-200/80">
-      <div className="relative h-20 w-20 shrink-0">
-        <svg viewBox="0 0 84 84" className="h-full w-full -rotate-90">
-          <circle
-            cx={42}
-            cy={42}
-            r={r}
-            fill="none"
-            stroke="#e2e8f0"
-            strokeWidth={8}
-          />
-          <circle
-            cx={42}
-            cy={42}
-            r={r}
-            fill="none"
-            stroke={color}
-            strokeWidth={8}
-            strokeDasharray={circ}
-            strokeDashoffset={offset}
-            strokeLinecap="round"
-          />
-        </svg>
-        <div className="absolute inset-0 flex items-center justify-center font-display text-base font-extrabold text-slate-900">
-          {pct}%
-        </div>
-      </div>
-      <div>
-        <div className="text-xs font-bold uppercase tracking-wider text-slate-500">
-          {label}
-        </div>
-        <div className="text-xs text-slate-600 mt-0.5">
-          Leave-one-out cross-validation
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const QrCheckpointSvg: React.FC<{ seed: string }> = ({ seed }) => {
-  // Deterministic 21x21 QR-style visual checkpoint pattern with standard finder corners
-  const size = 21;
-  let hash = 2166136261;
-  for (let i = 0; i < seed.length; i++) {
-    hash ^= seed.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  const isFinder = (r: number, c: number) =>
-    (r < 7 && c < 7) || (r < 7 && c >= size - 7) || (r >= size - 7 && c < 7);
-  const finderBit = (r: number, c: number) => {
-    const lr = r >= size - 7 ? r - (size - 7) : r;
-    const lc = c >= size - 7 ? c - (size - 7) : c;
-    if (lr === 0 || lr === 6 || lc === 0 || lc === 6) return true;
-    if (lr >= 2 && lr <= 4 && lc >= 2 && lc <= 4) return true;
-    return false;
-  };
-  const cells: { r: number; c: number }[] = [];
-  for (let r = 0; r < size; r++) {
-    for (let c = 0; c < size; c++) {
-      let on = false;
-      if (isFinder(r, c)) {
-        on = finderBit(r, c);
-      } else if (r === 6 || c === 6) {
-        on = (r + c) % 2 === 0;
-      } else {
-        const bit = ((hash >>> ((r * 7 + c * 13) % 28)) ^ (r * 31 + c * 17)) & 3;
-        on = bit === 0 || bit === 2;
-      }
-      if (on) cells.push({ r, c });
-    }
-  }
-  return (
-    <svg viewBox={`0 0 ${size} ${size}`} className="h-24 w-24 shrink-0 rounded-lg bg-white p-1.5 ring-1 ring-slate-200">
-      {cells.map(({ r, c }, idx) => (
-        <rect key={idx} x={c} y={r} width={1} height={1} fill="#0f172a" />
-      ))}
-    </svg>
-  );
-};
+interface UploadProgressState {
+  active: boolean;
+  done: boolean;
+  percent: number;
+  stageText: string;
+  currentIndex: number;
+  totalItems: number;
+  succeeded: number;
+  errors: string[];
+  lastRoomId: string | null;
+}
 
 export const AdminDatasetPage: React.FC = () => {
   const { selectedSlug } = useAdminVenue();
-  const nodePhotosInputRef = useRef<HTMLInputElement>(null);
-  const nodeCameraInputRef = useRef<HTMLInputElement>(null);
-  const nodeVideoInputRef = useRef<HTMLInputElement>(null);
-  const autoPhotosInputRef = useRef<HTMLInputElement>(null);
-  const autoCameraInputRef = useRef<HTMLInputElement>(null);
-  const autoVideoInputRef = useRef<HTMLInputElement>(null);
 
   const [venue, setVenue] = useState<VenueDetail | null>(null);
-  const [graph, setGraph] = useState<Graph | null>(null);
   const [dataset, setDataset] = useState<DatasetResponse | null>(null);
-  const [report, setReport] = useState<IndexReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [selectedLevel, setSelectedLevel] = useState<number>(0);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const [covFilter, setCovFilter] = useState<'all' | CoverageLevel>('all');
-  const [dpFilter, setDpFilter] = useState<'all' | 'decision_only' | 'missing_decision'>('all');
-  const [qrModalOpen, setQrModalOpen] = useState(false);
-  const [camera360Mode, setCamera360Mode] = useState<'automap' | 'node' | null>(null);
-  const [nodeQuery, setNodeQuery] = useState('');
+  // Simple Search & Filter
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterMode, setFilterMode] = useState<'all' | 'missing' | 'mapped'>('all');
+  const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
+  const [show360Tip, setShow360Tip] = useState(false);
 
-  // Upload & Rebuild States
-  const [uploading, setUploading] = useState(false);
-  const [uploadHeading, setUploadHeading] = useState<string>('');
-  const [dragOver, setDragOver] = useState(false);
-  const [uploadResult, setUploadResult] = useState<UploadPhotosResponse | null>(
-    null,
-  );
-  const [deletingPhotoId, setDeletingPhotoId] = useState<string | null>(null);
-  const [rebuilding, setRebuilding] = useState(false);
+  // Full-Screen Camera Modal Target Room
+  const [cameraRoom, setCameraRoom] = useState<DatasetNode | null>(null);
 
-  // Enterprise Multi-Route Walk-Through & Bulk Auto-OCR States
-  const [autoMode, setAutoMode] = useState<'route' | 'ocr'>('route');
-  const [routeFromId, setRouteFromId] = useState<string>('');
-  const [routeToId, setRouteToId] = useState<string>('');
-  const [ocrLevelFilter, setOcrLevelFilter] = useState<string>('all');
-  const [autoMapping, setAutoMapping] = useState(false);
-  const [autoMapStage, setAutoMapStage] = useState<string>('');
-  const [autoMapResult, setAutoMapResult] =
-    useState<AutoMapDatasetResponse | null>(null);
+  // =========================================================================
+  // STAGED DRAFT QUEUE (Make all changes first -> Tap "Upload & Save Changes")
+  // =========================================================================
+  const [stagedUploads, setStagedUploads] = useState<StagedUploadItem[]>([]);
+  const [stagedMoves, setStagedMoves] = useState<Record<string, string>>({});
+  const [stagedDeletes, setStagedDeletes] = useState<string[]>([]);
 
-  const loadAll = useCallback(async () => {
-    if (!selectedSlug) return;
-    setLoading(true);
-    setError(null);
-    setUploadResult(null);
-    setAutoMapResult(null);
-    try {
-      const [v, g, ds, rep] = await Promise.all([
-        getVenue(selectedSlug),
-        getVenueGraph(selectedSlug),
-        getAdminDataset(selectedSlug),
-        getAdminIndexReport(selectedSlug).catch(() => null),
-      ]);
-      setVenue(v);
-      setGraph(g);
-      setDataset(ds);
-      setReport(rep);
-      if (ds.nodes.length > 0) {
-        if (ds.nodes.length <= 3) {
-          setAutoMode('ocr');
-        }
-        setSelectedNodeId((prev) =>
-          prev && ds.nodes.some((n) => n.node_id === prev)
-            ? prev
-            : ds.nodes[0].node_id,
-        );
-        setSelectedLevel(ds.nodes[0].level);
-        setRouteFromId(ds.nodes[0].node_id);
-        setRouteToId(
-          ds.nodes[Math.min(ds.nodes.length - 1, 4)].node_id,
-        );
+  // Live 0% -> 100% Upload Progress Modal State
+  const [progressState, setProgressState] = useState<UploadProgressState | null>(null);
+
+  const loadData = useCallback(
+    async (silent = false) => {
+      if (!selectedSlug) return;
+      if (!silent) setLoading(true);
+      setError(null);
+      try {
+        const [v, ds] = await Promise.all([
+          getVenue(selectedSlug),
+          getAdminDataset(selectedSlug),
+        ]);
+        setVenue(v);
+        setDataset(ds);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unable to load venue rooms.');
+      } finally {
+        if (!silent) setLoading(false);
       }
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Unable to load photo dataset.',
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedSlug]);
+    },
+    [selectedSlug],
+  );
 
   useEffect(() => {
-    void loadAll();
-  }, [loadAll]);
+    void loadData(false);
+  }, [loadData]);
 
-  const coverageMap = useMemo(() => {
-    const m: Record<string, CoverageLevel> = {};
-    dataset?.nodes.forEach((n) => {
-      m[n.node_id] = n.coverage;
+  // Cleanup staged object URLs when unmounting
+  useEffect(() => {
+    return () => {
+      stagedUploads.forEach((item) => {
+        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+      });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const addFilesToQueue = (room: DatasetNode, fileList: FileList | File[]) => {
+    const incoming = Array.from(fileList);
+    if (incoming.length === 0) return;
+
+    const newItems: StagedUploadItem[] = incoming.map((file) => {
+      const vid = isVideoFile(file);
+      return {
+        id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        nodeId: room.node_id,
+        roomName: room.name,
+        file,
+        previewUrl: vid ? '' : URL.createObjectURL(file),
+        isVideo: vid,
+      };
     });
-    return m;
-  }, [dataset]);
 
-  const filteredNodes = useMemo(() => {
-    if (!dataset) return [];
-    const q = nodeQuery.trim().toLowerCase();
-    return dataset.nodes.filter((n) => {
-      if (covFilter !== 'all' && n.coverage !== covFilter) return false;
-      if (dpFilter === 'decision_only' && n.is_decision_point === false) return false;
-      if (dpFilter === 'missing_decision' && (n.is_decision_point === false || n.photo_count > 0)) {
-        return false;
+    setStagedUploads((prev) => [...prev, ...newItems]);
+  };
+
+  const removeStagedUpload = (id: string) => {
+    setStagedUploads((prev) => {
+      const target = prev.find((x) => x.id === id);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((x) => x.id !== id);
+    });
+  };
+
+  const toggleStagedDelete = (photoId: string) => {
+    setStagedDeletes((prev) =>
+      prev.includes(photoId) ? prev.filter((id) => id !== photoId) : [...prev, photoId],
+    );
+  };
+
+  const stageMovePhoto = (photoId: string, originalNodeId: string, nextNodeId: string) => {
+    setStagedMoves((prev) => {
+      const copy = { ...prev };
+      if (nextNodeId === originalNodeId) {
+        delete copy[photoId];
+      } else {
+        copy[photoId] = nextNodeId;
       }
+      return copy;
+    });
+  };
+
+  const discardAllChanges = () => {
+    stagedUploads.forEach((it) => {
+      if (it.previewUrl) URL.revokeObjectURL(it.previewUrl);
+    });
+    setStagedUploads([]);
+    setStagedMoves({});
+    setStagedDeletes([]);
+  };
+
+  const pendingMoveCount = Object.keys(stagedMoves).length;
+  const totalPendingChanges =
+    stagedUploads.length + pendingMoveCount + stagedDeletes.length;
+
+  // =========================================================================
+  // EXECUTE ALL STAGED CHANGES WITH LIVE 0% -> 100% PROGRESS BAR
+  // =========================================================================
+  const handleUploadAndSaveAll = async () => {
+    if (!selectedSlug || totalPendingChanges === 0) return;
+
+    const uploadsSnapshot = [...stagedUploads];
+    const movesEntries = Object.entries(stagedMoves);
+    const deletesSnapshot = [...stagedDeletes];
+    const totalOps = uploadsSnapshot.length + movesEntries.length + deletesSnapshot.length;
+
+    let completedOps = 0;
+    let succeeded = 0;
+    const errors: string[] = [];
+    let lastRoomId: string | null = uploadsSnapshot[0]?.nodeId ?? null;
+
+    setProgressState({
+      active: true,
+      done: false,
+      percent: 2,
+      stageText: 'Starting upload...',
+      currentIndex: 1,
+      totalItems: totalOps,
+      succeeded: 0,
+      errors: [],
+      lastRoomId,
+    });
+
+    // 1. Upload all staged photos & 360° spin videos with live sub-file % progress
+    for (let i = 0; i < uploadsSnapshot.length; i++) {
+      const item = uploadsSnapshot[i];
+      lastRoomId = item.nodeId;
+      const basePct = Math.round((completedOps / totalOps) * 95);
+      const spanPct = Math.max(1, Math.round(95 / totalOps));
+
+      setProgressState((prev) =>
+        prev
+          ? {
+              ...prev,
+              currentIndex: completedOps + 1,
+              percent: Math.max(prev.percent, basePct + 2),
+              stageText: item.isVideo
+                ? `Stitching 360° video for ${item.roomName}...`
+                : `Uploading photo for ${item.roomName}...`,
+              lastRoomId,
+            }
+          : prev,
+      );
+
+      try {
+        const res = await uploadAdminPhotos(
+          selectedSlug,
+          item.nodeId,
+          [item.file],
+          null,
+          true,
+          (subPct, subStage) => {
+            const overall = Math.min(96, basePct + Math.round((subPct / 100) * spanPct));
+            setProgressState((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    percent: Math.max(prev.percent, overall),
+                    stageText: subStage,
+                  }
+                : prev,
+            );
+          },
+        );
+
+        if (res.accepted.length > 0) {
+          succeeded += res.accepted.length;
+        }
+        if (res.rejected.length > 0) {
+          res.rejected.forEach((r) => errors.push(`${item.roomName}: ${r.reason}`));
+        }
+      } catch (err) {
+        errors.push(
+          `${item.roomName}: ${err instanceof Error ? err.message : 'Upload failed.'}`,
+        );
+      }
+
+      completedOps++;
+    }
+
+    // 2. Apply any photo room reassignments
+    for (const [photoId, targetNodeId] of movesEntries) {
+      const pct = Math.min(97, Math.round((completedOps / totalOps) * 95) + 2);
+      setProgressState((prev) =>
+        prev
+          ? {
+              ...prev,
+              currentIndex: completedOps + 1,
+              percent: Math.max(prev.percent, pct),
+              stageText: 'Moving photo to new room...',
+            }
+          : prev,
+      );
+      try {
+        await updateAdminPhoto(photoId, { node_id: targetNodeId });
+        succeeded++;
+      } catch (err) {
+        errors.push(err instanceof Error ? err.message : 'Could not move photo.');
+      }
+      completedOps++;
+    }
+
+    // 3. Apply any photo deletions
+    for (const photoId of deletesSnapshot) {
+      const pct = Math.min(98, Math.round((completedOps / totalOps) * 95) + 2);
+      setProgressState((prev) =>
+        prev
+          ? {
+              ...prev,
+              currentIndex: completedOps + 1,
+              percent: Math.max(prev.percent, pct),
+              stageText: 'Removing deleted photo...',
+            }
+          : prev,
+      );
+      try {
+        await deleteAdminPhoto(photoId);
+        succeeded++;
+      } catch (err) {
+        errors.push(err instanceof Error ? err.message : 'Could not delete photo.');
+      }
+      completedOps++;
+    }
+
+    // 4. Refresh dataset smoothly IN PLACE (no blank loading screen!)
+    setProgressState((prev) =>
+      prev
+        ? {
+            ...prev,
+            percent: 99,
+            stageText: 'Updating live Street View & room cards...',
+          }
+        : prev,
+    );
+
+    discardAllChanges();
+    await loadData(true);
+
+    setProgressState({
+      active: true,
+      done: true,
+      percent: 100,
+      stageText:
+        errors.length === 0
+          ? `All ${succeeded} change${succeeded === 1 ? '' : 's'} uploaded & live!`
+          : `Finished: ${succeeded} saved, ${errors.length} failed.`,
+      currentIndex: totalOps,
+      totalItems: totalOps,
+      succeeded,
+      errors,
+      lastRoomId,
+    });
+  };
+
+  const filteredRooms = useMemo(() => {
+    if (!dataset) return [];
+    const q = searchQuery.trim().toLowerCase();
+    return dataset.nodes.filter((rm) => {
+      const stagedCount = stagedUploads.filter((s) => s.nodeId === rm.node_id).length;
+      const hasAny = rm.photo_count > 0 || stagedCount > 0;
+      if (filterMode === 'missing' && hasAny) return false;
+      if (filterMode === 'mapped' && !hasAny) return false;
       if (!q) return true;
       return (
-        n.name.toLowerCase().includes(q) ||
-        n.building_name.toLowerCase().includes(q) ||
-        n.kind.toLowerCase().includes(q)
+        rm.name.toLowerCase().includes(q) ||
+        rm.building_name.toLowerCase().includes(q) ||
+        formatLevel(rm.level).toLowerCase().includes(q)
       );
     });
-  }, [dataset, covFilter, dpFilter, nodeQuery]);
-
-  const selectedNode: DatasetNode | null = useMemo(() => {
-    if (!dataset || !selectedNodeId) return null;
-    return dataset.nodes.find((n) => n.node_id === selectedNodeId) ?? null;
-  }, [dataset, selectedNodeId]);
-
-  const refreshDatasetOnly = async () => {
-    if (!selectedSlug) return;
-    const [ds, g, rep] = await Promise.all([
-      getAdminDataset(selectedSlug),
-      getVenueGraph(selectedSlug),
-      getAdminIndexReport(selectedSlug).catch(() => null),
-    ]);
-    setDataset(ds);
-    setGraph(g);
-    if (rep) setReport(rep);
-  };
-
-  const handleUploadFiles = async (fileList: FileList | File[]) => {
-    if (!selectedSlug || !selectedNode) return;
-    const files = Array.from(fileList).filter(
-      (f) =>
-        f.type.startsWith('image/') ||
-        f.type.startsWith('video/') ||
-        /\.(jpg|jpeg|png|webp|heic|heif|avif|mp4|webm|mov|mkv|m4v|3gp)$/i.test(f.name),
-    );
-    if (files.length === 0) return;
-
-    setUploading(true);
-    setUploadResult(null);
-    try {
-      const parsedHeading = uploadHeading !== '' ? Number(uploadHeading) : null;
-      const res = await uploadAdminPhotos(
-        selectedSlug,
-        selectedNode.node_id,
-        files,
-        parsedHeading,
-      );
-      setUploadResult(res);
-      await refreshDatasetOnly();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Media upload failed.');
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const handleAutoMapFiles = async (fileList: FileList | File[]) => {
-    if (!selectedSlug) return;
-    const files = Array.from(fileList).filter(
-      (f) =>
-        f.type.startsWith('image/') ||
-        f.type.startsWith('video/') ||
-        /\.(jpg|jpeg|png|webp|heic|heif|avif|mp4|webm|mov|mkv|m4v|3gp)$/i.test(f.name),
-    );
-    if (files.length === 0) return;
-
-    setAutoMapping(true);
-    setAutoMapResult(null);
-    setAutoMapStage('Preparing high-end device compression & frame slicer...');
-    try {
-      const res = await autoMapAdminDataset(selectedSlug, {
-        mode: autoMode,
-        fromNodeId: autoMode === 'route' ? routeFromId : undefined,
-        toNodeId: autoMode === 'route' ? routeToId : undefined,
-        levelFilter:
-          autoMode === 'ocr' && ocrLevelFilter !== 'all'
-            ? Number(ocrLevelFilter)
-            : null,
-        fallbackNodeId: selectedNodeId,
-        files,
-        onProgressStage: (msg) => setAutoMapStage(msg),
-      });
-      setAutoMapResult(res);
-      await refreshDatasetOnly();
-    } catch (err) {
-      alert(
-        err instanceof Error
-          ? err.message
-          : 'Smart Auto-Mapping failed. Check file format and try again.',
-      );
-    } finally {
-      setAutoMapping(false);
-      setAutoMapStage('');
-    }
-  };
-
-  const handleDeletePhoto = async (photoId: string) => {
-    setDeletingPhotoId(photoId);
-    try {
-      await deleteAdminPhoto(photoId);
-      await refreshDatasetOnly();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Could not delete photo.');
-    } finally {
-      setDeletingPhotoId(null);
-    }
-  };
-
-  const handleRebuildIndex = async () => {
-    if (!selectedSlug) return;
-    setRebuilding(true);
-    try {
-      const newReport = await rebuildAdminIndex(selectedSlug);
-      setReport(newReport);
-      await refreshDatasetOnly();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Index rebuild failed.');
-    } finally {
-      setRebuilding(false);
-    }
-  };
+  }, [dataset, searchQuery, filterMode, stagedUploads]);
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center py-20">
+      <div className="flex flex-col items-center justify-center py-24">
         <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-        <p className="mt-3 text-sm text-slate-500">
-          Loading venue photo dataset & AI vision index...
-        </p>
+        <p className="mt-3 text-sm font-semibold text-slate-500">Loading rooms...</p>
       </div>
     );
   }
 
-  if (error || !dataset || !venue || !graph) {
-    return (
-      <ErrorState
-        message={error || 'Dataset unavailable.'}
-        onRetry={() => void loadAll()}
-      />
-    );
+  if (error || !dataset || !venue) {
+    return <ErrorState message={error || 'Rooms unavailable.'} onRetry={() => void loadData(false)} />;
   }
 
-  const coveredPct =
-    dataset.totals.nodes > 0
-      ? Math.round((dataset.totals.covered / dataset.totals.nodes) * 100)
-      : 0;
+  const entranceNode =
+    dataset.nodes.find((n) => n.name.toLowerCase().includes('entrance')) ?? dataset.nodes[0];
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto">
-      {/* Header + Rebuild AI Vision Index CTA */}
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-slate-950">
-              Photo Dataset & AI Vision Index
-            </h1>
-            <span className="chip bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200">
-              <Cpu className="h-3.5 w-3.5" />
-              {dataset.embedder}
-            </span>
-          </div>
-          <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-            {dataset.totals.photos} indexed photos across {dataset.totals.covered}/
-            {dataset.totals.nodes} nodes ({coveredPct}% covered)
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => setCamera360Mode('automap')}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-md shadow-cyan-500/20 hover:from-cyan-400 hover:to-indigo-500 transition"
-          >
-            <Globe className="h-3.5 w-3.5" />
-            <span>🌐 360° Camera Studio</span>
-          </button>
-
-          <button
-            type="button"
-            disabled={rebuilding}
-            onClick={async () => {
-              if (!selectedSlug) return;
-              if (
-                !window.confirm(
-                  'Clean & reset all uploaded photos, videos, and auto-created floor nodes on this venue so you can start fresh?',
-                )
-              ) {
-                return;
-              }
-              setRebuilding(true);
-              try {
-                await cleanAdminVenueData(selectedSlug, true);
-                setUploadResult(null);
-                setAutoMapResult(null);
-                await loadAll();
-              } catch (err) {
-                alert(err instanceof Error ? err.message : 'Failed to clean floor data.');
-              } finally {
-                setRebuilding(false);
-              }
-            }}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-rose-50 px-3.5 py-2.5 text-xs font-extrabold text-rose-700 ring-1 ring-rose-200 shadow-sm hover:bg-rose-100 transition"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            <span>Clean & Reset Floor Data</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => void downloadUpdatedStaticBundle()}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-md hover:bg-indigo-500 transition"
-            title="Download updated offline-bundle.json with all new photos"
-          >
-            <HardDrive className="h-3.5 w-3.5" />
-            <span>💾 Export Static Bundle</span>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setQrModalOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-white px-4 py-2.5 text-xs font-extrabold text-slate-900 ring-1 ring-slate-200 shadow-sm hover:bg-slate-50 transition"
-          >
-            <span>🖨️ Printable QR Checkpoints</span>
-          </button>
-
-          <button
-            type="button"
-            disabled={rebuilding}
-            onClick={async () => {
-              if (!selectedSlug) return;
-              setRebuilding(true);
-              try {
-                await autoConnectAdminGraph(selectedSlug);
-                await handleRebuildIndex();
-              } finally {
-                setRebuilding(false);
-              }
-            }}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-md shadow-emerald-500/20 hover:bg-emerald-500 transition"
-          >
-            <RouteIcon className="h-3.5 w-3.5" />
-            <span>⚡ Auto-Plot Graph & 3D Routes</span>
-          </button>
-
-          <button
-            type="button"
-            disabled={rebuilding}
-            onClick={() => void handleRebuildIndex()}
-            className="btn-primary py-2.5 px-5 text-xs font-extrabold shadow-lg shadow-cyan-500/20"
-          >
-            {rebuilding ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Sparkles className="h-4 w-4" />
-            )}
-            {rebuilding ? 'Rebuilding Vision Index...' : 'Rebuild AI Vision Index'}
-          </button>
-        </div>
-      </div>
-
-      {/* =================================================================== */}
-      {/* 1-TAP PHONE ROOM-BY-ROOM PHOTO CHECKLIST (ZERO STRUGGLE · AS-IT-IS) */}
-      {/* =================================================================== */}
-      <div className="rounded-3xl bg-gradient-to-br from-[#071026] via-[#0B1736] to-slate-900 p-4 sm:p-6 text-white ring-2 ring-cyan-400/40 shadow-2xl space-y-4">
+    <div className={`max-w-5xl mx-auto space-y-4 ${totalPendingChanges > 0 ? 'pb-28' : 'pb-10'}`}>
+      {/* ================================================================= */}
+      {/* 1. CLEAN, SIMPLE HEADER (ZERO USELESS JARGON)                     */}
+      {/* ================================================================= */}
+      <div className="rounded-3xl bg-slate-950 p-4 sm:p-5 text-white ring-1 ring-white/15 shadow-xl space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider text-emerald-300 ring-1 ring-emerald-400/40">
-              📱 Easiest Phone Upload Mode · 100% Direct Room Pinning
-            </span>
-            <h2 className="font-display text-lg sm:text-xl font-extrabold mt-1.5">
-              1-Tap Room-by-Room Photo Checklist (Pins Exactly Where You Tap)
-            </h2>
-            <p className="text-xs text-slate-300 mt-0.5 max-w-3xl">
-              No complex settings or wrong AI guesses: just tap <strong>📷 Snap Camera</strong> or <strong>🖼️ Add Gallery</strong> directly on any room card below. Your photo is compressed on your phone, saved immediately, and pinned <strong>100% as-it-is</strong> to that exact room!
+            <h1 className="font-display text-xl sm:text-2xl font-extrabold text-white">
+              Room Photos &amp; 360° Uploader
+            </h1>
+            <p className="text-xs text-slate-300 mt-0.5">
+              <strong>{venue.name}</strong> ·{' '}
+              <span className="text-emerald-300 font-bold">
+                {dataset.totals.covered} of {dataset.totals.nodes} rooms mapped
+              </span>{' '}
+              ({dataset.totals.photos} total photos)
             </p>
           </div>
-          <div className="flex items-center gap-2 text-xs font-extrabold">
-            <span className="rounded-xl bg-white/10 px-3 py-1.5 text-cyan-300 ring-1 ring-white/15">
-              {dataset.totals.covered} / {dataset.totals.nodes} Rooms Mapped
-            </span>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href={`/v/${encodeURIComponent(selectedSlug)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-extrabold text-slate-950 shadow hover:bg-emerald-400 transition"
+            >
+              <ExternalLink className="h-3.5 w-3.5" />
+              <span>View Live Map</span>
+            </a>
+            <button
+              type="button"
+              onClick={() => void downloadUpdatedStaticBundle()}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 text-xs font-bold text-slate-100 ring-1 ring-white/15 hover:bg-white/15 transition"
+              title="Download backup bundle file with your uploaded photos"
+            >
+              <HardDrive className="h-3.5 w-3.5 text-cyan-300" />
+              <span>Export Backup</span>
+            </button>
           </div>
         </div>
 
-        {uploading && (
-          <div className="flex items-center gap-2.5 rounded-2xl bg-cyan-500/20 px-4 py-3 text-xs font-extrabold text-cyan-200 ring-1 ring-cyan-400/50">
-            <Loader2 className="h-4 w-4 animate-spin text-cyan-300 shrink-0" />
-            <span>Compressing & pinning photo directly to selected room...</span>
+        {/* Simple 3-Step Visual Hint */}
+        <div className="grid grid-cols-3 gap-2 rounded-2xl bg-white/[0.06] p-2.5 text-center text-[11px] font-bold text-slate-200 ring-1 ring-white/10">
+          <div>
+            <span className="text-cyan-300">1.</span> Pick Room
           </div>
-        )}
+          <div>
+            <span className="text-emerald-300">2.</span> Camera / 360° Video
+          </div>
+          <div>
+            <span className="text-amber-300">3.</span> Tap Upload
+          </div>
+        </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 max-h-[440px] overflow-y-auto pr-1 thin-scrollbar">
-          {dataset.nodes.map((rm) => {
-            const latestPhoto = rm.photos[0] ?? null;
-            const isActiveRm = rm.node_id === selectedNodeId;
-            return (
-              <div
-                key={`quick-rm-${rm.node_id}`}
-                onClick={() => {
-                  setSelectedNodeId(rm.node_id);
-                  setSelectedLevel(rm.level);
-                }}
-                className={`cursor-pointer rounded-2xl p-3 transition flex flex-col justify-between gap-2.5 ${
-                  isActiveRm
-                    ? 'bg-cyan-950/80 ring-2 ring-cyan-400 shadow-lg'
-                    : 'bg-white/[0.06] ring-1 ring-white/12 hover:bg-white/[0.1]'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="font-display text-sm font-extrabold text-white truncate">
-                      {rm.name}
-                    </div>
-                    <div className="text-[10px] text-slate-400 truncate">
-                      {rm.building_name} · {formatLevel(rm.level)}
-                    </div>
-                  </div>
-                  <span
-                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
-                      rm.photo_count > 0
-                        ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/40'
-                        : 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-400/40'
-                    }`}
-                  >
-                    {rm.photo_count > 0 ? `${rm.photo_count} ✓` : 'Needs Photo'}
-                  </span>
-                </div>
-
-                {/* Un-Cropped Preview Thumbnail */}
-                <div className="relative h-28 w-full overflow-hidden rounded-xl bg-slate-950 ring-1 ring-white/10 flex items-center justify-center">
-                  {latestPhoto ? (
-                    <img
-                      src={mediaUrl(latestPhoto.thumbnail_url || latestPhoto.url)}
-                      alt={rm.name}
-                      loading="lazy"
-                      className="h-full w-full object-contain"
-                    />
-                  ) : (
-                    <div className="text-center text-[11px] text-slate-500 px-2">
-                      No photo yet — tap Snap or Gallery below
-                    </div>
-                  )}
-                </div>
-
-                {/* Direct 1-Tap Camera & Gallery Labels Pinned Strictly to This Room */}
-                <div
-                  className="grid grid-cols-2 gap-1.5"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <label className="cursor-pointer inline-flex items-center justify-center gap-1 rounded-xl bg-emerald-600 px-2.5 py-2 text-[11px] font-extrabold text-white shadow hover:bg-emerald-500 active:scale-95 transition">
-                    <Camera className="h-3.5 w-3.5 shrink-0" />
-                    <span>📷 Snap</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      className="hidden"
-                      onChange={async (e) => {
-                        const files = e.target.files;
-                        if (!files || files.length === 0 || !selectedSlug) return;
-                        setSelectedNodeId(rm.node_id);
-                        setUploading(true);
-                        try {
-                          const res = await uploadAdminPhotos(
-                            selectedSlug,
-                            rm.node_id,
-                            Array.from(files),
-                            null,
-                            true,
-                          );
-                          setUploadResult(res);
-                          await loadAll();
-                        } finally {
-                          setUploading(false);
-                          e.target.value = '';
-                        }
-                      }}
-                    />
-                  </label>
-
-                  <label className="cursor-pointer inline-flex items-center justify-center gap-1 rounded-xl bg-cyan-500 px-2.5 py-2 text-[11px] font-extrabold text-slate-950 shadow hover:bg-cyan-400 active:scale-95 transition">
-                    <ImageIcon className="h-3.5 w-3.5 shrink-0" />
-                    <span>🖼️ Gallery</span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      multiple
-                      className="hidden"
-                      onChange={async (e) => {
-                        const files = e.target.files;
-                        if (!files || files.length === 0 || !selectedSlug) return;
-                        setSelectedNodeId(rm.node_id);
-                        setUploading(true);
-                        try {
-                          const res = await uploadAdminPhotos(
-                            selectedSlug,
-                            rm.node_id,
-                            Array.from(files),
-                            null,
-                            true,
-                          );
-                          setUploadResult(res);
-                          await loadAll();
-                        } finally {
-                          setUploading(false);
-                          e.target.value = '';
-                        }
-                      }}
-                    />
-                  </label>
-                </div>
-              </div>
-            );
-          })}
+        {/* Collapsible 360° Full-View Guide */}
+        <div className="rounded-2xl bg-cyan-500/10 ring-1 ring-cyan-400/30 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setShow360Tip((v) => !v)}
+            className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 text-left text-xs font-extrabold text-cyan-200"
+          >
+            <span>🌐 Want full 360° view on a normal phone? (Tap for 2 easy ways)</span>
+            {show360Tip ? (
+              <ChevronUp className="h-4 w-4 shrink-0" />
+            ) : (
+              <ChevronDown className="h-4 w-4 shrink-0" />
+            )}
+          </button>
+          {show360Tip && (
+            <div className="px-3.5 pb-3 text-xs text-slate-200 space-y-1.5 border-t border-cyan-400/20 pt-2">
+              <p>
+                <strong>Option A (Best — 360° Spin Video):</strong> Tap{' '}
+                <strong className="text-emerald-300">📷 Camera / 360°</strong> on any room, switch to{' '}
+                <strong className="text-rose-300">🌐 360° Video</strong>, and slowly spin in a full
+                circle (6–10 sec). When you tap Upload, we automatically stitch it into a seamless
+                360° panorama!
+              </p>
+              <p>
+                <strong>Option B (Phone Panorama Mode):</strong> Take a wide{' '}
+                <strong>Panorama ("Pano")</strong> photo in your phone&apos;s camera app and pick it
+                via <strong className="text-cyan-300">🖼️ Gallery / Video</strong>. Street View
+                wraps wide panoramas 360° automatically!
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* VISUAL 3-STEP AI FLOOR MODELING PIPELINE STATUS */}
-      <div className="rounded-2xl bg-white p-4 ring-1 ring-slate-200/80 shadow-soft">
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
-          {[
-            {
-              step: '01',
-              title: 'Upload Floor Photos / Video',
-              sub: `${dataset.totals.photos} clean WebP frames indexed`,
-              done: dataset.totals.photos > 0,
-            },
-            {
-              step: '02',
-              title: 'Auto-Create 2D & 3D Graph',
-              sub: `${dataset.totals.nodes} mapped spots · ${graph.edges.length} paths`,
-              done: dataset.totals.nodes >= 2 && graph.edges.length >= 1,
-            },
-            {
-              step: '03',
-              title: 'Dual-Region DINOv2 + OCR Ready',
-              sub: report ? `Top-1 Accuracy: ${Math.round(report.top1 * 100)}%` : 'Auto-rebuilds on upload',
-              done: Boolean(report && report.photos > 0),
-            },
-          ].map((item, idx) => (
-            <div
-              key={item.step}
-              className={`flex items-center gap-3 rounded-xl p-3 ring-1 transition ${
-                item.done
-                  ? 'bg-emerald-50/70 ring-emerald-200'
-                  : 'bg-slate-50 ring-slate-200/80'
+      {/* ================================================================= */}
+      {/* 2. SIMPLE SEARCH & FILTER BAR                                     */}
+      {/* ================================================================= */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+        <div className="relative flex-1">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search room (e.g. Room 308, Entrance)..."
+            className="w-full rounded-2xl bg-white pl-10 pr-4 py-2.5 text-sm font-semibold text-slate-900 ring-1 ring-slate-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+
+        <div className="flex items-center gap-1.5 rounded-2xl bg-white p-1 ring-1 ring-slate-200 shadow-sm">
+          {(
+            [
+              { id: 'all', label: `All (${dataset.nodes.length})` },
+              {
+                id: 'missing',
+                label: `Needs Photo (${dataset.nodes.length - dataset.totals.covered})`,
+              },
+              { id: 'mapped', label: `Mapped (${dataset.totals.covered})` },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setFilterMode(tab.id)}
+              className={`flex-1 sm:flex-none rounded-xl px-3 py-1.5 text-xs font-extrabold whitespace-nowrap transition ${
+                filterMode === tab.id
+                  ? 'bg-slate-900 text-white shadow'
+                  : 'text-slate-600 hover:bg-slate-100'
               }`}
             >
-              <div
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-xs font-extrabold ${
-                  item.done
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'bg-slate-200 text-slate-600'
-                }`}
-              >
-                {item.done ? <CheckCircle2 className="h-4 w-4" /> : item.step}
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-xs font-extrabold text-slate-900 truncate">
-                  {item.title}
-                </div>
-                <div className="text-[11px] text-slate-500 truncate">{item.sub}</div>
-              </div>
-              {idx < 2 && (
-                <ArrowRight className="hidden sm:block h-4 w-4 text-slate-300 shrink-0" />
-              )}
-            </div>
+              {tab.label}
+            </button>
           ))}
         </div>
       </div>
 
-      {/* DECISION-POINT COVERAGE ADVISOR + SELF-GROWING ACTIVE LEARNING STATUS */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="rounded-2xl bg-indigo-50/80 p-4 ring-1 ring-indigo-200/80 flex flex-col justify-between space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-extrabold uppercase tracking-wider text-indigo-700">
-              🎯 Decision-Point Advisor
-            </span>
-            <span className="rounded-full bg-indigo-600 px-2.5 py-0.5 text-[11px] font-bold text-white">
-              {dataset.totals.decision_covered ?? dataset.totals.covered}/
-              {dataset.totals.decision_nodes ?? dataset.totals.nodes} Critical
-            </span>
-          </div>
-          <p className="text-xs text-slate-700 leading-relaxed">
-            Only <strong>junctions, lifts, stairs, entrances & doors</strong> require reference photos. Straight hallway segments are interpolated automatically by the graph.
-          </p>
-        </div>
+      {/* ================================================================= */}
+      {/* 3. CLEAN ROOM-BY-ROOM CARDS (DIRECT CAMERA + GALLERY + QUEUE)     */}
+      {/* ================================================================= */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+        {filteredRooms.map((rm) => {
+          const roomStaged = stagedUploads.filter((s) => s.nodeId === rm.node_id);
+          const visibleExisting = rm.photos.filter((p) => !stagedDeletes.includes(p.id));
+          const latestSaved = visibleExisting[0] ?? null;
+          const latestStaged = roomStaged[roomStaged.length - 1] ?? null;
+          const isExpanded = expandedRoomId === rm.node_id;
 
-        <div className="rounded-2xl bg-emerald-50/80 p-4 ring-1 ring-emerald-200/80 flex flex-col justify-between space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-800">
-              〰️ Graph-Interpolated Corridors
-            </span>
-            <span className="rounded-full bg-emerald-600 px-2.5 py-0.5 text-[11px] font-bold text-white">
-              {dataset.totals.interpolated_nodes ?? 0} Nodes Saved
-            </span>
-          </div>
-          <p className="text-xs text-slate-700 leading-relaxed">
-            <strong>{dataset.totals.interpolated_nodes ?? 0} straight corridor nodes</strong> need zero manual photos — cutting hospital mapping workload & storage by up to 65%.
-          </p>
-        </div>
-
-        <div className="rounded-2xl bg-cyan-50/80 p-4 ring-1 ring-cyan-200/80 flex flex-col justify-between space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-extrabold uppercase tracking-wider text-cyan-800">
-              🧠 Self-Growing Active Learning
-            </span>
-            <span className="rounded-full bg-cyan-600 px-2.5 py-0.5 text-[11px] font-bold text-white">
-              +{dataset.totals.visitor_contributed ?? 0} Visitor Angles
-            </span>
-          </div>
-          <p className="text-xs text-slate-700 leading-relaxed">
-            Sharp, face-blurred visitor confirmations automatically enrich missing angles (deduplicated at 92% cosine similarity & capped at 8/node).
-          </p>
-        </div>
-      </div>
-
-      {/* ENTERPRISE HOSPITAL / MULTI-ROUTE WALK-THROUGH & BULK AUTO-OCR MAPPER */}
-      <div className="rounded-3xl bg-gradient-to-br from-slate-950 via-slate-900 to-indigo-950 p-5 sm:p-6 text-white ring-1 ring-white/15 shadow-2xl space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <div className="inline-flex items-center gap-1.5 rounded-full bg-cyan-500/15 px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider text-cyan-300 ring-1 ring-cyan-400/30">
-              <Film className="h-3.5 w-3.5" />
-              Enterprise Hospital & Multi-Route Auto-Mapper
-            </div>
-            <h2 className="font-display text-lg sm:text-xl font-extrabold mt-1.5">
-              Walk & Record Once — Auto-Slice, Compress & Tag Multiple Rooms
-            </h2>
-            <p className="text-xs text-slate-300 mt-0.5 max-w-3xl">
-              Built for large hospitals (like Manipal) & multi-floor campuses: shoot a single walk-through video or drop 50+ high-res phone photos. On-device WebP compression shrinks 48MP/4K captures by <strong>95%</strong>, filters motion blur, reads room signboards via OCR, and distributes frames across every slot along the corridor automatically.
-            </p>
-          </div>
-
-          <div className="inline-flex rounded-xl bg-white/10 p-1 ring-1 ring-white/15 text-xs font-bold">
-            <button
-              type="button"
-              onClick={() => setAutoMode('route')}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
-                autoMode === 'route'
-                  ? 'bg-cyan-400 text-slate-950 shadow-sm'
-                  : 'text-slate-200 hover:bg-white/10'
+          return (
+            <div
+              key={rm.node_id}
+              className={`rounded-3xl bg-white p-3.5 shadow-sm transition flex flex-col justify-between gap-3 ${
+                roomStaged.length > 0
+                  ? 'ring-2 ring-amber-400 shadow-amber-100'
+                  : 'ring-1 ring-slate-200'
               }`}
             >
-              <RouteIcon className="h-3.5 w-3.5" />
-              Corridor Walk-Through (Start → End)
-            </button>
-            <button
-              type="button"
-              onClick={() => setAutoMode('ocr')}
-              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition ${
-                autoMode === 'ocr'
-                  ? 'bg-cyan-400 text-slate-950 shadow-sm'
-                  : 'text-slate-200 hover:bg-white/10'
-              }`}
-            >
-              <ScanText className="h-3.5 w-3.5" />
-              Bulk Auto-OCR Door Sorter
-            </button>
-          </div>
-        </div>
+              {/* Room Title + Status Badge */}
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h2 className="font-display text-base font-extrabold text-slate-950 truncate">
+                    {rm.name}
+                  </h2>
+                  <p className="text-[11px] font-semibold text-slate-500 truncate">
+                    {rm.building_name} · {formatLevel(rm.level)}
+                  </p>
+                </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-center">
-          <div className="lg:col-span-7 space-y-3">
-            {autoMode === 'route' ? (
-              <div className="grid grid-cols-1 sm:grid-cols-11 gap-2.5 items-center rounded-2xl bg-white/[0.06] p-3.5 ring-1 ring-white/10">
-                <div className="sm:col-span-5">
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-cyan-300 mb-1">
-                    Walk Start Spot
-                  </label>
-                  <select
-                    value={routeFromId}
-                    onChange={(e) => setRouteFromId(e.target.value)}
-                    className="w-full rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white ring-1 ring-white/20"
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <span
+                    className={`rounded-full px-2.5 py-0.5 text-[10px] font-extrabold ${
+                      visibleExisting.length > 0
+                        ? 'bg-emerald-100 text-emerald-800'
+                        : 'bg-amber-100 text-amber-800'
+                    }`}
                   >
-                    {dataset.nodes.map((n) => (
-                      <option key={n.node_id} value={n.node_id}>
-                        {n.name} ({formatLevel(n.level)})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="hidden sm:flex sm:col-span-1 items-center justify-center pt-4">
-                  <ArrowRight className="h-4 w-4 text-cyan-400" />
-                </div>
-
-                <div className="sm:col-span-5">
-                  <label className="block text-[11px] font-bold uppercase tracking-wider text-emerald-300 mb-1">
-                    Walk End Spot
-                  </label>
-                  <select
-                    value={routeToId}
-                    onChange={(e) => setRouteToId(e.target.value)}
-                    className="w-full rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white ring-1 ring-white/20"
-                  >
-                    {dataset.nodes.map((n) => (
-                      <option key={n.node_id} value={n.node_id}>
-                        {n.name} ({formatLevel(n.level)})
-                      </option>
-                    ))}
-                  </select>
+                    {visibleExisting.length > 0
+                      ? `${visibleExisting.length} Saved ✓`
+                      : 'Needs Photo'}
+                  </span>
+                  {roomStaged.length > 0 && (
+                    <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-extrabold text-slate-950">
+                      +{roomStaged.length} Ready to Upload
+                    </span>
+                  )}
                 </div>
               </div>
-            ) : (
-              <div className="rounded-2xl bg-white/[0.06] p-3.5 ring-1 ring-white/10 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs font-bold text-cyan-300">
-                    Bulk Signboard OCR + Visual Matching
+
+              {/* Main Un-Cropped Preview (Shows Staged Photo First if Added!) */}
+              <div className="relative h-36 w-full overflow-hidden rounded-2xl bg-slate-950 flex items-center justify-center">
+                {latestStaged ? (
+                  latestStaged.isVideo ? (
+                    <div className="flex flex-col items-center justify-center gap-1.5 text-center px-4">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-500/20 text-rose-400 ring-1 ring-rose-400/40">
+                        <Video className="h-6 w-6" />
+                      </div>
+                      <span className="text-xs font-extrabold text-white">
+                        🌐 360° Spin Video Staged
+                      </span>
+                      <span className="text-[10px] text-amber-300 font-semibold">
+                        Will stitch to 360° panorama on Upload
+                      </span>
+                    </div>
+                  ) : (
+                    <img
+                      src={latestStaged.previewUrl}
+                      alt={rm.name}
+                      className="h-full w-full object-contain"
+                    />
+                  )
+                ) : latestSaved ? (
+                  <img
+                    src={mediaUrl(latestSaved.thumbnail_url || latestSaved.url)}
+                    alt={rm.name}
+                    loading="lazy"
+                    className="h-full w-full object-contain"
+                  />
+                ) : (
+                  <div className="text-center px-4 text-xs font-semibold text-slate-400">
+                    No photo yet — tap Camera or Gallery below
                   </div>
-                  <div className="text-[11px] text-slate-300">
-                    Drop unsorted room/corridor photos from any floor — AI reads door plaques ("204", "ICU", "Pharmacy") and assigns each photo to its node.
-                  </div>
+                )}
+
+                {latestStaged && (
+                  <span className="absolute top-2 left-2 rounded-lg bg-amber-400 px-2 py-0.5 text-[10px] font-black text-slate-950 shadow">
+                    NEW · NOT UPLOADED YET
+                  </span>
+                )}
+                {!latestStaged && latestSaved?.ocr_text === '360° Panorama' && (
+                  <span className="absolute top-2 left-2 rounded-lg bg-cyan-400 px-2 py-0.5 text-[10px] font-black text-slate-950 shadow">
+                    🌐 360° PANO
+                  </span>
+                )}
+              </div>
+
+              {/* Staged Queue Mini-Strip for This Room (with easy Remove X) */}
+              {roomStaged.length > 0 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                  {roomStaged.map((st) => (
+                    <div
+                      key={st.id}
+                      className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-slate-900 ring-2 ring-amber-400 flex items-center justify-center"
+                    >
+                      {st.isVideo ? (
+                        <Video className="h-5 w-5 text-rose-400" />
+                      ) : (
+                        <img src={st.previewUrl} alt="" className="h-full w-full object-cover" />
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeStagedUpload(st.id)}
+                        className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-rose-600 text-white shadow"
+                        title="Remove from upload queue"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
-                <select
-                  value={ocrLevelFilter}
-                  onChange={(e) => setOcrLevelFilter(e.target.value)}
-                  className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white ring-1 ring-white/20"
-                >
-                  <option value="all">All Floors</option>
-                  {Array.from(new Set(dataset.nodes.map((n) => n.level)))
-                    .sort((a, b) => a - b)
-                    .map((lvl) => (
-                      <option key={lvl} value={String(lvl)}>
-                        {formatLevel(lvl)} Only
-                      </option>
-                    ))}
-                </select>
-              </div>
-            )}
-          </div>
+              )}
 
-          <div className="lg:col-span-5 space-y-2.5">
-            <input
-              ref={autoPhotosInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files?.length) {
-                  void handleAutoMapFiles(e.target.files);
-                }
-                e.target.value = '';
-              }}
-            />
-            <input
-              ref={autoCameraInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files?.length) {
-                  void handleAutoMapFiles(e.target.files);
-                }
-                e.target.value = '';
-              }}
-            />
-            <input
-              ref={autoVideoInputRef}
-              type="file"
-              accept="video/*"
-              className="hidden"
-              onChange={(e) => {
-                if (e.target.files?.length) {
-                  void handleAutoMapFiles(e.target.files);
-                }
-                e.target.value = '';
-              }}
-            />
-
-            {autoMapping ? (
-              <div className="flex items-center justify-center gap-2.5 rounded-2xl bg-cyan-500/20 px-4 py-4 text-xs font-extrabold text-cyan-200 ring-1 ring-cyan-400/50">
-                <Loader2 className="h-4 w-4 animate-spin shrink-0 text-cyan-300" />
-                <span className="truncate">{autoMapStage || 'Auto-Mapping floor media...'}</span>
-              </div>
-            ) : (
+              {/* Primary Action Buttons: Full-Screen Camera/360° + Gallery/Video */}
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => autoPhotosInputRef.current?.click()}
-                  className="flex items-center justify-center gap-1.5 rounded-2xl bg-gradient-to-r from-cyan-400 to-emerald-400 px-3 py-3 text-xs font-extrabold text-slate-950 shadow-lg hover:brightness-105 active:scale-[0.98] transition"
+                  onClick={() => setCameraRoom(rm)}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-2xl bg-emerald-600 px-3 py-2.5 text-xs font-extrabold text-white shadow-sm hover:bg-emerald-500 active:scale-95 transition"
                 >
+                  <Camera className="h-4 w-4 shrink-0" />
+                  <span>Camera / 360°</span>
+                </button>
+
+                <label className="cursor-pointer inline-flex items-center justify-center gap-1.5 rounded-2xl bg-indigo-600 px-3 py-2.5 text-xs font-extrabold text-white shadow-sm hover:bg-indigo-500 active:scale-95 transition">
                   <ImageIcon className="h-4 w-4 shrink-0" />
-                  <span>Gallery Photos</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => autoCameraInputRef.current?.click()}
-                  className="flex items-center justify-center gap-1.5 rounded-2xl bg-white/15 px-3 py-3 text-xs font-extrabold text-white ring-1 ring-white/25 hover:bg-white/20 active:scale-[0.98] transition"
-                >
-                  <Camera className="h-4 w-4 shrink-0 text-cyan-300" />
-                  <span>Take Photo</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => autoVideoInputRef.current?.click()}
-                  className="flex items-center justify-center gap-1.5 rounded-2xl bg-white/10 px-3 py-2.5 text-xs font-extrabold text-emerald-300 ring-1 ring-emerald-400/35 hover:bg-emerald-500/20 active:scale-[0.98] transition"
-                >
-                  <Film className="h-4 w-4 shrink-0" />
-                  <span>Walk Video</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCamera360Mode('automap')}
-                  className="flex items-center justify-center gap-1.5 rounded-2xl bg-white/10 px-3 py-2.5 text-xs font-extrabold text-cyan-300 ring-1 ring-cyan-400/40 hover:bg-cyan-500/20 active:scale-[0.98] transition"
-                >
-                  <Globe className="h-4 w-4 shrink-0" />
-                  <span>360° Studio</span>
-                </button>
+                  <span>Gallery / Video</span>
+                  <input
+                    type="file"
+                    accept="image/*,video/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      if (e.target.files?.length) {
+                        addFilesToQueue(rm, e.target.files);
+                      }
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
               </div>
-            )}
-          </div>
-        </div>
 
-        {autoMapResult && (
-          <div className="rounded-2xl bg-slate-950/80 p-4 ring-1 ring-emerald-400/40 space-y-2.5">
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-              <div className="flex items-center gap-2 font-bold text-emerald-300">
-                <CheckCircle2 className="h-4 w-4" />
-                Auto-Mapped {autoMapResult.accepted.length} sharp keyframes across{' '}
-                {autoMapResult.nodes_updated} nodes!
-              </div>
-              <div className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-500/15 px-2.5 py-1 text-[11px] font-bold text-emerald-300 ring-1 ring-emerald-400/30">
-                <HardDrive className="h-3.5 w-3.5" />
-                Raw {autoMapResult.raw_mb} MB → Stored {autoMapResult.stored_mb} MB WebP
-                {autoMapResult.space_saved_mb > 0
-                  ? ` (${autoMapResult.space_saved_mb} MB saved)`
-                  : ''}
-              </div>
-            </div>
-
-            {autoMapResult.accepted.length > 0 && (
-              <div className="space-y-2 pt-1">
-                <div className="text-[11px] text-slate-300">
-                  Review full photos below — if any photo belongs to a different room, reassign it with 1 tap:
-                </div>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 max-h-64 overflow-y-auto thin-scrollbar pr-1">
-                  {autoMapResult.accepted.map((item) => (
-                    <div
-                      key={item.id}
-                      className="rounded-xl bg-slate-900/95 ring-1 ring-white/15 overflow-hidden flex flex-col"
-                    >
-                      <div className="relative h-24 w-full bg-slate-950 flex items-center justify-center">
-                        <img
-                          src={mediaUrl(item.url)}
-                          alt={item.node_name}
-                          loading="lazy"
-                          className="h-full w-full object-contain"
-                        />
-                        {item.ocr_text && (
-                          <span className="absolute left-1.5 top-1.5 rounded bg-emerald-500/90 px-1.5 py-0.5 text-[9px] font-extrabold text-slate-950">
-                            OCR: {item.ocr_text}
-                          </span>
-                        )}
-                      </div>
-                      <div className="p-2 space-y-1">
-                        <select
-                          value={item.node_id}
-                          onChange={async (e) => {
-                            const nextNodeId = e.target.value;
-                            try {
-                              await updateAdminPhoto(item.id, { node_id: nextNodeId });
-                              const targetN = dataset.nodes.find((nd) => nd.node_id === nextNodeId);
-                              setAutoMapResult((prev) =>
-                                prev
-                                  ? {
-                                      ...prev,
-                                      accepted: prev.accepted.map((a) =>
-                                        a.id === item.id
-                                          ? {
-                                              ...a,
-                                              node_id: nextNodeId,
-                                              node_name: targetN?.name || a.node_name,
-                                              method: 'Pinned Manually ✓',
-                                            }
-                                          : a,
-                                      ),
-                                    }
-                                  : prev,
-                              );
-                              await refreshDatasetOnly();
-                            } catch {
-                              // Ignore
-                            }
-                          }}
-                          className="w-full rounded-lg bg-slate-800 px-1.5 py-1 text-[11px] font-bold text-cyan-200 ring-1 ring-white/15"
-                          title="Reassign photo to exact room/spot"
-                        >
-                          {dataset.nodes.map((nd) => (
-                            <option key={nd.node_id} value={nd.node_id}>
-                              {nd.name} ({formatLevel(nd.level)})
-                            </option>
-                          ))}
-                        </select>
-                        <div className="text-[10px] text-slate-400 truncate">
-                          {item.method}
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Top Grid: 2D Coverage Heatmap + Filterable Node List */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Interactive 2D Floor Coverage Heatmap */}
-        <div className="lg:col-span-7 card p-4 flex flex-col space-y-3">
-          <div className="flex items-center justify-between px-1">
-            <div>
-              <h2 className="font-display text-base font-extrabold text-slate-900">
-                2D Floor Coverage Heatmap
-              </h2>
-              <p className="text-xs text-slate-500">
-                Click any emerald, amber, or rose node to inspect or upload reference angles
-              </p>
-            </div>
-          </div>
-
-          <div className="h-[380px] w-full">
-            <FloorPlan2D
-              venue={venue}
-              graph={graph}
-              selectedLevel={selectedLevel}
-              onChangeLevel={(lvl) => setSelectedLevel(lvl)}
-              selectedNodeId={selectedNodeId}
-              coverageByNode={coverageMap}
-              onSelectNode={(n) => {
-                setSelectedNodeId(n.id);
-                setUploadResult(null);
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Filterable Node Coverage List */}
-        <div className="lg:col-span-5 card p-4 flex flex-col h-[452px]">
-          <div className="space-y-2.5 pb-3 border-b border-slate-100">
-            <div className="relative">
-              <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-              <input
-                type="text"
-                value={nodeQuery}
-                onChange={(e) => setNodeQuery(e.target.value)}
-                placeholder="Filter nodes by name or building..."
-                className="input pl-9 py-2 text-xs"
-              />
-            </div>
-
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-              {(
-                [
-                  { key: 'all', label: 'All' },
-                  { key: 'none', label: 'Missing (0)' },
-                  { key: 'low', label: 'Low (1–2)' },
-                  { key: 'good', label: 'Good (3+)' },
-                ] as const
-              ).map((f) => (
-                <button
-                  key={f.key}
-                  type="button"
-                  onClick={() => setCovFilter(f.key)}
-                  className={`rounded-lg px-2.5 py-1 text-xs font-semibold whitespace-nowrap transition ${
-                    covFilter === f.key
-                      ? 'bg-slate-900 text-white'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {f.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
-              {(
-                [
-                  { key: 'all', label: 'All Nodes' },
-                  { key: 'decision_only', label: '🎯 Decision Points Only' },
-                  { key: 'missing_decision', label: '🚨 Unmapped Decision Points' },
-                ] as const
-              ).map((df) => (
-                <button
-                  key={df.key}
-                  type="button"
-                  onClick={() => setDpFilter(df.key)}
-                  className={`rounded-lg px-2.5 py-1 text-[11px] font-bold whitespace-nowrap transition ${
-                    dpFilter === df.key
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
-                  }`}
-                >
-                  {df.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="flex-1 overflow-y-auto divide-y divide-slate-100 pt-1 thin-scrollbar">
-            {filteredNodes.map((n) => {
-              const isSelected = n.node_id === selectedNodeId;
-              const badgeCls =
-                n.coverage === 'good'
-                  ? 'bg-emerald-100 text-emerald-800'
-                  : n.coverage === 'low'
-                    ? 'bg-amber-100 text-amber-800'
-                    : n.is_decision_point === false
-                      ? 'bg-slate-100 text-slate-600'
-                      : 'bg-rose-100 text-rose-800';
-
-              return (
-                <button
-                  key={n.node_id}
-                  type="button"
-                  onClick={() => {
-                    setSelectedNodeId(n.node_id);
-                    setSelectedLevel(n.level);
-                    setUploadResult(null);
-                  }}
-                  className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 text-left transition rounded-xl ${
-                    isSelected ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-xs font-bold text-slate-900 truncate">
-                        {n.name}
-                      </span>
-                      {n.is_decision_point === false ? (
-                        <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.2 text-[9px] font-bold text-slate-500">
-                          Interpolated
-                        </span>
-                      ) : (
-                        <span className="shrink-0 rounded bg-indigo-50 px-1.5 py-0.2 text-[9px] font-bold text-indigo-700">
-                          Decision Point
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[11px] text-slate-500 truncate">
-                      {n.building_name} · {formatLevel(n.level)} · {n.decision_reason || n.kind}
-                    </div>
-                  </div>
-                  <span
-                    className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-bold ${badgeCls}`}
-                  >
-                    {n.photo_count} {n.photo_count === 1 ? 'photo' : 'photos'}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-
-      {/* Selected Node Inspector & Multi-File Photo Uploader */}
-      {selectedNode && (
-        <div className="card p-6 space-y-5">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
-            <div>
-              <span className="text-xs font-bold uppercase tracking-wider text-indigo-600">
-                Selected Node Inspector · {selectedNode.building_name} ·{' '}
-                {formatLevel(selectedNode.level)}
-              </span>
-              <h2 className="font-display text-xl font-extrabold text-slate-950 mt-0.5 flex flex-wrap items-center gap-2">
-                <span>{selectedNode.name}</span>
-                {selectedNode.decision_reason && (
-                  <span
-                    className={`rounded-lg px-2.5 py-0.5 text-xs font-bold ${
-                      selectedNode.is_decision_point === false
-                        ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
-                        : 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'
-                    }`}
-                  >
-                    {selectedNode.decision_reason}
-                  </span>
-                )}
-              </h2>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <a
-                href={`/v/${encodeURIComponent(selectedSlug)}?at=${encodeURIComponent(selectedNode.node_id)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-200 transition"
-                title="Test 100%-confidence QR Checkpoint deep link for this node"
-              >
-                🔗 Test QR Check-In
-              </a>
-              <span
-                className={`chip ${
-                  selectedNode.coverage === 'good'
-                    ? 'bg-emerald-100 text-emerald-800'
-                    : selectedNode.coverage === 'low'
-                      ? 'bg-amber-100 text-amber-800'
-                      : 'bg-rose-100 text-rose-800'
-                }`}
-              >
-                Coverage: {selectedNode.coverage.toUpperCase()} (
-                {selectedNode.photo_count} photos)
-              </span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Multi-file Drag-and-Drop Photo Uploader */}
-            <div className="lg:col-span-5 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200/80">
-                <span className="flex items-center gap-1.5 text-xs font-bold text-slate-700">
-                  <Compass className="h-3.5 w-3.5 text-indigo-600" />
-                  Camera Heading:
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <select
-                    value={uploadHeading}
-                    onChange={(e) => setUploadHeading(e.target.value)}
-                    className="rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-slate-800 ring-1 ring-slate-200"
-                  >
-                    <option value="">Unspecified</option>
-                    <option value="0">0° North</option>
-                    <option value="45">45° NE</option>
-                    <option value="90">90° East</option>
-                    <option value="135">135° SE</option>
-                    <option value="180">180° South</option>
-                    <option value="225">225° SW</option>
-                    <option value="270">270° West</option>
-                    <option value="315">315° NW</option>
-                  </select>
+              {/* Manage Saved Photos (Expandable Drawer — Keeps Main Card Clean!) */}
+              {rm.photos.length > 0 && (
+                <div className="pt-1 border-t border-slate-100">
                   <button
                     type="button"
-                    onClick={() => setCamera360Mode('node')}
-                    className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-xs font-extrabold text-white hover:bg-indigo-500 transition"
-                    title="Open 360° Multi-Angle Camera for this spot"
+                    onClick={() => setExpandedRoomId(isExpanded ? null : rm.node_id)}
+                    className="w-full flex items-center justify-between text-[11px] font-bold text-slate-600 hover:text-slate-950 py-1"
                   >
-                    <Globe className="h-3 w-3" />
-                    <span>360° Scan</span>
+                    <span>Manage Saved Photos ({rm.photos.length})</span>
+                    {isExpanded ? (
+                      <ChevronUp className="h-3.5 w-3.5" />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5" />
+                    )}
                   </button>
-                </div>
-              </div>
-              <input
-                ref={nodePhotosInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files?.length) {
-                    void handleUploadFiles(e.target.files);
-                  }
-                  e.target.value = '';
-                }}
-              />
-              <input
-                ref={nodeCameraInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files?.length) {
-                    void handleUploadFiles(e.target.files);
-                  }
-                  e.target.value = '';
-                }}
-              />
-              <input
-                ref={nodeVideoInputRef}
-                type="file"
-                accept="video/*"
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files?.length) {
-                    void handleUploadFiles(e.target.files);
-                  }
-                  e.target.value = '';
-                }}
-              />
 
-              <div className="rounded-xl bg-emerald-50 px-3 py-2 text-[11px] font-semibold text-emerald-900 ring-1 ring-emerald-200">
-                📌 <strong>Direct Pin Mode:</strong> Photos uploaded here stay locked <strong>as-is</strong> on <strong>{selectedNode.name}</strong> (never auto-moved to another room).
-              </div>
-
-              <div className="grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  disabled={uploading}
-                  onClick={() => nodePhotosInputRef.current?.click()}
-                  className="flex items-center justify-center gap-1.5 rounded-xl bg-indigo-600 px-2.5 py-2.5 text-xs font-extrabold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-50 transition"
-                >
-                  <ImageIcon className="h-3.5 w-3.5 shrink-0" />
-                  <span>Gallery</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={uploading}
-                  onClick={() => nodeCameraInputRef.current?.click()}
-                  className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-900 px-2.5 py-2.5 text-xs font-extrabold text-cyan-300 hover:bg-slate-800 disabled:opacity-50 transition"
-                >
-                  <Camera className="h-3.5 w-3.5 shrink-0" />
-                  <span>Camera</span>
-                </button>
-                <button
-                  type="button"
-                  disabled={uploading}
-                  onClick={() => nodeVideoInputRef.current?.click()}
-                  className="flex items-center justify-center gap-1.5 rounded-xl bg-slate-100 px-2.5 py-2.5 text-xs font-extrabold text-slate-800 ring-1 ring-slate-200 hover:bg-slate-200 disabled:opacity-50 transition"
-                >
-                  <Film className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                  <span>Video</span>
-                </button>
-              </div>
-
-              <div
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragOver(true);
-                }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragOver(false);
-                  if (e.dataTransfer.files?.length) {
-                    void handleUploadFiles(e.dataTransfer.files);
-                  }
-                }}
-                onClick={() => nodePhotosInputRef.current?.click()}
-                className={`cursor-pointer rounded-2xl border-2 border-dashed p-5 text-center transition ${
-                  dragOver
-                    ? 'border-cyan-500 bg-cyan-50/60'
-                    : 'border-slate-300 bg-slate-50/70 hover:border-indigo-500 hover:bg-indigo-50/30'
-                }`}
-              >
-                {uploading ? (
-                  <div className="py-3 space-y-2">
-                    <Loader2 className="h-7 w-7 animate-spin text-indigo-600 mx-auto" />
-                    <p className="text-xs font-bold text-slate-700">
-                      Compressing to WebP, blurring faces &amp; indexing...
-                    </p>
-                  </div>
-                ) : (
-                  <>
-                    <Upload className="h-6 w-6 text-indigo-600 mx-auto mb-1.5" />
-                    <p className="text-xs sm:text-sm font-bold text-slate-900">
-                      Drop Reference Photos Here or Tap Above
-                    </p>
-                    <p className="mt-1 text-[11px] text-slate-500">
-                      Capture 3–5 clear angles per spot. Phone captures auto-orient &amp; compress to 1600px WebP.
-                    </p>
-                  </>
-                )}
-              </div>
-
-              {/* Upload Accepted / Rejected Feedback */}
-              {uploadResult && (
-                <div className="space-y-2 text-xs">
-                  {uploadResult.accepted.length > 0 && (
-                    <div className="rounded-xl bg-emerald-50 p-3 text-emerald-900 ring-1 ring-emerald-200">
-                      <div className="font-bold flex items-center gap-1.5">
-                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                        Accepted {uploadResult.accepted.length} photo
-                        {uploadResult.accepted.length > 1 ? 's' : ''}
-                      </div>
-                      <div className="mt-1 flex flex-wrap gap-1.5">
-                        {uploadResult.accepted.map((a) => (
-                          <span
-                            key={a.id}
-                            className="rounded bg-white px-2 py-0.5 text-[11px] font-semibold ring-1 ring-emerald-200"
+                  {isExpanded && (
+                    <div className="mt-2 space-y-2">
+                      {rm.photos.map((ph) => {
+                        const markedDelete = stagedDeletes.includes(ph.id);
+                        const movedTarget = stagedMoves[ph.id] ?? rm.node_id;
+                        return (
+                          <div
+                            key={ph.id}
+                            className={`flex items-center gap-2 rounded-xl p-2 ring-1 ${
+                              markedDelete
+                                ? 'bg-rose-50 ring-rose-300 opacity-65'
+                                : movedTarget !== rm.node_id
+                                  ? 'bg-amber-50 ring-amber-300'
+                                  : 'bg-slate-50 ring-slate-200'
+                            }`}
                           >
-                            Quality: {Math.round(a.quality * 100)}%
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {uploadResult.rejected.length > 0 && (
-                    <div className="rounded-xl bg-rose-50 p-3 text-rose-900 ring-1 ring-rose-200 space-y-1">
-                      <div className="font-bold flex items-center gap-1.5">
-                        <XCircle className="h-4 w-4 text-rose-600" />
-                        Rejected {uploadResult.rejected.length} file
-                        {uploadResult.rejected.length > 1 ? 's' : ''}
-                      </div>
-                      {uploadResult.rejected.map((rej, idx) => (
-                        <div key={idx} className="text-[11px]">
-                          <strong>{rej.filename}:</strong> {rej.reason}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Existing Dataset Photos Grid */}
-            <div className="lg:col-span-7">
-              {selectedNode.photos.length === 0 ? (
-                <div className="rounded-2xl bg-slate-50 p-10 text-center ring-1 ring-slate-200/70">
-                  <Camera className="h-7 w-7 text-slate-400 mx-auto mb-2" />
-                  <p className="text-sm font-semibold text-slate-700">
-                    No reference photos for {selectedNode.name} yet
-                  </p>
-                  <p className="text-xs text-slate-500 mt-1">
-                    Upload photos on the left so visitors can localize here.
-                  </p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-                  {selectedNode.photos.map((ph) => (
-                    <div
-                      key={ph.id}
-                      className="group relative overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200 shadow-sm flex flex-col"
-                    >
-                      <div className="relative h-40 w-full bg-slate-950 flex items-center justify-center">
-                        <img
-                          src={mediaUrl(ph.thumbnail_url || ph.url)}
-                          alt={selectedNode.name}
-                          loading="lazy"
-                          className="h-full w-full object-contain"
-                        />
-                        {ph.ocr_text && (
-                          <span className="absolute left-2 top-2 rounded-md bg-emerald-500/95 px-2 py-0.5 text-[10px] font-extrabold text-slate-950 shadow">
-                            Plaque: {ph.ocr_text}
-                          </span>
-                        )}
-                        {ph.media_type === 'video' && (
-                          <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md bg-slate-950/85 px-2 py-0.5 text-[10px] font-bold text-cyan-300 ring-1 ring-cyan-400/40">
-                            <Film className="h-3 w-3" />
-                            Video {ph.duration_s ? `${ph.duration_s}s` : ''}
-                          </span>
-                        )}
-                      </div>
-                      <div className="bg-white px-2.5 py-2 text-[11px] space-y-1.5">
-                        <select
-                          value={selectedNode.node_id}
-                          onChange={async (e) => {
-                            const nextNodeId = e.target.value;
-                            if (!nextNodeId || nextNodeId === selectedNode.node_id) return;
-                            try {
-                              await updateAdminPhoto(ph.id, { node_id: nextNodeId });
-                              await refreshDatasetOnly();
-                            } catch (err) {
-                              alert(err instanceof Error ? err.message : 'Could not move photo.');
-                            }
-                          }}
-                          className="w-full rounded-lg bg-indigo-50 px-2 py-1 text-[11px] font-bold text-indigo-900 ring-1 ring-indigo-200"
-                          title="Move photo to a different room or spot"
-                        >
-                          {dataset.nodes.map((nd) => (
-                            <option key={nd.node_id} value={nd.node_id}>
-                              📌 {nd.name} ({formatLevel(nd.level)})
-                            </option>
-                          ))}
-                        </select>
-                        <div className="flex items-center justify-between gap-1">
-                          <div className="flex items-center gap-1 min-w-0">
-                            <span className="font-mono text-emerald-700 font-bold">
-                              Q:{Math.round(ph.quality * 100)}%
-                            </span>
-                            <select
-                              value={
-                                ph.heading_deg !== null && ph.heading_deg !== undefined
-                                  ? String(Math.round(ph.heading_deg))
-                                  : ''
-                              }
-                              onChange={async (e) => {
-                                const val =
-                                  e.target.value === '' ? null : Number(e.target.value);
-                                try {
-                                  await updateAdminPhoto(ph.id, { heading_deg: val });
-                                  await refreshDatasetOnly();
-                                } catch {
-                                  // Ignore
-                                }
-                              }}
-                              className="rounded bg-slate-100 px-1 py-0.5 text-[10px] font-semibold text-slate-700"
-                              title="Camera compass heading"
-                            >
-                              <option value="">Dir: —</option>
-                              <option value="0">0° N</option>
-                              <option value="45">45° NE</option>
-                              <option value="90">90° E</option>
-                              <option value="135">135° SE</option>
-                              <option value="180">180° S</option>
-                              <option value="225">225° SW</option>
-                              <option value="270">270° W</option>
-                              <option value="315">315° NW</option>
-                            </select>
-                          </div>
-                          <button
-                            type="button"
-                            disabled={deletingPhotoId === ph.id}
-                            onClick={() => void handleDeletePhoto(ph.id)}
-                            className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 transition shrink-0"
-                            title="Delete photo"
-                          >
-                            {deletingPhotoId === ph.id ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Trash2 className="h-3.5 w-3.5" />
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* AI Vision Index Model Health Report Panel */}
-      <div className="card p-6 space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
-          <div>
-            <h2 className="font-display text-lg font-extrabold text-slate-950 flex items-center gap-2">
-              <Cpu className="h-5 w-5 text-indigo-600" />
-              AI Vision Index Health Report
-            </h2>
-            <p className="text-xs text-slate-500">
-              Leave-one-out cross-validation diagnostics across all indexed venue photos
-            </p>
-          </div>
-
-          {report && (
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <span className="chip bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200">
-                Engine: {report.embedder}
-              </span>
-              <span className="chip bg-slate-100 text-slate-700">
-                Built in {Math.round(report.ms)} ms
-              </span>
-              <span className="text-slate-400">
-                {new Date(report.built_at).toLocaleString()}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {!report ? (
-          <div className="rounded-2xl bg-slate-50 p-8 text-center">
-            <p className="text-sm font-medium text-slate-600">
-              No index evaluation report built yet. Click{' '}
-              <strong>"Rebuild AI Vision Index"</strong> above to run cross-validation!
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {/* Top-1 & Top-3 Gauges */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <RadialGauge
-                label="Top-1 Leave-One-Out Accuracy"
-                value={report.top1}
-                color="#0ea5e9"
-              />
-              <RadialGauge
-                label="Top-3 Candidate Recall"
-                value={report.top3}
-                color="#10b981"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Per-Node Accuracy Bars */}
-              <div className="lg:col-span-7 space-y-2.5">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                  Per-Node Top-1 Validation ({report.per_node.length} evaluated nodes)
-                </h3>
-                <div className="max-h-60 overflow-y-auto space-y-2 pr-2 thin-scrollbar">
-                  {[...report.per_node]
-                    .sort((a, b) => a.top1 - b.top1)
-                    .map((pn) => {
-                      const pct = Math.round(pn.top1 * 100);
-                      return (
-                        <div key={pn.node_id} className="space-y-1">
-                          <div className="flex justify-between text-xs">
-                            <span className="font-semibold text-slate-800">
-                              {pn.name}{' '}
-                              <span className="text-slate-400 font-normal">
-                                ({pn.n} photos)
-                              </span>
-                            </span>
-                            <span className="font-mono font-bold text-slate-700">
-                              {pct}%
-                            </span>
-                          </div>
-                          <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
-                            <div
-                              className={`h-full rounded-full ${
-                                pct >= 80
-                                  ? 'bg-emerald-500'
-                                  : pct >= 50
-                                    ? 'bg-amber-500'
-                                    : 'bg-rose-500'
-                              }`}
-                              style={{ width: `${Math.max(pct, 4)}%` }}
+                            <img
+                              src={mediaUrl(ph.thumbnail_url || ph.url)}
+                              alt=""
+                              className="h-12 w-12 shrink-0 rounded-lg bg-slate-900 object-contain"
                             />
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <select
+                                disabled={markedDelete}
+                                value={movedTarget}
+                                onChange={(e) =>
+                                  stageMovePhoto(ph.id, rm.node_id, e.target.value)
+                                }
+                                className="w-full rounded-lg bg-white px-2 py-1 text-[11px] font-bold text-slate-800 ring-1 ring-slate-200"
+                              >
+                                {dataset.nodes.map((nd) => (
+                                  <option key={nd.node_id} value={nd.node_id}>
+                                    📍 {nd.name}
+                                  </option>
+                                ))}
+                              </select>
+                              {markedDelete && (
+                                <span className="text-[10px] font-extrabold text-rose-700">
+                                  Marked for delete (tap Upload to confirm)
+                                </span>
+                              )}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => toggleStagedDelete(ph.id)}
+                              className={`rounded-lg p-2 transition ${
+                                markedDelete
+                                  ? 'bg-rose-600 text-white'
+                                  : 'bg-white text-slate-500 hover:text-rose-600 ring-1 ring-slate-200'
+                              }`}
+                              title={markedDelete ? 'Undo delete' : 'Mark photo for deletion'}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
                           </div>
-                        </div>
-                      );
-                    })}
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              </div>
-
-              {/* Confusing Spot Pairs Warnings */}
-              <div className="lg:col-span-5 space-y-2.5">
-                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                  Visually Confusing Spot Pairs
-                </h3>
-                {report.confusions.length === 0 ? (
-                  <div className="rounded-2xl bg-emerald-50 p-4 text-xs text-emerald-800 ring-1 ring-emerald-200">
-                    Zero visual confusions detected between nodes! Every indexed spot is clearly distinguishable.
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {report.confusions.map((c, idx) => (
-                      <div
-                        key={idx}
-                        className="flex items-start justify-between gap-2 rounded-xl bg-amber-50 p-3 text-xs text-amber-950 ring-1 ring-amber-200"
-                      >
-                        <div className="flex items-start gap-2">
-                          <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
-                          <div>
-                            <div className="font-bold">
-                              {c.a} ↔ {c.b}
-                            </div>
-                            <div className="text-[11px] text-amber-800">
-                              Tip: Add a closer photo of the room signboard to disambiguate via OCR.
-                            </div>
-                          </div>
-                        </div>
-                        <span className="shrink-0 rounded-full bg-amber-200/70 px-2 py-0.5 font-bold">
-                          {c.count}×
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })}
       </div>
 
-      {/* PRINTABLE QR CHECKPOINT STICKER SHEET MODAL */}
-      {qrModalOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-sm"
-          onClick={() => setQrModalOpen(false)}
-        >
-          <div
-            className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl ring-1 ring-slate-200 space-y-5"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
-              <div>
-                <span className="text-xs font-extrabold uppercase tracking-wider text-indigo-600">
-                  Zero-Latency Anchor Fallback · {venue.name}
-                </span>
-                <h2 className="font-display text-xl font-extrabold text-slate-950 mt-0.5">
-                  🖨️ Printable QR Checkpoint Sheet (Decision Points)
-                </h2>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Place these stickers at dark basements, lift lobbies, or identical junctions. Scanning locks visitor location with 100% confidence (0 MB dataset storage).
-                </p>
+      {/* ================================================================= */}
+      {/* 4. STICKY BOTTOM "UPLOAD & SAVE ALL CHANGES" ACTION BAR           */}
+      {/* ================================================================= */}
+      {totalPendingChanges > 0 && !progressState?.active && (
+        <div className="fixed bottom-3 inset-x-3 sm:inset-x-auto sm:right-6 sm:left-64 z-40 flex justify-center pointer-events-none">
+          <div className="pointer-events-auto w-full max-w-xl rounded-2xl bg-slate-950 p-3 text-white ring-2 ring-emerald-400 shadow-2xl flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-xs sm:text-sm font-extrabold text-white truncate">
+                {totalPendingChanges} Pending Change{totalPendingChanges === 1 ? '' : 's'} Ready
               </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="btn-primary py-2 px-4 text-xs font-extrabold"
-                >
-                  🖨️ Print Sticker Sheet
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setQrModalOpen(false)}
-                  className="btn-ghost py-2 px-3 text-xs font-bold"
-                >
-                  Close
-                </button>
+              <div className="text-[11px] text-slate-300 truncate">
+                {[
+                  stagedUploads.length > 0 ? `${stagedUploads.length} new media` : '',
+                  pendingMoveCount > 0 ? `${pendingMoveCount} moved` : '',
+                  stagedDeletes.length > 0 ? `${stagedDeletes.length} deleted` : '',
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              {dataset.nodes
-                .filter((n) => n.is_decision_point !== false)
-                .slice(0, 15)
-                .map((n) => {
-                  const qrUrl = `${window.location.origin}/v/${encodeURIComponent(selectedSlug)}?at=${encodeURIComponent(n.node_id)}`;
-                  return (
-                    <div
-                      key={n.node_id}
-                      className="flex items-center gap-3.5 rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/70 p-3.5"
-                    >
-                      <QrCheckpointSvg seed={qrUrl} />
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-600 truncate">
-                          {venue.name} · {formatLevel(n.level)}
-                        </div>
-                        <div className="font-display text-sm font-extrabold text-slate-950 truncate">
-                          {n.name}
-                        </div>
-                        <div className="text-[11px] text-slate-500 truncate">
-                          {n.decision_reason || n.kind}
-                        </div>
-                        <div className="pt-1 flex items-center gap-2">
-                          <a
-                            href={`/v/${encodeURIComponent(selectedSlug)}?at=${encodeURIComponent(n.node_id)}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[10px] font-bold text-white hover:bg-indigo-500 transition"
-                          >
-                            Test Scan →
-                          </a>
-                          <span className="text-[10px] font-mono text-slate-400 truncate">
-                            ?at={n.node_id}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={discardAllChanges}
+                className="rounded-xl bg-white/10 px-3 py-2.5 text-xs font-bold text-slate-300 hover:bg-white/20"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleUploadAndSaveAll()}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-400 to-cyan-400 px-4 py-2.5 text-xs sm:text-sm font-black text-slate-950 shadow-lg hover:brightness-105 active:scale-95 transition"
+              >
+                <Upload className="h-4 w-4 stroke-[2.5]" />
+                <span>Upload &amp; Save</span>
+              </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* ================================================================= */}
+      {/* 5. LIVE 0% -> 100% UPLOAD PROGRESS MODAL                          */}
+      {/* ================================================================= */}
+      {progressState?.active && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/85 p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white p-6 text-slate-900 shadow-2xl ring-1 ring-slate-200 space-y-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                {progressState.done ? (
+                  progressState.errors.length === 0 ? (
+                    <CheckCircle2 className="h-7 w-7 text-emerald-600" />
+                  ) : (
+                    <XCircle className="h-7 w-7 text-amber-500" />
+                  )
+                ) : (
+                  <Loader2 className="h-7 w-7 animate-spin text-indigo-600" />
+                )}
+                <div>
+                  <h3 className="font-display text-lg font-extrabold text-slate-950">
+                    {progressState.done ? 'Upload Complete!' : 'Uploading Changes...'}
+                  </h3>
+                  <p className="text-xs font-semibold text-slate-500">
+                    Item {progressState.currentIndex} of {progressState.totalItems}
+                  </p>
+                </div>
+              </div>
+
+              <span className="font-display text-2xl font-black text-indigo-600">
+                {progressState.percent}%
+              </span>
+            </div>
+
+            {/* Live Percentage Bar */}
+            <div className="space-y-2">
+              <div className="h-4 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200">
+                <div
+                  className={`h-full rounded-full transition-all duration-300 ${
+                    progressState.done
+                      ? 'bg-gradient-to-r from-emerald-500 to-cyan-500'
+                      : 'bg-gradient-to-r from-indigo-600 via-cyan-500 to-emerald-400'
+                  }`}
+                  style={{ width: `${progressState.percent}%` }}
+                />
+              </div>
+              <p className="text-xs font-bold text-slate-700 text-center">
+                {progressState.stageText}
+              </p>
+            </div>
+
+            {progressState.errors.length > 0 && (
+              <div className="rounded-2xl bg-rose-50 p-3 text-xs text-rose-800 ring-1 ring-rose-200 space-y-1 max-h-32 overflow-y-auto">
+                {progressState.errors.map((errMsg, idx) => (
+                  <div key={idx} className="font-semibold">
+                    • {errMsg}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {progressState.done && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                {progressState.lastRoomId && entranceNode && (
+                  <a
+                    href={`/v/${encodeURIComponent(selectedSlug)}/route?from=${encodeURIComponent(
+                      entranceNode.node_id,
+                    )}&to=${encodeURIComponent(progressState.lastRoomId)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center gap-1.5 rounded-2xl bg-emerald-600 px-4 py-3 text-xs font-extrabold text-white shadow hover:bg-emerald-500 transition"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    <span>See in Street View</span>
+                  </a>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setProgressState(null)}
+                  className="inline-flex items-center justify-center rounded-2xl bg-slate-900 px-4 py-3 text-xs font-extrabold text-white hover:bg-slate-800 transition"
+                >
+                  Done
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* 6. FULL-SCREEN 100% EDGE-TO-EDGE PHONE CAMERA & 360° RECORDER     */}
+      {/* ================================================================= */}
       <Camera360CaptureModal
-        open={camera360Mode !== null}
-        onClose={() => setCamera360Mode(null)}
+        open={cameraRoom !== null}
+        onClose={() => setCameraRoom(null)}
         venueName={venue.name}
-        targetLabel={
-          camera360Mode === 'node' && selectedNode
-            ? `${selectedNode.name} (${formatLevel(selectedNode.level)})`
-            : 'Auto-OCR Floor & 3D Model Builder'
-        }
-        submitting={uploading || autoMapping}
-        onSubmitFrames={async (files) => {
-          const target = camera360Mode;
-          setCamera360Mode(null);
-          if (target === 'node') {
-            await handleUploadFiles(files);
-          } else {
-            await handleAutoMapFiles(files);
+        targetLabel={cameraRoom ? `${cameraRoom.name} (${formatLevel(cameraRoom.level)})` : ''}
+        onSubmitFrames={(files) => {
+          if (cameraRoom && files.length > 0) {
+            addFilesToQueue(cameraRoom, files);
           }
+          setCameraRoom(null);
         }}
       />
     </div>
