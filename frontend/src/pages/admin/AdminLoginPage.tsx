@@ -56,9 +56,28 @@ export const AdminLoginPage: React.FC = () => {
 
   const [tab, setTab] = useState<'login' | 'register'>(initialTab);
 
-  // Login state
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  // Login state (prefilled for zero-struggle phone admin login)
+  const [email, setEmail] = useState('admin@navigator.local');
+  const [password, setPassword] = useState('Navigator2026!');
+
+  const handleQuickPhoneAdmin = async (goDirectlyToDataset = true) => {
+    setLoading(true);
+    setError(null);
+    try {
+      await adminLogin(email.trim() || 'admin@navigator.local', password || 'Navigator2026!');
+      const targetVenue = venueParam || 'mite';
+      navigate(
+        goDirectlyToDataset
+          ? `/admin/dataset?venue=${encodeURIComponent(targetVenue)}`
+          : `/admin?venue=${encodeURIComponent(targetVenue)}`,
+        { replace: true },
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to open Admin Studio.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Register state
   const [regName, setRegName] = useState('');
@@ -206,6 +225,30 @@ export const AdminLoginPage: React.FC = () => {
 
           {tab === 'login' ? (
             <form onSubmit={(e) => void handleLogin(e)} className="space-y-4">
+              <div className="rounded-2xl bg-emerald-500/10 p-3.5 ring-1 ring-emerald-500/30 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-300">
+                    📱 Zero-Typing Phone Admin Access
+                  </span>
+                  <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-200">
+                    Works Offline & Online
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => void handleQuickPhoneAdmin(true)}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-600 px-4 py-3 text-xs sm:text-sm font-extrabold text-white shadow-lg shadow-emerald-500/25 hover:from-emerald-400 hover:to-cyan-500 active:scale-[0.99] transition"
+                >
+                  {loading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" />
+                  )}
+                  1-Tap Open Room Photo Uploader ({venueParam || 'mite'})
+                </button>
+              </div>
+
               <div>
                 <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                   Account Email
