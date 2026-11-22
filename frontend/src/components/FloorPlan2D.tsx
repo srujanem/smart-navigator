@@ -895,19 +895,26 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
             );
           })}
 
-          {/* Hardware-Accelerated SVG Route Tracer Pulse Gliding Along Active Path */}
+          {/* Hardware-Accelerated SVG Route Tracer & Staggered Footstep Beacons Gliding Along Active Path */}
           {floorRouteSegments.length > 0 && (() => {
             const pathD = floorRouteSegments
               .map((seg, i) => (i === 0 ? `M ${seg.x1} ${seg.y1} L ${seg.x2} ${seg.y2}` : `L ${seg.x2} ${seg.y2}`))
               .join(' ');
             const durSec = Math.max(2.6, Math.min(7.5, floorRouteSegments.length * 1.1));
+            const halfDur = +(durSec / 2).toFixed(2);
             return (
               <g pointerEvents="none">
-                <circle r={unit * 1.15} fill="#22d3ee" opacity="0.38">
+                <circle r={unit * 1.2} fill="#22d3ee" opacity="0.38">
                   <animateMotion dur={`${durSec}s`} repeatCount="indefinite" path={pathD} />
                 </circle>
-                <circle r={unit * 0.58} fill="#ffffff" stroke="#0284c7" strokeWidth={unit * 0.22}>
+                <circle r={unit * 0.62} fill="#ffffff" stroke="#0284c7" strokeWidth={unit * 0.24}>
                   <animateMotion dur={`${durSec}s`} repeatCount="indefinite" path={pathD} />
+                </circle>
+                <circle r={unit * 0.95} fill="#34d399" opacity="0.35">
+                  <animateMotion dur={`${durSec}s`} begin={`${halfDur}s`} repeatCount="indefinite" path={pathD} />
+                </circle>
+                <circle r={unit * 0.48} fill="#10b981" stroke="#ffffff" strokeWidth={unit * 0.2}>
+                  <animateMotion dur={`${durSec}s`} begin={`${halfDur}s`} repeatCount="indefinite" path={pathD} />
                 </circle>
               </g>
             );
@@ -1156,6 +1163,42 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
             })}
           </div>
         )}
+
+        {/* Floating Mini Door-Photo Preview Bubble for Selected / Active Room on 2D Floor Map */}
+        {!isEditing &&
+          (() => {
+            const activePhotoNodeId = selectedNodeId || walkerNodeId || endNodeId || null;
+            const photoNode = activePhotoNodeId ? nodeMap.get(activePhotoNodeId) : null;
+            if (!photoNode || !photoNode.photo_url) return null;
+            return (
+              <button
+                type="button"
+                onClick={() => onSelectNode?.(photoNode)}
+                className={`absolute bottom-2.5 right-2.5 z-10 flex items-center gap-2 rounded-2xl p-1.5 pr-3 text-left ring-1 shadow-xl transition hover:scale-[1.02] active:scale-95 max-w-[205px] ${
+                  dark
+                    ? 'bg-slate-950/90 text-white ring-cyan-400/40'
+                    : 'bg-white/95 text-slate-900 ring-slate-300'
+                }`}
+              >
+                <div className="relative h-11 w-11 shrink-0 overflow-hidden rounded-xl bg-slate-900 flex items-center justify-center">
+                  <img
+                    src={mediaUrl(photoNode.photo_url)}
+                    alt={photoNode.name}
+                    loading="lazy"
+                    className="h-full w-full object-contain"
+                  />
+                </div>
+                <div className="min-w-0">
+                  <div className="truncate text-[11px] font-extrabold leading-tight">
+                    {photoNode.name}
+                  </div>
+                  <div className="truncate text-[9px] font-bold text-cyan-500">
+                    📷 Real Door View · {formatLevel(photoNode.level, photoNode.floor_name)}
+                  </div>
+                </div>
+              </button>
+            );
+          })()}
 
         {/* Legend Footer */}
         <div

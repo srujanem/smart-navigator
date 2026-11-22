@@ -27,6 +27,7 @@ export interface GoogleStreetViewStageProps {
   onSpeakStep?: (step: Step) => void;
   onShareRoute?: () => void;
   onOpenLightbox?: (url: string, caption: string) => void;
+  onChangeDestination?: (destNodeId: string) => void;
 }
 
 function clamp(v: number, min: number, max: number): number {
@@ -48,6 +49,7 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
   onSpeakStep,
   onShareRoute,
   onOpenLightbox,
+  onChangeDestination,
 }) => {
   const stageRef = useRef<HTMLDivElement>(null);
   const steps = route.steps;
@@ -93,20 +95,16 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
   const [isDraggingLook, setIsDraggingLook] = useState(false);
   const [autoWalk, setAutoWalk] = useState(false);
   const [miniMapExpanded, setMiniMapExpanded] = useState(false);
+  const [gyroEnabled, setGyroEnabled] = useState(false);
+  const [signboardZoom, setSignboardZoom] = useState(false);
   const [failedUrls, setFailedUrls] = useState<Set<string>>(() => new Set());
+  const gyroBaseRef = useRef<{ alpha: number; beta: number } | null>(null);
 
   // Google Street View forward dolly-zoom transition state
   const [dollyTransition, setDollyTransition] = useState<{
     fromUrl: string | null;
     dir: 'forward' | 'backward';
   } | null>(null);
-
-  // Interactive ground chevron cursor disc position (normalized % inside floor zone)
-  const [groundCursor, setGroundCursor] = useState<{
-    xPct: number;
-    yPct: number;
-    hoveringFloor: boolean;
-  }>({ xPct: 50, yPct: 76, hoveringFloor: false });
 
   const dragRef = useRef<{
     startX: number;
@@ -115,6 +113,45 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
     initPitch: number;
     moved: boolean;
   } | null>(null);
+
+  // Phone Gyroscope 360° Move-Phone-to-Look-Around Mode
+  const toggleGyroMode = useCallback(async () => {
+    if (gyroEnabled) {
+      setGyroEnabled(false);
+      gyroBaseRef.current = null;
+      return;
+    }
+    try {
+      const DOE = window.DeviceOrientationEvent as unknown as {
+        requestPermission?: () => Promise<'granted' | 'denied'>;
+      };
+      if (DOE && typeof DOE.requestPermission === 'function') {
+        const res = await DOE.requestPermission();
+        if (res !== 'granted') return;
+      }
+    } catch {
+      // Non-iOS browsers do not require requestPermission
+    }
+    gyroBaseRef.current = null;
+    setGyroEnabled(true);
+  }, [gyroEnabled]);
+
+  useEffect(() => {
+    if (!gyroEnabled) return;
+    const onOrient = (e: DeviceOrientationEvent) => {
+      if (e.alpha == null || e.beta == null) return;
+      if (!gyroBaseRef.current) {
+        gyroBaseRef.current = { alpha: e.alpha, beta: e.beta };
+        return;
+      }
+      const dAlpha = normalizeAngle(gyroBaseRef.current.alpha - e.alpha);
+      const dBeta = clamp((e.beta - gyroBaseRef.current.beta) * 0.45, -22, 22);
+      setYaw(clamp(dAlpha, -165, 165));
+      setPitch(dBeta);
+    };
+    window.addEventListener('deviceorientation', onOrient);
+    return () => window.removeEventListener('deviceorientation', onOrient);
+  }, [gyroEnabled]);
 
   // Resolve best display photo for any step (falls back along nearby route steps so Street View always has a rich corridor photo)
   const resolveStepPhotoUrl = useCallback(
@@ -153,6 +190,7 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
   useEffect(() => {
     setYaw(0);
     setPitch(-4);
+    setSignboardZoom(false);
   }, [activeStepIdx]);
 
   // Step forward / backward with Google Street View dolly-zoom animation
@@ -344,14 +382,6 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
         };
       }}
       onMouseMove={(e) => {
-        const rect = stageRef.current?.getBoundingClientRect();
-        if (rect && rect.height > 0) {
-          const xPct = clamp(((e.clientX - rect.left) / rect.width) * 100, 18, 82);
-          const yPct = clamp(((e.clientY - rect.top) / rect.height) * 100, 56, 91);
-          const inFloor = (e.clientY - rect.top) / rect.height >= 0.52;
-          setGroundCursor({ xPct, yPct, hoveringFloor: inFloor });
-        }
-
         if (!dragRef.current) return;
         const dx = e.clientX - dragRef.current.startX;
         const dy = e.clientY - dragRef.current.startY;
@@ -380,7 +410,6 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
       onMouseLeave={() => {
         dragRef.current = null;
         setIsDraggingLook(false);
-        setGroundCursor((prev) => ({ ...prev, hoveringFloor: false }));
       }}
       onTouchStart={(e) => {
         if ((e.target as HTMLElement).closest('button, a, [data-no-drag="true"]')) return;
@@ -421,12 +450,14 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
         {currentPhotoUrl ? (
           <div
             style={{
-              transform: `scale(${fovZoom * (dollyTransition ? 1.24 : 1.04)}) translate3d(${panShiftPct}%, ${tiltShiftPct}%, 0)`,
+              transform: `scale(${
+                (signboardZoom ? 1.65 : fovZoom) * (dollyTransition ? 1.24 : 1.04)
+              }) translate3d(${panShiftPct}%, ${signboardZoom ? 16 : tiltShiftPct}%, 0)`,
               transition: isDraggingLook
                 ? 'none'
                 : dollyTransition
                   ? 'transform 420ms cubic-bezier(0.22, 1, 0.36, 1)'
-                  : 'transform 160ms ease-out',
+                  : 'transform 220ms ease-out',
             }}
             className="relative h-full w-[170%] -left-[35%] flex items-center justify-center"
           >
@@ -492,33 +523,114 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
       </div>
 
       {/* ===================================================================== */}
-      {/* 2. FLOATING 3D WORLD-SPACE DESTINATION PIN (DESKTOP / NON-OVERLAPPING) */}
+      {/* 2. GOOGLE MAPS LIVE VIEW AR WALL DOOR PINS (LEFT / RIGHT CORRIDOR)   */}
       {/* ===================================================================== */}
-      <div className="pointer-events-none hidden sm:block absolute inset-x-0 top-[34%] z-[8] h-20 overflow-hidden">
-        {nearbyWorldPins
-          .filter((p) => p.isDest)
-          .map((pin) => {
-            const deltaAngle = normalizeAngle(pin.relYaw - yaw);
-            if (Math.abs(deltaAngle) > 65) return null;
-            const leftPct = clamp(50 + (deltaAngle / 65) * 38, 28, 78);
-            return (
+      {(() => {
+        const leftWallPin =
+          activeStep?.door_side === 'left'
+            ? {
+                label: activeStep.name,
+                sub: isFinalStep ? '🎯 Target Door · Left Wall' : '🚪 Door on Left',
+                isDest: isFinalStep,
+              }
+            : nextStep?.door_side === 'left'
+              ? {
+                  label: nextStep.name,
+                  sub: `Ahead Left · ~${nextStep.steps_count || Math.max(1, Math.round((nextStep.distance_m || 4) / 0.72))} steps`,
+                  isDest: activeStepIdx + 1 === steps.length - 1,
+                }
+              : nearbyWorldPins.find((p) => p.relYaw < -6 && p.relYaw > -115)
+                ? {
+                    label: nearbyWorldPins.find((p) => p.relYaw < -6 && p.relYaw > -115)!.name,
+                    sub: `Left Wall · ${nearbyWorldPins.find((p) => p.relYaw < -6 && p.relYaw > -115)!.distM}m`,
+                    isDest: nearbyWorldPins.find((p) => p.relYaw < -6 && p.relYaw > -115)!.isDest,
+                  }
+                : null;
+
+        const rightWallPin =
+          activeStep?.door_side === 'right'
+            ? {
+                label: activeStep.name,
+                sub: isFinalStep ? '🎯 Target Door · Right Wall' : '🚪 Door on Right',
+                isDest: isFinalStep,
+              }
+            : nextStep?.door_side === 'right'
+              ? {
+                  label: nextStep.name,
+                  sub: `Ahead Right · ~${nextStep.steps_count || Math.max(1, Math.round((nextStep.distance_m || 4) / 0.72))} steps`,
+                  isDest: activeStepIdx + 1 === steps.length - 1,
+                }
+              : nearbyWorldPins.find((p) => p.relYaw > 6 && p.relYaw < 115)
+                ? {
+                    label: nearbyWorldPins.find((p) => p.relYaw > 6 && p.relYaw < 115)!.name,
+                    sub: `Right Wall · ${nearbyWorldPins.find((p) => p.relYaw > 6 && p.relYaw < 115)!.distM}m`,
+                    isDest: nearbyWorldPins.find((p) => p.relYaw > 6 && p.relYaw < 115)!.isDest,
+                  }
+                : null;
+
+        return (
+          <div className="pointer-events-none absolute inset-x-2.5 top-[39%] z-[11] flex items-center justify-between gap-2">
+            {/* Left Corridor Wall Floating AR Pin */}
+            {leftWallPin ? (
               <div
-                key={pin.id}
-                style={{ left: `${leftPct}%` }}
-                className="absolute top-1 -translate-x-1/2 flex flex-col items-center transition-all duration-100"
+                style={{
+                  transform: `perspective(320px) rotateY(14deg) translateX(${clamp(-yaw * 0.25, -14, 14)}px)`,
+                }}
+                className={`flex items-center gap-1.5 rounded-2xl px-2.5 py-1.5 ring-1 shadow-xl transition-transform duration-150 max-w-[162px] sm:max-w-[210px] ${
+                  leftWallPin.isDest
+                    ? 'bg-emerald-600/95 text-white ring-emerald-300 shadow-emerald-950/60'
+                    : 'bg-slate-950/85 text-cyan-100 ring-cyan-400/45 shadow-black/70'
+                }`}
               >
-                <div className="rounded-xl bg-emerald-600/95 px-2.5 py-1 text-[11px] font-extrabold text-white ring-1 ring-emerald-300 shadow-lg whitespace-nowrap">
-                  🏁 {pin.name} · {pin.distM}m
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/15 text-[11px] font-black">
+                  ⬅
+                </span>
+                <div className="min-w-0">
+                  <div className="truncate text-[11px] sm:text-xs font-extrabold leading-tight">
+                    {leftWallPin.label}
+                  </div>
+                  <div className="truncate text-[9px] font-bold opacity-85">
+                    {leftWallPin.sub}
+                  </div>
                 </div>
-                <div className="h-3.5 w-0.5 bg-white/70" />
-                <div className="h-2 w-2 rounded-full bg-emerald-400 ring-2 ring-white" />
               </div>
-            );
-          })}
-      </div>
+            ) : (
+              <div />
+            )}
+
+            {/* Right Corridor Wall Floating AR Pin */}
+            {rightWallPin ? (
+              <div
+                style={{
+                  transform: `perspective(320px) rotateY(-14deg) translateX(${clamp(-yaw * 0.25, -14, 14)}px)`,
+                }}
+                className={`flex items-center gap-1.5 rounded-2xl px-2.5 py-1.5 ring-1 shadow-xl transition-transform duration-150 max-w-[162px] sm:max-w-[210px] ${
+                  rightWallPin.isDest
+                    ? 'bg-emerald-600/95 text-white ring-emerald-300 shadow-emerald-950/60'
+                    : 'bg-slate-950/85 text-cyan-100 ring-cyan-400/45 shadow-black/70'
+                }`}
+              >
+                <div className="min-w-0 text-right">
+                  <div className="truncate text-[11px] sm:text-xs font-extrabold leading-tight">
+                    {rightWallPin.label}
+                  </div>
+                  <div className="truncate text-[9px] font-bold opacity-85">
+                    {rightWallPin.sub}
+                  </div>
+                </div>
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-white/15 text-[11px] font-black">
+                  ➡
+                </span>
+              </div>
+            ) : (
+              <div />
+            )}
+          </div>
+        );
+      })()}
 
       {/* ===================================================================== */}
-      {/* 3. GOOGLE STREET VIEW 3D GROUND-PROJECTED ROAD, FLOOR TEXT & DISC (^) */}
+      {/* 3. GOOGLE STREET VIEW 3D GROUND-PROJECTED ROAD, CHEVRONS & DISC (^)   */}
       {/* ===================================================================== */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[54%] z-[9] flex items-end justify-center overflow-hidden">
         {/* 3D Perspective Road / Corridor Carpet on the Floor */}
@@ -533,18 +645,44 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
           <div
             className="absolute inset-x-4 inset-y-0 rounded-t-full"
             style={{
-              background:
-                'linear-gradient(to top, rgba(37, 99, 235, 0.42) 0%, rgba(56, 189, 248, 0.30) 65%, rgba(56, 189, 248, 0.04) 100%)',
-              boxShadow: 'inset 0 0 28px rgba(56, 189, 248, 0.32)',
-              borderLeft: '2.5px solid rgba(186, 230, 253, 0.55)',
-              borderRight: '2.5px solid rgba(186, 230, 253, 0.55)',
+              background: isFinalStep
+                ? 'linear-gradient(to top, rgba(16, 185, 129, 0.45) 0%, rgba(52, 211, 153, 0.28) 65%, rgba(52, 211, 153, 0.04) 100%)'
+                : 'linear-gradient(to top, rgba(37, 99, 235, 0.48) 0%, rgba(56, 189, 248, 0.34) 65%, rgba(56, 189, 248, 0.05) 100%)',
+              boxShadow: isFinalStep
+                ? 'inset 0 0 28px rgba(52, 211, 153, 0.38)'
+                : 'inset 0 0 28px rgba(56, 189, 248, 0.38)',
+              borderLeft: isFinalStep
+                ? '2.5px solid rgba(167, 243, 208, 0.65)'
+                : '2.5px solid rgba(186, 230, 253, 0.65)',
+              borderRight: isFinalStep
+                ? '2.5px solid rgba(167, 243, 208, 0.65)'
+                : '2.5px solid rgba(186, 230, 253, 0.65)',
             }}
           />
 
-          {/* Google Street View White 'X' Intersection Waypoint Marker on Road */}
+          {/* Google Street View White 'X' Intersection Waypoint + Animated AR Neon Floor Chevrons */}
           {!isFinalStep && (
-            <div className="relative z-10 mt-1 text-white/85 font-sans text-lg sm:text-xl font-black tracking-widest select-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
-              ✕
+            <div className="relative z-10 flex flex-col items-center gap-2 pt-1 select-none">
+              <div className="text-white/90 font-sans text-lg sm:text-xl font-black tracking-widest drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+                ✕
+              </div>
+              {[0, 1, 2].map((idx) => (
+                <svg
+                  key={idx}
+                  viewBox="0 0 48 22"
+                  style={{ animationDelay: `${idx * 220}ms` }}
+                  className="h-5 w-12 sm:h-6 sm:w-14 animate-pulse drop-shadow-[0_2px_6px_rgba(56,189,248,0.85)]"
+                >
+                  <path
+                    d="M6 18 L24 5 L42 18"
+                    fill="none"
+                    stroke="#E0F2FE"
+                    strokeWidth="5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              ))}
             </div>
           )}
         </div>
@@ -597,10 +735,72 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
             </svg>
           </button>
         ) : (
-          <div className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-emerald-600 px-4 py-2 ring-2 ring-emerald-200 shadow-2xl">
-            <span className="text-xs font-black uppercase tracking-wider text-white">
-              ★ Arrived at {activeStep?.name}
-            </span>
+          <div
+            data-no-drag="true"
+            className="pointer-events-auto flex flex-col items-center gap-1.5 rounded-2xl bg-slate-950/90 px-3.5 py-2.5 ring-2 ring-emerald-400/80 shadow-2xl max-w-[270px] sm:max-w-sm"
+          >
+            <div className="flex items-center gap-1.5 rounded-full bg-emerald-600 px-3 py-1 text-[11px] sm:text-xs font-black uppercase tracking-wider text-white shadow">
+              <span>
+                🎯 Arrived · {activeStep?.name}
+                {activeStep?.door_side && activeStep.door_side !== 'ahead'
+                  ? ` (${activeStep.door_side.toUpperCase()})`
+                  : ''}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSignboardZoom((z) => !z);
+                }}
+                className={`rounded-xl px-2.5 py-1 text-[10px] sm:text-[11px] font-extrabold ring-1 transition ${
+                  signboardZoom
+                    ? 'bg-amber-400 text-slate-950 ring-amber-200'
+                    : 'bg-white/15 text-cyan-200 ring-white/20 hover:bg-white/25'
+                }`}
+              >
+                {signboardZoom ? '🔍 Reset View' : '🔍 Zoom Door Plate'}
+              </button>
+
+              {steps.length > 1 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectStep(steps[0], 0);
+                  }}
+                  className="rounded-xl bg-white/15 px-2.5 py-1 text-[10px] sm:text-[11px] font-extrabold text-white ring-1 ring-white/20 hover:bg-white/25 transition"
+                >
+                  ↺ Replay Walk
+                </button>
+              )}
+            </div>
+
+            {onChangeDestination && (
+              <div className="w-full pt-1 border-t border-white/15 flex items-center gap-1 overflow-x-auto no-scrollbar">
+                <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-300 shrink-0">
+                  Next:
+                </span>
+                {graph.nodes
+                  .filter((n) => n.is_place && n.id !== activeStep?.node_id)
+                  .slice(0, 6)
+                  .map((rm) => (
+                    <button
+                      key={`arr-next-${rm.id}`}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onChangeDestination(rm.id);
+                      }}
+                      className="shrink-0 rounded-lg bg-emerald-500/20 px-2 py-0.5 text-[10px] font-extrabold text-emerald-200 ring-1 ring-emerald-400/40 hover:bg-emerald-500 hover:text-slate-950 transition"
+                    >
+                      {rm.name}
+                    </button>
+                  ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -700,21 +900,36 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
           </div>
         </div>
 
-        {/* Right: Non-Overlapping Quick Action Pills (Auto-Walk on Mobile + Zoom + Share) */}
+        {/* Right: Non-Overlapping Quick Action Pills (Auto-Walk + Gyro 360° + Zoom + Share) */}
         <div className="pointer-events-auto flex flex-col sm:flex-row items-end sm:items-center gap-1.5 shrink-0">
-          <button
-            type="button"
-            onClick={() => setAutoWalk((v) => !v)}
-            className={`sm:hidden inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-extrabold ring-1 shadow-lg transition ${
-              autoWalk
-                ? 'bg-amber-400 text-slate-950 ring-amber-200'
-                : 'bg-[#11161F]/95 text-cyan-300 ring-white/20'
-            }`}
-            title="Auto-Walk Route"
-          >
-            {autoWalk ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
-            <span>{autoWalk ? 'Pause' : 'Walk'}</span>
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setAutoWalk((v) => !v)}
+              className={`sm:hidden inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-extrabold ring-1 shadow-lg transition ${
+                autoWalk
+                  ? 'bg-amber-400 text-slate-950 ring-amber-200'
+                  : 'bg-[#11161F]/95 text-cyan-300 ring-white/20'
+              }`}
+              title="Auto-Walk Route"
+            >
+              {autoWalk ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+              <span>{autoWalk ? 'Pause' : 'Walk'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void toggleGyroMode()}
+              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-extrabold ring-1 shadow-lg transition ${
+                gyroEnabled
+                  ? 'bg-cyan-400 text-slate-950 ring-cyan-200'
+                  : 'bg-[#11161F]/95 text-emerald-300 ring-white/20 hover:bg-[#1B2230]'
+              }`}
+              title="Move your phone to look around in 360° (Gyroscope Sensor)"
+            >
+              <span>📱 {gyroEnabled ? '360° ON' : '360°'}</span>
+            </button>
+          </div>
 
           <div className="flex items-center gap-1">
             {currentPhotoUrl && onOpenLightbox && (

@@ -1012,24 +1012,73 @@ export const VenuePage: React.FC = () => {
                 {/* Example Natural Queries + 1-Tap Instant Go-To Rooms */}
                 {!searchQuery && (
                   <div className="space-y-3 pt-1">
-                    {/* 1-Tap Instant Go-To Rooms Bar (Zero Typing Needed on Phones!) */}
+                    {/* 1-Tap Instant Go-To Rooms Visual Photo Carousel + Pill Bar */}
                     {placeNodes.length > 0 && (
-                      <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/80 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-extrabold uppercase tracking-wider text-indigo-700">
+                      <div className="rounded-2xl bg-gradient-to-r from-indigo-50/90 via-cyan-50/70 to-emerald-50/80 p-3 ring-1 ring-indigo-200/80 space-y-2.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-extrabold uppercase tracking-wider text-indigo-900">
                             ⚡ 1-Tap Instant Go-To Rooms (No Typing Needed)
                           </span>
-                          <span className="text-[10px] font-semibold text-slate-500">
-                            Tap to launch Street View →
+                          <span className="text-[10px] font-semibold text-indigo-700">
+                            Tap any room door to launch Street View →
                           </span>
                         </div>
-                        <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto thin-scrollbar">
+
+                        {/* Horizontal Visual Door Photo Cards */}
+                        <div className="flex gap-2.5 overflow-x-auto pb-1.5 thin-scrollbar snap-x">
+                          {placeNodes.slice(0, 14).map((rm) => (
+                            <button
+                              key={`visual-card-${rm.id}`}
+                              type="button"
+                              onClick={() => handleNavigateToDestination(rm.id, rm.name)}
+                              className="group snap-start shrink-0 w-32 sm:w-36 overflow-hidden rounded-2xl bg-slate-950 text-left ring-1 ring-slate-200/90 shadow-md hover:ring-2 hover:ring-indigo-500 active:scale-95 transition flex flex-col"
+                            >
+                              <div className="relative h-20 w-full bg-slate-900 overflow-hidden flex items-center justify-center">
+                                {rm.photo_url ? (
+                                  <>
+                                    <img
+                                      src={mediaUrl(rm.photo_url)}
+                                      alt=""
+                                      aria-hidden="true"
+                                      className="absolute inset-0 h-full w-full object-cover blur-md opacity-45 scale-110"
+                                    />
+                                    <img
+                                      src={mediaUrl(rm.photo_url)}
+                                      alt={rm.name}
+                                      loading="lazy"
+                                      className="relative z-[1] h-full w-full object-contain group-hover:scale-105 transition-transform duration-300"
+                                    />
+                                  </>
+                                ) : (
+                                  <div className="flex flex-col items-center justify-center text-slate-400">
+                                    <MapPin className="h-5 w-5 text-cyan-400" />
+                                  </div>
+                                )}
+                                <span className="absolute top-1.5 left-1.5 z-[2] rounded-md bg-slate-950/85 px-1.5 py-0.5 text-[9px] font-extrabold text-cyan-300 ring-1 ring-white/15">
+                                  {formatLevel(rm.level, rm.floor_name)}
+                                </span>
+                              </div>
+                              <div className="p-2 bg-white flex-1 flex flex-col justify-between gap-1">
+                                <div className="text-xs font-extrabold text-slate-900 truncate">
+                                  {rm.name}
+                                </div>
+                                <div className="inline-flex items-center gap-1 text-[10px] font-extrabold text-indigo-600 group-hover:text-indigo-700">
+                                  <Navigation className="h-2.5 w-2.5 shrink-0" />
+                                  <span>1-Tap Walk →</span>
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+
+                        {/* Quick All-Rooms Pill Grid */}
+                        <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto thin-scrollbar pt-0.5">
                           {placeNodes.slice(0, 14).map((rm) => (
                             <button
                               key={`quick-go-${rm.id}`}
                               type="button"
                               onClick={() => handleNavigateToDestination(rm.id, rm.name)}
-                              className="inline-flex items-center gap-1 rounded-xl bg-white px-2.5 py-1.5 text-xs font-extrabold text-slate-900 ring-1 ring-slate-200/90 shadow-sm hover:bg-indigo-600 hover:text-white hover:ring-indigo-600 active:scale-95 transition"
+                              className="inline-flex items-center gap-1 rounded-xl bg-white px-2.5 py-1 text-[11px] font-extrabold text-slate-900 ring-1 ring-slate-200/90 shadow-sm hover:bg-indigo-600 hover:text-white hover:ring-indigo-600 active:scale-95 transition"
                             >
                               <Navigation className="h-3 w-3 text-indigo-600 shrink-0" />
                               <span>{rm.name}</span>

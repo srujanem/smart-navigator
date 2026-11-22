@@ -1777,6 +1777,9 @@ export const RoutePage: React.FC = () => {
                         setLightboxZoom(1);
                         setLightboxUrl({ url, caption });
                       }}
+                      onChangeDestination={(nextToId) => {
+                        updateRouteParams(effectiveFromId, nextToId, profileParam);
+                      }}
                     />
                   ) : twinMode === '3d' ? (
                     /* 3D INTERACTIVE TWIN (Full Frame + Floating PiP Card) */
