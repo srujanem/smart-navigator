@@ -173,6 +173,104 @@ function estimateHorizontalShift(
 }
 
 /**
+ * Joins 2–4 razor-sharp STILL photos (Front / Right / Back / Left — captured while
+ * holding the phone completely steady!) into a single ultra-sharp HD 360° panorama
+ * with ZERO motion blur and ZERO double-exposure ghosting over furniture or doors!
+ */
+export async function stitch4CrispAnglesTo360(
+  stillFrames: HTMLCanvasElement[],
+  baseName = 'room_360',
+  onProgress?: (pct: number, stage: string) => void,
+): Promise<ProcessedMediaResult> {
+  if (stillFrames.length === 0) {
+    throw new Error('No still photos captured.');
+  }
+  if (stillFrames.length === 1) {
+    const fc = stillFrames[0];
+    const file = await canvasToOptimizedFile(fc, baseName, 0.93);
+    return {
+      file,
+      isPanorama360: fc.width / Math.max(1, fc.height) >= 1.75,
+      aspectRatio: fc.width / Math.max(1, fc.height),
+      width: fc.width,
+      height: fc.height,
+    };
+  }
+
+  onProgress?.(60, `Building HD 360° panorama from ${stillFrames.length} crisp angles...`);
+
+  // Normalize all angles to a crisp common height (up to 1080px!) and ultra-sharp total width (up to 3840px)
+  const commonH = Math.min(1080, ...stillFrames.map((f) => f.height));
+  const widths = stillFrames.map((f) => Math.max(1, Math.round((f.width / Math.max(1, f.height)) * commonH)));
+  const microBlendPx = Math.max(8, Math.round(commonH * 0.03));
+  const rawTotalW = widths.reduce((sum, w) => sum + w, 0) - microBlendPx * (stillFrames.length - 1);
+
+  const maxOutW = 3840;
+  const scale = Math.min(1, maxOutW / Math.max(1, rawTotalW));
+  const outH = Math.max(480, Math.round(commonH * scale));
+  const outW = Math.max(640, Math.round(rawTotalW * scale));
+
+  const panoCanvas = document.createElement('canvas');
+  panoCanvas.width = outW;
+  panoCanvas.height = outH;
+  const pctx = panoCanvas.getContext('2d');
+  if (!pctx) throw new Error('Canvas unavailable.');
+  pctx.imageSmoothingEnabled = true;
+  pctx.imageSmoothingQuality = 'high';
+  pctx.fillStyle = '#060a14';
+  pctx.fillRect(0, 0, outW, outH);
+
+  let curX = 0;
+  const blendOut = Math.max(4, Math.round(microBlendPx * scale));
+
+  for (let i = 0; i < stillFrames.length; i++) {
+    const frame = stillFrames[i];
+    const drawW = Math.max(1, Math.round(widths[i] * scale));
+    if (i === 0) {
+      pctx.drawImage(frame, 0, 0, frame.width, frame.height, 0, 0, drawW, outH);
+      curX = drawW - blendOut;
+      continue;
+    }
+
+    const scratch = document.createElement('canvas');
+    scratch.width = drawW;
+    scratch.height = outH;
+    const sctx = scratch.getContext('2d');
+    if (sctx) {
+      sctx.imageSmoothingEnabled = true;
+      sctx.imageSmoothingQuality = 'high';
+      sctx.drawImage(frame, 0, 0, frame.width, frame.height, 0, 0, drawW, outH);
+      sctx.globalCompositeOperation = 'destination-in';
+      const grad = sctx.createLinearGradient(0, 0, drawW, 0);
+      const stop = Math.min(0.12, blendOut / Math.max(1, drawW));
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(stop, 'rgba(0,0,0,1)');
+      grad.addColorStop(1, 'rgba(0,0,0,1)');
+      sctx.fillStyle = grad;
+      sctx.fillRect(0, 0, drawW, outH);
+      sctx.globalCompositeOperation = 'source-over';
+      pctx.drawImage(scratch, curX, 0);
+    } else {
+      pctx.drawImage(frame, 0, 0, frame.width, frame.height, curX, 0, drawW, outH);
+    }
+    curX += drawW - blendOut;
+  }
+
+  onProgress?.(92, 'Saving HD 360° WebP...');
+  const cleanStem = baseName.replace(/[^a-zA-Z0-9_-]/g, '_') || 'room_360';
+  const file = await canvasToOptimizedFile(panoCanvas, `${cleanStem}_hd360`, 0.92);
+  onProgress?.(100, 'Crisp HD 360° ready!');
+
+  return {
+    file,
+    isPanorama360: outW / Math.max(1, outH) >= 1.6,
+    aspectRatio: outW / Math.max(1, outH),
+    width: outW,
+    height: outH,
+  };
+}
+
+/**
  * Stitches a sequence of captured camera/video canvases into ONE seamless,
  * pixel-aligned 360° panorama — skipping stationary duplicate frames and blending
  * smoothly across the exact optically-matched overlap seam!
@@ -542,13 +640,13 @@ export async function optimizePhotoOrPanorama(
   try {
     const aspectRatio = width / Math.max(1, height);
     const isPanorama360 = aspectRatio >= 1.75;
-    // Preserve full crisp width for Phone Native Panoramas!
-    const maxSide = isPanorama360 ? 2560 : 1440;
+    // Preserve full ultra-sharp 4K width for Phone Native Panoramas and 2K HD for normal photos!
+    const maxSide = isPanorama360 ? 3840 : 2048;
     const scale = Math.min(1, maxSide / Math.max(width, height, 1));
     const outW = Math.max(1, Math.round(width * scale));
     const outH = Math.max(1, Math.round(height * scale));
 
-    onProgress?.(60, isPanorama360 ? 'Preserving crisp 360° Panorama...' : 'Compressing photo...');
+    onProgress?.(60, isPanorama360 ? 'Preserving 4K 360° Panorama...' : 'Saving HD photo...');
     const canvas = document.createElement('canvas');
     canvas.width = outW;
     canvas.height = outH;
@@ -556,6 +654,8 @@ export async function optimizePhotoOrPanorama(
     if (!ctx) {
       throw new Error('Browser canvas unavailable.');
     }
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(source, 0, 0, outW, outH);
 
     const stem = (rawFile.name.replace(/\.[^.]+$/, '') || 'photo').replace(
@@ -565,7 +665,7 @@ export async function optimizePhotoOrPanorama(
     const file = await canvasToOptimizedFile(
       canvas,
       isPanorama360 ? `${stem}_pano360` : stem,
-      0.85,
+      0.92,
     );
     onProgress?.(100, 'Ready');
 

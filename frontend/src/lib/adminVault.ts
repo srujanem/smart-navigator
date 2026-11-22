@@ -201,11 +201,11 @@ export async function syncVaultIntoBundle(): Promise<BundledOfflineSnapshot | nu
 
   if (!bundle.photo_index) bundle.photo_index = {};
 
-  // Merge any custom venues created by the admin
+  // Merge any custom venues created by the admin (placed at the front so published venues appear #1!)
   for (const cv of vault.createdVenues ?? []) {
     const sl = cv.summary.slug;
     if (!bundle.venues.some((v) => v.slug === sl)) {
-      bundle.venues.push(cv.summary);
+      bundle.venues.unshift(cv.summary);
     }
     if (!bundle.details[sl]) bundle.details[sl] = cv.detail;
     if (!bundle.graphs[sl]) bundle.graphs[sl] = cv.graph;
@@ -1010,12 +1010,30 @@ export async function vaultPublishVenue(
   }
 
   onProgress?.(68, 'Indexing all room photos & 360° views...');
-  await new Promise((r) => window.setTimeout(r, 240));
+  await new Promise((r) => window.setTimeout(r, 180));
 
   const publishedAt = new Date().toISOString();
   const rooms = graph.nodes.length;
   const photos = (bundle.photo_index?.[slug] ?? []).length;
   const paths = graph.edges.length;
+  const coverPhoto = graph.nodes.find((n) => n.photo_url)?.photo_url ?? null;
+
+  // Persist updated cover photo & room counts back into vault.createdVenues
+  const createdRec = (vault.createdVenues ?? []).find((cv) => cv.summary.slug === slug);
+  if (createdRec) {
+    createdRec.summary.stats.places = rooms;
+    createdRec.summary.stats.photos = photos;
+    createdRec.detail.stats.places = rooms;
+    createdRec.detail.stats.photos = photos;
+    if (coverPhoto) {
+      createdRec.summary.cover_url = coverPhoto;
+      createdRec.detail.cover_url = coverPhoto;
+    }
+    createdRec.graph = {
+      nodes: [...graph.nodes],
+      edges: [...graph.edges],
+    };
+  }
 
   if (!vault.publishedVenues) vault.publishedVenues = {};
   vault.publishedVenues[slug] = {

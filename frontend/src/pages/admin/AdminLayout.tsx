@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Link,
   Navigate,
@@ -56,6 +56,7 @@ export const AdminLayout: React.FC = () => {
 
   const [venues, setVenues] = useState<VenueSummary[]>([]);
   const [loading, setLoading] = useState(true);
+  const hasLoadedOnceRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   // "+ New Place" Simple Modal State
@@ -88,7 +89,10 @@ export const AdminLayout: React.FC = () => {
   );
 
   const refreshVenues = useCallback(async () => {
-    setLoading(true);
+    // Only show full-page loading screen on the very first load — never unmount <Outlet /> during publish/upload!
+    if (!hasLoadedOnceRef.current) {
+      setLoading(true);
+    }
     setError(null);
     try {
       // Strictly returns ONLY venues built/owned by the currently signed-in account
@@ -130,6 +134,7 @@ export const AdminLayout: React.FC = () => {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load your places.');
     } finally {
+      hasLoadedOnceRef.current = true;
       setLoading(false);
     }
   }, [searchParams, setSearchParams]);

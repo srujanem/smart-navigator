@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   Camera,
   Check,
@@ -629,9 +630,9 @@ export const AdminDatasetPage: React.FC = () => {
           </span>
         </div>
 
-        {/* Helpful 1-Line 360° Capture Tip */}
+        {/* Helpful 1-Line HD 360° Capture Tip */}
         <div className="rounded-2xl bg-cyan-50 px-3.5 py-2.5 text-xs font-semibold text-cyan-950 ring-1 ring-cyan-200">
-          💡 <strong>Best 360° Quality:</strong> Shoot a <strong>Panorama (Pano)</strong> photo using your phone&apos;s normal camera app and pick it in <strong>Gallery</strong> — OR tap <strong>Camera / 360° → 360° Spin</strong> and turn slowly in one direction.
+          💡 <strong>Razor-Sharp HD Quality:</strong> Tap <strong>Camera / 360° → 4-Angle HD 360°</strong> (hold steady for each wall — zero blur!) or tap <strong>✨ HD Cam</strong> / upload a <strong>Phone Panorama</strong> from Gallery!
         </div>
 
         {/* Search + Filter */}
@@ -993,15 +994,13 @@ export const AdminDatasetPage: React.FC = () => {
                 {copiedLink ? <Check className="h-3.5 w-3.5 text-emerald-300" /> : <Copy className="h-3.5 w-3.5" />}
                 <span>{copiedLink ? 'Copied' : 'Copy'}</span>
               </button>
-              <a
-                href={`/v/${encodeURIComponent(selectedSlug)}`}
-                target="_blank"
-                rel="noopener noreferrer"
+              <Link
+                to={`/v/${encodeURIComponent(selectedSlug)}`}
                 className="inline-flex items-center gap-1 rounded-xl bg-emerald-400 px-3 py-1.5 text-[11px] font-black text-slate-950"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
                 <span>Open Live</span>
-              </a>
+              </Link>
             </div>
           </div>
         )}
@@ -1205,27 +1204,23 @@ export const AdminDatasetPage: React.FC = () => {
                 {progressState.mode === 'publish' ? (
                   <>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <a
-                        href={`/v/${encodeURIComponent(selectedSlug)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
+                      <Link
+                        to={`/v/${encodeURIComponent(selectedSlug)}`}
                         className="inline-flex items-center justify-center gap-1.5 rounded-2xl bg-emerald-600 px-4 py-3 text-xs font-extrabold text-white shadow hover:bg-emerald-500 transition"
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
                         <span>Open Live Venue</span>
-                      </a>
+                      </Link>
                       {entranceNode && destSampleNode && (
-                        <a
-                          href={`/v/${encodeURIComponent(selectedSlug)}/route?from=${encodeURIComponent(
+                        <Link
+                          to={`/v/${encodeURIComponent(selectedSlug)}/route?from=${encodeURIComponent(
                             entranceNode.node_id,
                           )}&to=${encodeURIComponent(destSampleNode.node_id)}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
                           className="inline-flex items-center justify-center gap-1.5 rounded-2xl bg-indigo-600 px-4 py-3 text-xs font-extrabold text-white shadow hover:bg-indigo-500 transition"
                         >
                           <Rocket className="h-3.5 w-3.5" />
                           <span>Test 360° Walk</span>
-                        </a>
+                        </Link>
                       )}
                     </div>
                     <div className="grid grid-cols-2 gap-2">
@@ -1252,17 +1247,15 @@ export const AdminDatasetPage: React.FC = () => {
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                     {progressState.lastRoomId && entranceNode && (
-                      <a
-                        href={`/v/${encodeURIComponent(selectedSlug)}/route?from=${encodeURIComponent(
+                      <Link
+                        to={`/v/${encodeURIComponent(selectedSlug)}/route?from=${encodeURIComponent(
                           entranceNode.node_id,
                         )}&to=${encodeURIComponent(progressState.lastRoomId)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
                         className="inline-flex items-center justify-center gap-1.5 rounded-2xl bg-emerald-600 px-4 py-3 text-xs font-extrabold text-white shadow hover:bg-emerald-500 transition"
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
                         <span>Preview 360° View</span>
-                      </a>
+                      </Link>
                     )}
                     <button
                       type="button"
