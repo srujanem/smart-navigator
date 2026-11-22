@@ -339,7 +339,7 @@ export async function searchVenue(
 ): Promise<SearchResponse> {
   const graph = await resolveOfflineGraph(slug);
   if (graph) {
-    const bundle = await loadBundledOfflineSnapshot();
+    const bundle = await syncVaultIntoBundle();
     const people = bundle?.people?.[slug] ?? getCachedVenuePeople(slug) ?? [];
     return computeOfflineSearch(graph, people, q, fromNodeId);
   }
@@ -567,7 +567,7 @@ export async function localizePhoto(
     isMobile ? 1280 : 1600,
     isMobile ? 0.85 : 0.88,
   );
-  const bundle = await loadBundledOfflineSnapshot();
+  const bundle = await syncVaultIntoBundle();
   if (bundle?.graphs?.[slug]) {
     return computeOfflineLocalize(slug, optimizedFile, bundle, level, priorNodeId);
   }

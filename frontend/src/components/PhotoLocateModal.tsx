@@ -208,19 +208,19 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
         const res = await localizePhoto(venue.slug, file, parsedLevel, priorNodeId);
         setResult(res);
 
-        // Keep trace snappy on phones so visitors reach confirmation immediately
+        // Keep trace ultra-snappy on phones & desktop so visitors reach confirmation immediately
         const isSmall = typeof window !== 'undefined' && window.innerWidth < 768;
         const totalSteps = Math.max(res.trace.length, 1);
         const elapsed = performance.now() - startedAt;
-        const minTotalMs = isSmall ? 340 : 920;
-        const remainingMs = Math.max(minTotalMs - elapsed, isSmall ? 120 : 320);
-        const stepDelay = Math.max(Math.floor(remainingMs / totalSteps), isSmall ? 45 : 140);
+        const minTotalMs = isSmall ? 160 : 340;
+        const remainingMs = Math.max(minTotalMs - elapsed, isSmall ? 60 : 120);
+        const stepDelay = Math.max(Math.floor(remainingMs / totalSteps), isSmall ? 24 : 50);
 
         for (let i = 1; i <= totalSteps; i++) {
           await new Promise((r) => setTimeout(r, stepDelay));
           setVisibleTraceCount(i);
         }
-        await new Promise((r) => setTimeout(r, isSmall ? 60 : 180));
+        await new Promise((r) => setTimeout(r, isSmall ? 30 : 80));
         setStage('result');
       } catch (err) {
         setStage('idle');
@@ -1004,6 +1004,11 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                       <span className="chip bg-slate-200/80 text-slate-700">
                         {result.engine.embedder}
                       </span>
+                      {result.trace && result.trace.length > 0 && (
+                        <span className="chip bg-cyan-100/90 text-cyan-800">
+                          ⚡ {Math.max(12, result.trace.reduce((sum, t) => sum + (t.ms || 0), 0))} ms
+                        </span>
+                      )}
                       {result.engine.face_blur && (
                         <span className="chip bg-emerald-100 text-emerald-800">
                           <ShieldCheck className="h-3 w-3" />

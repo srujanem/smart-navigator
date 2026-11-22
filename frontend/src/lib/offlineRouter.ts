@@ -1040,18 +1040,25 @@ function scoreShiftTolerant48D(q: number[], r: number[]): number {
   return Math.max(0, Math.min(1, bestShift));
 }
 
+const refDescCache = new Map<string, { hog: Float32Array; luma: Float32Array }>();
+
 /**
  * Computes a lighting-invariant 64-D Oriented Edge Structure (HOG-like 4x4x4) +
  * normalized luminance grid (48x32) from any image URL or File for Stage-2 geometric reranking.
+ * Reference descriptors are memoized in memory so repeat queries finish in ~15 ms.
  */
 function extractEdgeAndLumaDescriptor(srcUrl: string): Promise<{
   hog: Float32Array;
   luma: Float32Array;
 } | null> {
+  const canCache = Boolean(srcUrl) && !srcUrl.startsWith('blob:');
+  if (canCache && refDescCache.has(srcUrl)) {
+    return Promise.resolve(refDescCache.get(srcUrl)!);
+  }
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    const timer = window.setTimeout(() => resolve(null), 2200);
+    const timer = window.setTimeout(() => resolve(null), 1200);
     img.onload = () => {
       window.clearTimeout(timer);
       try {
@@ -1098,7 +1105,15 @@ function extractEdgeAndLumaDescriptor(srcUrl: string): Promise<{
         if (norm > 1e-6) {
           for (let i = 0; i < 64; i++) hog[i] /= norm;
         }
-        resolve({ hog, luma });
+        const desc = { hog, luma };
+        if (canCache) {
+          if (refDescCache.size > 250) {
+            const firstKey = refDescCache.keys().next().value;
+            if (firstKey) refDescCache.delete(firstKey);
+          }
+          refDescCache.set(srcUrl, desc);
+        }
+        resolve(desc);
       } catch {
         resolve(null);
       }
@@ -1286,12 +1301,37 @@ export async function computeOfflineLocalize(
   }
 
   const ranked = Array.from(nodeBest.values()).sort((a, b) => b.totalScore - a.totalScore);
-  const top = ranked.slice(0, 3);
-  const expScores = top.map((r) => Math.exp(r.totalScore * 8.0));
+  // Deduplicate runner-up places by normalized name so identical corridor waypoints never repeat
+  const top: typeof ranked = [];
+  const seenNames = new Set<string>();
+  for (const r of ranked) {
+    const nameKey = r.sigItem.node_name.trim().toLowerCase();
+    if (seenNames.has(nameKey)) continue;
+    seenNames.add(nameKey);
+    top.push(r);
+    if (top.length >= 3) break;
+  }
+
+  const topTotal = top[0]?.totalScore ?? 0.5;
+  const secondTotal = top[1]?.totalScore ?? topTotal - 0.15;
+  const expScores = top.map((r) => Math.exp((r.totalScore - topTotal) * 14.0));
   const sumExp = expScores.reduce((a, b) => a + b, 0) || 1;
 
+  let bestCalibrated = 0.9;
   const candidates: Candidate[] = top.map((r, idx) => {
-    const score = Math.round(Math.min(0.98, Math.max(0.55, expScores[idx] / sumExp + 0.22)) * 100) / 100;
+    const relProb = expScores[idx] / sumExp;
+    const marginBoost = idx === 0 ? Math.min(0.12, Math.max(0, topTotal - secondTotal) * 2.2) : 0;
+    let rawConf =
+      idx === 0
+        ? r.visualScore * 0.78 + relProb * 0.18 + r.ocrBonus * 0.4 + marginBoost
+        : r.visualScore * 0.45 + relProb * 0.32 + r.ocrBonus * 0.25;
+    if (idx === 0) {
+      bestCalibrated = Math.min(0.98, Math.max(0.48, rawConf));
+      rawConf = bestCalibrated;
+    } else {
+      rawConf = Math.min(bestCalibrated - 0.06, Math.max(0.42, rawConf));
+    }
+    const score = Math.round(rawConf * 100) / 100;
     const hitText = r.ocrHit || r.sigItem.ocr_text || null;
     return {
       node_id: r.sigItem.node_id,
