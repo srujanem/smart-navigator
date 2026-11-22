@@ -270,7 +270,7 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
     return pins.sort((a, b) => (a.isDest === b.isDest ? a.distM - b.distM : a.isDest ? -1 : 1)).slice(0, 5);
   }, [activeNode, graph.nodes, route.to_node, routeForwardHeading]);
 
-  // Mini-Map bounds for the current floor
+  // Mini-Map bounds tightly framed around the floor nodes & active route so the blue line & Yellow Pegman fill the mini-map cleanly
   const miniMapData = useMemo(() => {
     const curLevel = activeStep?.level ?? 0;
     const floorNodes = graph.nodes.filter((n) => n.level === curLevel);
@@ -279,12 +279,6 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
     let maxX = -Infinity;
     let minY = Infinity;
     let maxY = -Infinity;
-    for (const b of venue.buildings) {
-      minX = Math.min(minX, b.x);
-      maxX = Math.max(maxX, b.x + b.w);
-      minY = Math.min(minY, b.y);
-      maxY = Math.max(maxY, b.y + b.d);
-    }
     for (const n of allN) {
       minX = Math.min(minX, n.x);
       maxX = Math.max(maxX, n.x);
@@ -297,12 +291,14 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
       minY = 0;
       maxY = 100;
     }
-    const padX = Math.max((maxX - minX) * 0.14, 8);
-    const padY = Math.max((maxY - minY) * 0.14, 8);
+    const spanX = Math.max(maxX - minX, 18);
+    const spanY = Math.max(maxY - minY, 18);
+    const padX = Math.max(spanX * 0.25, 8);
+    const padY = Math.max(spanY * 0.25, 8);
     const vx = minX - padX;
     const vy = minY - padY;
-    const vw = Math.max(maxX - minX + padX * 2, 20);
-    const vh = Math.max(maxY - minY + padY * 2, 20);
+    const vw = spanX + padX * 2;
+    const vh = spanY + padY * 2;
     const unit = Math.max(vw, vh) / 100;
 
     // Route polyline points on this floor
@@ -321,7 +317,7 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
       polyline: pts.join(' '),
       curLevel,
     };
-  }, [activeStep?.level, graph.nodes, venue.buildings, route.path, nodeMap]);
+  }, [activeStep?.level, graph.nodes, route.path, nodeMap]);
 
   const absCompassHeading = normalizeAngle(routeForwardHeading + yaw);
   const isFinalStep = activeStepIdx >= steps.length - 1;
@@ -415,7 +411,6 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
         dragRef.current = null;
       }}
       onWheel={(e) => {
-        e.preventDefault();
         const delta = e.deltaY < 0 ? 0.14 : -0.14;
         setFovZoom((z) => clamp(+(z + delta).toFixed(2), 1, 2.2));
       }}
@@ -498,63 +493,58 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
       </div>
 
       {/* ===================================================================== */}
-      {/* 2. FLOATING 3D WORLD-SPACE ROOM PINS (ROTATE LIVE WITH YAW)           */}
+      {/* 2. FLOATING 3D WORLD-SPACE DESTINATION PIN (DESKTOP / NON-OVERLAPPING) */}
       {/* ===================================================================== */}
-      <div className="pointer-events-none absolute inset-x-0 top-[24%] z-[8] h-24 overflow-hidden">
-        {nearbyWorldPins.map((pin) => {
-          const deltaAngle = normalizeAngle(pin.relYaw - yaw);
-          if (Math.abs(deltaAngle) > 68) return null;
-          const leftPct = 50 + (deltaAngle / 68) * 42;
-          return (
-            <div
-              key={pin.id}
-              style={{ left: `${leftPct}%` }}
-              className="absolute top-2 -translate-x-1/2 flex flex-col items-center transition-all duration-100"
-            >
+      <div className="pointer-events-none hidden sm:block absolute inset-x-0 top-[34%] z-[8] h-20 overflow-hidden">
+        {nearbyWorldPins
+          .filter((p) => p.isDest)
+          .map((pin) => {
+            const deltaAngle = normalizeAngle(pin.relYaw - yaw);
+            if (Math.abs(deltaAngle) > 65) return null;
+            const leftPct = clamp(50 + (deltaAngle / 65) * 38, 28, 78);
+            return (
               <div
-                className={`rounded-xl px-2.5 py-1 text-[11px] font-extrabold shadow-lg ring-1 whitespace-nowrap ${
-                  pin.isDest
-                    ? 'bg-emerald-600/95 text-white ring-emerald-300 shadow-emerald-950/60'
-                    : 'bg-slate-950/85 text-cyan-200 ring-white/20'
-                }`}
+                key={pin.id}
+                style={{ left: `${leftPct}%` }}
+                className="absolute top-1 -translate-x-1/2 flex flex-col items-center transition-all duration-100"
               >
-                {pin.isDest ? '🏁 ' : '🚪 '}
-                {pin.name} · {pin.distM}m
+                <div className="rounded-xl bg-emerald-600/95 px-2.5 py-1 text-[11px] font-extrabold text-white ring-1 ring-emerald-300 shadow-lg whitespace-nowrap">
+                  🏁 {pin.name} · {pin.distM}m
+                </div>
+                <div className="h-3.5 w-0.5 bg-white/70" />
+                <div className="h-2 w-2 rounded-full bg-emerald-400 ring-2 ring-white" />
               </div>
-              <div className="h-4 w-0.5 bg-white/60" />
-              <div className="h-2 w-2 rounded-full bg-cyan-400 ring-2 ring-white" />
-            </div>
-          );
-        })}
+            );
+          })}
       </div>
 
       {/* ===================================================================== */}
       {/* 3. GOOGLE STREET VIEW 3D GROUND-PROJECTED ROAD, FLOOR TEXT & DISC (^) */}
       {/* ===================================================================== */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[54%] z-[9] flex items-end justify-center overflow-hidden">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[56%] z-[9] flex items-end justify-center overflow-hidden">
         {/* 3D Perspective Road / Corridor Carpet on the Floor */}
         <div
           style={{
-            transform: `perspective(460px) rotateX(${clamp(66 - pitch * 0.4, 54, 76)}deg) rotateZ(${groundRoadAngle}deg)`,
+            transform: `perspective(360px) rotateX(${clamp(60 - pitch * 0.35, 50, 70)}deg) rotateZ(${groundRoadAngle}deg)`,
             transformOrigin: '50% 100%',
           }}
-          className="relative w-72 sm:w-96 h-[130%] flex flex-col items-center justify-between py-6 transition-transform duration-100"
+          className="relative w-64 sm:w-80 h-full flex flex-col items-center justify-start pt-3 transition-transform duration-100"
         >
           {/* Google Street View Translucent Corridor Path Strip */}
           <div
-            className="absolute inset-x-6 inset-y-0 rounded-t-full"
+            className="absolute inset-x-4 inset-y-0 rounded-t-full"
             style={{
               background:
-                'linear-gradient(to top, rgba(59, 130, 246, 0.34) 0%, rgba(56, 189, 248, 0.24) 55%, rgba(56, 189, 248, 0.0) 100%)',
-              boxShadow: 'inset 0 0 28px rgba(56, 189, 248, 0.28)',
-              borderLeft: '2px solid rgba(186, 230, 253, 0.38)',
-              borderRight: '2px solid rgba(186, 230, 253, 0.38)',
+                'linear-gradient(to top, rgba(37, 99, 235, 0.44) 0%, rgba(56, 189, 248, 0.32) 65%, rgba(56, 189, 248, 0.04) 100%)',
+              boxShadow: 'inset 0 0 28px rgba(56, 189, 248, 0.35)',
+              borderLeft: '2.5px solid rgba(186, 230, 253, 0.55)',
+              borderRight: '2.5px solid rgba(186, 230, 253, 0.55)',
             }}
           />
 
           {/* Google Street View White 'X' Intersection Waypoint Marker on Road */}
           {!isFinalStep && (
-            <div className="relative z-10 mt-8 text-white/70 font-sans text-2xl font-black tracking-widest select-none">
+            <div className="relative z-10 mt-1 text-white/85 font-sans text-xl font-black tracking-widest select-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
               ✕
             </div>
           )}
@@ -566,73 +556,55 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
               textOrientation: 'mixed',
               transform: 'rotate(180deg)',
               textShadow:
-                '0 2px 6px rgba(0,0,0,0.95), 0 0 2px rgba(0,0,0,1), 1px 1px 0 #0f172a, -1px -1px 0 #0f172a',
+                '0 2px 6px rgba(0,0,0,0.98), 0 0 3px rgba(0,0,0,1), 1px 1px 0 #0f172a, -1px -1px 0 #0f172a',
             }}
-            className="relative z-10 my-auto font-display text-xl sm:text-2xl font-black tracking-wider text-white/90 uppercase whitespace-nowrap py-2"
+            className="relative z-10 mt-2 font-display text-lg sm:text-2xl font-black tracking-wider text-white uppercase whitespace-nowrap"
           >
             {corridorFloorTitle}
           </div>
-
-          {/* Primary Clickable Ground Chevron Disc ( ( ^ ) ) on the Floor */}
-          {!isFinalStep ? (
-            <button
-              type="button"
-              data-no-drag="true"
-              onClick={(e) => {
-                e.stopPropagation();
-                triggerStepMove(activeStepIdx + 1, 'forward');
-              }}
-              title={`Walk forward to ${nextStep?.name || 'next step'}`}
-              className="pointer-events-auto group relative z-20 mb-14 flex h-20 w-20 items-center justify-center rounded-full bg-white/40 ring-4 ring-white/80 shadow-[0_0_30px_rgba(255,255,255,0.65)] hover:bg-white/65 hover:scale-110 active:scale-95 transition-all cursor-pointer"
-            >
-              <svg viewBox="0 0 48 48" className="h-12 w-12 drop-shadow-[0_2px_4px_rgba(0,0,0,0.65)]">
-                <path
-                  d="M12 29 L24 17 L36 29"
-                  fill="none"
-                  stroke="#0f172a"
-                  strokeWidth="6.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-                <path
-                  d="M12 29 L24 17 L36 29"
-                  fill="none"
-                  stroke="#ffffff"
-                  strokeWidth="3.8"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-          ) : (
-            <div className="relative z-20 mb-16 flex flex-col items-center gap-1 rounded-3xl bg-emerald-600/95 px-5 py-2.5 ring-4 ring-emerald-300 shadow-2xl">
-              <span className="text-xs font-black uppercase tracking-widest text-white">
-                ★ Destination Reached
-              </span>
-            </div>
-          )}
         </div>
+      </div>
 
-        {/* Floating Interactive Ground Cursor Disc (follows mouse cursor on the floor just like frame_0.jpg & frame_4.jpg!) */}
-        {groundCursor.hoveringFloor && !isFinalStep && !isDraggingLook && (
-          <div
-            style={{
-              left: `${groundCursor.xPct}%`,
-              top: `${groundCursor.yPct}%`,
-              transform: 'translate(-50%, -50%) perspective(320px) rotateX(62deg)',
+      {/* Clickable Ground Chevron Disc ( ( ^ ) ) Positioned Cleanly in Center-Floor (Never Blocked by Mini-Map or 3D Hit Box!) */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-[22%] sm:bottom-[20%] z-[15] flex flex-col items-center justify-center">
+        {!isFinalStep ? (
+          <button
+            type="button"
+            data-no-drag="true"
+            onClick={(e) => {
+              e.stopPropagation();
+              triggerStepMove(activeStepIdx + 1, 'forward');
             }}
-            className="pointer-events-none fixed sm:absolute z-10 hidden sm:flex h-16 w-16 items-center justify-center rounded-full bg-white/35 ring-2 ring-white/85 shadow-xl transition-all duration-75"
+            title={`Walk forward to ${nextStep?.name || 'next step'}`}
+            style={{
+              transform: `perspective(260px) rotateX(46deg) rotateZ(${clamp(groundRoadAngle * 0.5, -35, 35)}deg)`,
+            }}
+            className="pointer-events-auto group flex h-16 w-20 sm:h-20 sm:w-24 items-center justify-center rounded-full bg-white/55 ring-4 ring-white/95 shadow-[0_8px_32px_rgba(0,0,0,0.65)] hover:bg-white/80 hover:scale-110 active:scale-95 transition-all cursor-pointer"
           >
-            <svg viewBox="0 0 36 36" className="h-8 w-8">
+            <svg viewBox="0 0 48 48" className="h-11 w-11 drop-shadow-[0_2px_4px_rgba(0,0,0,0.75)]">
               <path
-                d="M9 22 L18 13 L27 22"
+                d="M11 30 L24 16 L37 30"
                 fill="none"
-                stroke="#1e293b"
-                strokeWidth="4.2"
+                stroke="#0f172a"
+                strokeWidth="7"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M11 30 L24 16 L37 30"
+                fill="none"
+                stroke="#ffffff"
+                strokeWidth="4"
                 strokeLinecap="round"
                 strokeLinejoin="round"
               />
             </svg>
+          </button>
+        ) : (
+          <div className="pointer-events-auto flex items-center gap-1.5 rounded-full bg-emerald-600 px-4 py-2 ring-2 ring-emerald-200 shadow-2xl">
+            <span className="text-xs font-black uppercase tracking-wider text-white">
+              ★ Arrived at {activeStep?.name}
+            </span>
           </div>
         )}
       </div>
@@ -642,7 +614,7 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
       {/* ===================================================================== */}
       <div
         data-no-drag="true"
-        className="absolute top-3 left-3 z-20 w-[calc(100%-5.75rem)] max-w-[330px] rounded-2xl bg-[#11161F]/92 p-3 sm:p-3.5 text-white ring-1 ring-white/15 shadow-2xl"
+        className="absolute top-2.5 left-2.5 z-20 w-[calc(100%-7.5rem)] max-w-[248px] sm:max-w-[315px] rounded-2xl bg-[#11161F] p-2.5 sm:p-3.5 text-white ring-1 ring-white/20 shadow-2xl"
       >
         <div className="flex items-start gap-2.5">
           {onClose ? (
