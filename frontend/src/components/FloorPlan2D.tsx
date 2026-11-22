@@ -1174,7 +1174,7 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
               <button
                 type="button"
                 onClick={() => onSelectNode?.(photoNode)}
-                className={`absolute bottom-2.5 right-2.5 z-10 flex items-center gap-2 rounded-2xl p-1.5 pr-3 text-left ring-1 shadow-xl transition hover:scale-[1.02] active:scale-95 max-w-[205px] ${
+                className={`absolute top-12 left-2.5 z-10 flex items-center gap-2 rounded-2xl p-1.5 pr-3 text-left ring-1 shadow-xl transition hover:scale-[1.02] active:scale-95 max-w-[205px] ${
                   dark
                     ? 'bg-slate-950/90 text-white ring-cyan-400/40'
                     : 'bg-white/95 text-slate-900 ring-slate-300'
