@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 from PIL import Image
 
-from ...config import ENABLE_OCR
+from ...config import ENABLE_OCR, LOW_MEMORY_MODE
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +32,13 @@ class OCRService:
             try:
                 from rapidocr_onnxruntime import RapidOCR  # type: ignore
 
-                self._engine = RapidOCR(det_limit_side_len=1024, det_db_box_thresh=0.35, det_db_thresh=0.22)
+                self._engine = RapidOCR(
+                    det_limit_side_len=736 if LOW_MEMORY_MODE else 1024,
+                    det_db_box_thresh=0.35,
+                    det_db_thresh=0.22,
+                    intra_op_num_threads=1 if LOW_MEMORY_MODE else -1,
+                    inter_op_num_threads=1 if LOW_MEMORY_MODE else -1,
+                )
                 self._name = "rapidocr-ppocrv4"
                 log.info("RapidOCR engine initialized.")
             except Exception as exc:  # noqa: BLE001

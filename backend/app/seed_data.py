@@ -9,6 +9,7 @@ Populates the SQLite database on first startup with:
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import gc
 import json
 import logging
 from pathlib import Path
@@ -17,7 +18,7 @@ from PIL import Image, ImageEnhance
 from sqlmodel import Session, select
 
 from .auth import hash_password, verify_password
-from .config import ADMIN_EMAIL, ADMIN_PASSWORD, BASE_DIR, MEDIA_DIR, SEED_DIR
+from .config import ADMIN_EMAIL, ADMIN_PASSWORD, BASE_DIR, LOW_MEMORY_MODE, MEDIA_DIR, SEED_DIR
 from .models import (
     Building,
     Closure,
@@ -60,8 +61,11 @@ def ensure_seeded(session: Session) -> None:
 
     log.info("Seeding Navigator multi-venue database and AI indexes...")
     _seed_hospital(session)
+    gc.collect()
     _seed_campus(session)
+    gc.collect()
     _seed_civic_center(session)
+    gc.collect()
     log.info("Database seed complete.")
 
 
@@ -77,7 +81,12 @@ def _ingest_reference_with_perspectives(
         return None
     raw = src_file.read_bytes()
     rel_main = f"venues/{venue.slug}/photos/{stem}_0.jpg"
-    img, _ = save_clean_image(raw, MEDIA_DIR / rel_main, max_side=960)
+    img, _ = save_clean_image(
+        raw,
+        MEDIA_DIR / rel_main,
+        max_side=960,
+        detect_faces=not LOW_MEMORY_MODE,
+    )
     q0 = compute_sharpness_quality(img)
     session.add(Photo(venue_id=venue.id, node_id=node_id, path=rel_main, source="seed", quality=q0))
 

@@ -4,6 +4,8 @@ from pathlib import Path
 import secrets
 
 IS_VERCEL = os.getenv("VERCEL") == "1"
+IS_RENDER = bool(os.getenv("RENDER") or os.getenv("RENDER_SERVICE_ID"))
+LOW_MEMORY_MODE = os.getenv("NAV_LOW_MEM", "1" if (IS_VERCEL or IS_RENDER) else "0") == "1"
 BASE_DIR = Path(__file__).resolve().parent.parent          # backend/
 _DEFAULT_VAR = Path("/tmp/navigator_var") if IS_VERCEL else (BASE_DIR / "var")
 DATA_DIR = Path(os.getenv("NAV_DATA_DIR", _DEFAULT_VAR))

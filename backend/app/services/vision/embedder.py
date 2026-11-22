@@ -14,7 +14,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from ...config import DATA_DIR, DINO_MODEL, EMBEDDER
+from ...config import DATA_DIR, DINO_MODEL, EMBEDDER, LOW_MEMORY_MODE
 
 log = logging.getLogger(__name__)
 
@@ -47,7 +47,13 @@ class EmbedderService:
                         urllib.request.urlretrieve(ONNX_MODEL_URL, str(onnx_path))
 
                     opts = ort.SessionOptions()
-                    opts.intra_op_num_threads = 4
+                    if LOW_MEMORY_MODE:
+                        opts.intra_op_num_threads = 1
+                        opts.inter_op_num_threads = 1
+                        opts.enable_cpu_mem_arena = False
+                        opts.enable_mem_pattern = False
+                    else:
+                        opts.intra_op_num_threads = 4
                     self._ort_session = ort.InferenceSession(
                         str(onnx_path),
                         sess_options=opts,

@@ -47,6 +47,7 @@ def preprocess_and_anonymize_with_metrics(
     max_side: int = 1600,
     output_format: str = "WEBP",
     quality: int = 90,
+    detect_faces: bool = True,
 ) -> Tuple[Image.Image, bytes, int, float]:
     """
     1. Fix phone camera orientation via EXIF transpose.
@@ -69,7 +70,7 @@ def preprocess_and_anonymize_with_metrics(
 
     faces_blurred = 0
     face_area = 0.0
-    det = _get_face_detector()
+    det = _get_face_detector() if detect_faces else None
     if det is not None:
         try:
             bgr = np.asarray(clean)[:, :, ::-1].copy()
@@ -121,12 +122,14 @@ def save_clean_image_with_metrics(
     dest_path: Path,
     max_side: int = 1600,
     output_format: str = "WEBP",
+    detect_faces: bool = True,
 ) -> Tuple[Image.Image, int, float]:
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     img, encoded_bytes, faces, face_area_ratio = preprocess_and_anonymize_with_metrics(
         raw_bytes,
         max_side=max_side,
         output_format=output_format,
+        detect_faces=detect_faces,
     )
     dest_path.write_bytes(encoded_bytes)
     return img, faces, face_area_ratio
@@ -137,11 +140,13 @@ def save_clean_image(
     dest_path: Path,
     max_side: int = 1600,
     output_format: str = "WEBP",
+    detect_faces: bool = True,
 ) -> Tuple[Image.Image, int]:
     img, faces, _ = save_clean_image_with_metrics(
         raw_bytes,
         dest_path,
         max_side=max_side,
         output_format=output_format,
+        detect_faces=detect_faces,
     )
     return img, faces
