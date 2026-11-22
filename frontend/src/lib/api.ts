@@ -737,12 +737,14 @@ export async function adminLogin(
   password: string,
 ): Promise<AuthResponse> {
   const cleanEmail = email.trim().toLowerCase();
+  const isMiteOwner =
+    cleanEmail === 'admin@navigator.local' || cleanEmail === 'admin@navigator.dev';
   const user: AdminUser = {
-    id: 'local-admin',
-    name: cleanEmail.startsWith('admin') ? 'Facilities & AI Operations Admin' : cleanEmail.split('@')[0],
+    id: isMiteOwner ? 'local-admin' : `local-${cleanEmail}`,
+    name: isMiteOwner ? 'MITE Campus Admin' : cleanEmail.split('@')[0],
     email: cleanEmail,
-    role: 'admin',
-    organization: 'Smart Campus Navigator',
+    role: isMiteOwner ? 'admin' : 'uploader',
+    organization: isMiteOwner ? 'MITE' : 'Campus Creator',
     avatar_color: '#0ea5e9',
   };
   const data: AuthResponse = {
@@ -761,11 +763,12 @@ export async function registerUploader(payload: {
   organization?: string;
   bio?: string;
 }): Promise<AuthResponse> {
+  const cleanEmail = payload.email.trim().toLowerCase();
   const user: AdminUser = {
     id: `local-${Date.now()}`,
     name: payload.name.trim(),
-    email: payload.email.trim().toLowerCase(),
-    role: 'admin',
+    email: cleanEmail,
+    role: 'uploader',
     organization: payload.organization || 'Campus Creator',
     bio: payload.bio || '',
     avatar_color: '#0ea5e9',
@@ -781,12 +784,12 @@ export async function registerUploader(payload: {
 export async function getMyProfile(): Promise<UploaderProfileResponse> {
   const user = getAdminUser() ?? {
     id: 'local-admin',
-    name: 'Facilities & AI Operations Admin',
-    email: 'admin@navigator.dev',
+    name: 'MITE Campus Admin',
+    email: 'admin@navigator.local',
     role: 'admin',
   };
-  const bundle = await syncVaultIntoBundle();
-  const venues = bundle?.venues ?? [];
+  // Strictly return ONLY venues built/owned by THIS signed-in account!
+  const venues = await vaultGetAdminVenues(user.email);
   const totalPhotos = venues.reduce((a, v) => a + v.stats.photos, 0);
   const totalPlaces = venues.reduce((a, v) => a + v.stats.places, 0);
   return {
@@ -848,7 +851,7 @@ export async function revokeOtherSessions(): Promise<AuthResponse> {
 // ---------------------------------------------------------------------------
 
 export async function getAdminVenues(): Promise<VenueSummary[]> {
-  return vaultGetAdminVenues();
+  return vaultGetAdminVenues(getAdminUser()?.email ?? null);
 }
 
 export async function createAdminVenue(payload: CreateVenuePayload): Promise<VenueSummary> {

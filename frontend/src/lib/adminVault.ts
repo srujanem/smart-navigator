@@ -42,6 +42,7 @@ interface VaultPhotoRecord {
 }
 
 interface VaultCreatedVenue {
+  owner_email: string;
   summary: VenueSummary;
   detail: VenueDetail;
   graph: Graph;
@@ -55,12 +56,28 @@ interface VaultState {
   addedNodes?: { slug: string; node: GNode }[];
 }
 
-// Built-in demo platform venues hidden from Admin Studio so the admin only sees their own campus + created places
-const HIDDEN_DEMO_VENUE_SLUGS = new Set([
-  'city-care',
-  'metro-civic',
-  'horizon-campus',
+// Only the MITE primary owner account can edit the bundled MITE venue;
+// every other registered admin/creator ONLY sees & edits places they personally build!
+const MITE_OWNER_EMAILS = new Set([
+  'admin@navigator.local',
+  'admin@navigator.dev',
 ]);
+
+function getActiveOwnerEmail(explicitEmail?: string | null): string {
+  if (explicitEmail && explicitEmail.trim()) {
+    return explicitEmail.trim().toLowerCase();
+  }
+  try {
+    const raw = localStorage.getItem('navigator_admin_user');
+    if (raw) {
+      const parsed = JSON.parse(raw) as { email?: string };
+      if (parsed?.email) return parsed.email.trim().toLowerCase();
+    }
+  } catch {
+    // Ignore storage read errors
+  }
+  return '';
+}
 
 let memoryVault: VaultState | null = null;
 let idbLoadPromise: Promise<VaultState> | null = null;
@@ -622,16 +639,33 @@ export async function vaultGetAdminOverview(slug: string): Promise<AdminOverview
   };
 }
 
-export async function vaultGetAdminVenues(): Promise<VenueSummary[]> {
+export async function vaultGetAdminVenues(explicitEmail?: string | null): Promise<VenueSummary[]> {
   const bundle = await syncVaultIntoBundle();
+  const vault = await getVaultState();
+  const ownerEmail = getActiveOwnerEmail(explicitEmail);
   const all = bundle?.venues ?? [];
-  const filtered = all.filter((v) => !HIDDEN_DEMO_VENUE_SLUGS.has(v.slug));
-  return filtered.length > 0 ? filtered : all;
+
+  if (!ownerEmail) return [];
+
+  // Slugs explicitly created by THIS exact signed-in account
+  const ownedSlugs = new Set<string>(
+    (vault.createdVenues ?? [])
+      .filter((cv) => (cv.owner_email || '').toLowerCase() === ownerEmail)
+      .map((cv) => cv.summary.slug),
+  );
+
+  // Only the MITE primary owner account gets edit access to the bundled MITE venue
+  if (MITE_OWNER_EMAILS.has(ownerEmail)) {
+    ownedSlugs.add('mite');
+  }
+
+  return all.filter((v) => ownedSlugs.has(v.slug));
 }
 
 export async function vaultCreateVenue(payload: CreateVenuePayload): Promise<VenueSummary> {
   const bundle = await syncVaultIntoBundle();
   const vault = await getVaultState();
+  const ownerEmail = getActiveOwnerEmail() || 'admin@navigator.local';
   const slug =
     payload.slug?.trim() ||
     payload.name
@@ -695,7 +729,7 @@ export async function vaultCreateVenue(payload: CreateVenuePayload): Promise<Ven
 
   if (!vault.createdVenues) vault.createdVenues = [];
   vault.createdVenues = vault.createdVenues.filter((v) => v.summary.slug !== slug);
-  vault.createdVenues.push({ summary, detail, graph });
+  vault.createdVenues.push({ owner_email: ownerEmail, summary, detail, graph });
   await saveVaultState(vault);
 
   if (bundle) {

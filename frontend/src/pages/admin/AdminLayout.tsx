@@ -33,7 +33,7 @@ const SELECTED_VENUE_KEY = 'navigator_admin_selected_venue';
 const DIRECT_TABS = [
   {
     to: '/admin/dataset',
-    label: 'Photos 360°',
+    label: 'Photos',
     icon: Camera,
   },
   {
@@ -67,19 +67,15 @@ export const AdminLayout: React.FC = () => {
   const [creatingVenue, setCreatingVenue] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
 
-  const [selectedSlug, setSelectedSlugState] = useState<string>(() => {
-    return (
-      searchParams.get('venue') ||
-      localStorage.getItem(SELECTED_VENUE_KEY) ||
-      'mite'
-    );
-  });
+  // Never pre-populate another user's venue slug before verifying strict ownership!
+  const [selectedSlug, setSelectedSlugState] = useState<string>('');
 
   const setSelectedSlug = useCallback(
     (slug: string) => {
       setSelectedSlugState(slug);
       try {
-        localStorage.setItem(SELECTED_VENUE_KEY, slug);
+        if (slug) localStorage.setItem(SELECTED_VENUE_KEY, slug);
+        else localStorage.removeItem(SELECTED_VENUE_KEY);
       } catch {
         // Ignore
       }
@@ -95,6 +91,7 @@ export const AdminLayout: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
+      // Strictly returns ONLY venues built/owned by the currently signed-in account
       const list = await getAdminVenues();
       setVenues(list);
       if (list.length > 0) {
@@ -103,25 +100,39 @@ export const AdminLayout: React.FC = () => {
         const match =
           list.find((v) => v.slug === queryVenue) ||
           list.find((v) => v.slug === saved) ||
-          list.find((v) => v.slug === 'mite') ||
           list[0];
-        if (match && match.slug !== selectedSlug) {
+        if (match) {
           setSelectedSlugState(match.slug);
           try {
             localStorage.setItem(SELECTED_VENUE_KEY, match.slug);
           } catch {
             // Ignore
           }
+          if (queryVenue && queryVenue !== match.slug) {
+            const next = new URLSearchParams(searchParams);
+            next.set('venue', match.slug);
+            setSearchParams(next, { replace: true });
+          }
         }
       } else {
         setSelectedSlugState('');
+        try {
+          localStorage.removeItem(SELECTED_VENUE_KEY);
+        } catch {
+          // Ignore
+        }
+        if (searchParams.get('venue')) {
+          const next = new URLSearchParams(searchParams);
+          next.delete('venue');
+          setSearchParams(next, { replace: true });
+        }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load your campus.');
+      setError(err instanceof Error ? err.message : 'Unable to load your places.');
     } finally {
       setLoading(false);
     }
-  }, [searchParams, selectedSlug]);
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     if (token) {
@@ -143,12 +154,15 @@ export const AdminLayout: React.FC = () => {
     );
   }
 
-  // Send /admin directly to Photos & 360° so admin never lands on confusing analytics charts
+  // Send /admin directly to Photos so admin never lands on confusing analytics charts
   if (location.pathname === '/admin' || location.pathname === '/admin/') {
-    const targetSlug = selectedSlug || 'mite';
     return (
       <Navigate
-        to={`/admin/dataset?venue=${encodeURIComponent(targetSlug)}`}
+        to={
+          selectedSlug
+            ? `/admin/dataset?venue=${encodeURIComponent(selectedSlug)}`
+            : '/admin/dataset'
+        }
         replace
       />
     );
@@ -270,31 +284,31 @@ export const AdminLayout: React.FC = () => {
               </div>
             </div>
 
-            {/* Row 2: Always-Visible Direct Navigation Tabs */}
-            <nav className="grid grid-cols-3 gap-1.5">
-              {DIRECT_TABS.map((tab) => {
-                const Icon = tab.icon;
-                const isActive = location.pathname.startsWith(tab.to);
-                const targetHref = selectedSlug
-                  ? `${tab.to}?venue=${encodeURIComponent(selectedSlug)}`
-                  : tab.to;
+            {/* Row 2: Always-Visible Direct Navigation Tabs (Only shown once user owns a place) */}
+            {selectedSlug && (
+              <nav className="grid grid-cols-3 gap-1.5">
+                {DIRECT_TABS.map((tab) => {
+                  const Icon = tab.icon;
+                  const isActive = location.pathname.startsWith(tab.to);
+                  const targetHref = `${tab.to}?venue=${encodeURIComponent(selectedSlug)}`;
 
-                return (
-                  <Link
-                    key={tab.to}
-                    to={targetHref}
-                    className={`flex items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-extrabold whitespace-nowrap transition ${
-                      isActive
-                        ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow'
-                        : 'bg-white/[0.06] text-slate-300 hover:bg-white/[0.12] hover:text-white'
-                    }`}
-                  >
-                    <Icon className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate">{tab.label}</span>
-                  </Link>
-                );
-              })}
-            </nav>
+                  return (
+                    <Link
+                      key={tab.to}
+                      to={targetHref}
+                      className={`flex items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-extrabold whitespace-nowrap transition ${
+                        isActive
+                          ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow'
+                          : 'bg-white/[0.06] text-slate-300 hover:bg-white/[0.12] hover:text-white'
+                      }`}
+                    >
+                      <Icon className="h-3.5 w-3.5 shrink-0" />
+                      <span>{tab.label}</span>
+                    </Link>
+                  );
+                })}
+              </nav>
+            )}
           </div>
         </header>
 
@@ -312,15 +326,15 @@ export const AdminLayout: React.FC = () => {
           ) : !selectedSlug ? (
             <div className="mx-auto max-w-md rounded-3xl bg-white p-8 text-center shadow-lg ring-1 ring-slate-200 space-y-4 mt-8">
               <h2 className="font-display text-xl font-extrabold text-slate-950">
-                Create Your First Place
+                Create Your Own Place
               </h2>
-              <p className="text-xs text-slate-600">
-                Add your college, building, or office to start uploading room photos &amp; 360° views.
+              <p className="text-xs text-slate-600 leading-relaxed">
+                You only have access to maps and photos that <strong>you</strong> build. Tap below to create your campus, building, or office.
               </p>
               <button
                 type="button"
                 onClick={() => setCreateOpen(true)}
-                className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-extrabold text-white shadow"
+                className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-emerald-600 px-5 py-3 text-sm font-extrabold text-white shadow hover:bg-emerald-500 transition"
               >
                 <Plus className="h-4 w-4" />
                 Create New Place

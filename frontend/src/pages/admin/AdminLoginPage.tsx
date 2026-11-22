@@ -146,7 +146,7 @@ export const AdminLoginPage: React.FC = () => {
         organization: regOrg.trim(),
         bio: regBio.trim(),
       });
-      navigate('/admin/profile', { replace: true });
+      navigate('/admin/dataset', { replace: true });
     } catch (err) {
       setError(
         err instanceof Error ? err.message : 'Could not create uploader account.',
