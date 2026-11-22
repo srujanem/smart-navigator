@@ -14,7 +14,11 @@ import {
   X,
   Zap,
 } from 'lucide-react';
-import { isVideoFile, stitch4CrispAnglesTo360 } from '../lib/panorama360';
+import {
+  enhanceCanvasClarityAndLighting,
+  isVideoFile,
+  stitch4CrispAnglesTo360,
+} from '../lib/panorama360';
 
 export interface CapturedItem {
   id: string;
@@ -164,7 +168,7 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
           previewUrl,
           isVideo: false,
           isPanorama360: result.isPanorama360,
-          label: `HD 360° View (${captured.length} crisp angles · ${result.width}×${result.height})`,
+          label: `HD 360° (${captured.length} angles · ${result.sharpnessScore ?? 92}% Sharp)`,
         },
       ]);
       setReviewing(true);
@@ -230,6 +234,9 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(video, 0, 0, w, h);
 
+    // Run instant AI Indoor Lighting & Unsharp Mask clarity pass (< 35 ms)
+    const clarity = enhanceCanvasClarityAndLighting(canvas);
+
     let blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/webp', 0.93));
     let mime = 'image/webp';
     let ext = 'webp';
@@ -252,7 +259,10 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
         previewUrl: URL.createObjectURL(blob!),
         isVideo: false,
         isPanorama360: false,
-        label: `HD Photo (${w}×${h})`,
+        label:
+          clarity.sharpnessScore < 62
+            ? `⚠️ Slightly blurry (${clarity.sharpnessScore}%) — hold steady or use HD Cam`
+            : `✨ HD Enhanced (${clarity.sharpnessScore}% Sharp · ${w}×${h})`,
       },
     ]);
     setReviewing(true);

@@ -34,10 +34,17 @@ def _load_or_create_secret(filename: str, env_var: str, nbytes: int = 32) -> str
 
 
 # "auto" -> try DINOv2 (torch + transformers), fall back to classic CV descriptor.
-# "dinov2" / "classic" force a specific embedder.
+# "dinov2" / "classic" / "megaloc" / "salad" force a specific embedder.
 EMBEDDER = os.getenv("NAV_EMBEDDER", "auto")
 DINO_MODEL = os.getenv("NAV_DINO_MODEL", "facebook/dinov2-small")
 ENABLE_OCR = os.getenv("NAV_OCR", "1") == "1"
+
+# Optional Advanced GPU Visual Place Recognition (MegaLoc / DINOv2-SALAD + LightGlue)
+# and Zero-GPU Gemini 2.5 Flash Vision API Signboard/Landmark Verification
+ENABLE_GPU_VPR = os.getenv("NAV_GPU_VPR", "0") == "1"
+GPU_VPR_MODEL = os.getenv("NAV_GPU_VPR_MODEL", "gmberton/MegaLoc")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_VISION_MODEL = os.getenv("NAV_GEMINI_MODEL", "gemini-2.5-flash")
 
 SECRET_KEY = _load_or_create_secret(".secret_key", "NAV_SECRET", nbytes=32)
 TOKEN_TTL_HOURS = 24 * 7

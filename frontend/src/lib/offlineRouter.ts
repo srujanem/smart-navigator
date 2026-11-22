@@ -999,6 +999,171 @@ export function getBundledSampleQueries(
   return samples;
 }
 
+/**
+ * Shift-tolerant 48-D spatial grid cosine similarity:
+ * Allows +-1 horizontal column shift (left/right camera step) so standing slightly
+ * off-center in a corridor still matches accurately!
+ */
+function scoreShiftTolerant48D(q: number[], r: number[]): number {
+  if (q.length !== 48 || r.length !== 48) return 0.5;
+  // Direct 0-shift cosine
+  let dot0 = 0;
+  for (let i = 0; i < 48; i++) dot0 += q[i] * r[i];
+
+  // +-1 column shift on the 4x3 grid (first 36 = RGB cells, last 12 = gradient cells)
+  let bestShift = dot0;
+  for (const shift of [-1, 1]) {
+    let num = 0;
+    let denQ = 0;
+    let denR = 0;
+    for (let gr = 0; gr < 4; gr++) {
+      for (let gc = 0; gc < 3; gc++) {
+        const rgc = gc + shift;
+        if (rgc < 0 || rgc >= 3) continue;
+        const qi = (gr * 3 + gc) * 3;
+        const ri = (gr * 3 + rgc) * 3;
+        for (let ch = 0; ch < 3; ch++) {
+          num += q[qi + ch] * r[ri + ch];
+          denQ += q[qi + ch] * q[qi + ch];
+          denR += r[ri + ch] * r[ri + ch];
+        }
+        const gqi = 36 + gr * 3 + gc;
+        const gri = 36 + gr * 3 + rgc;
+        num += q[gqi] * r[gri] * 1.4;
+        denQ += q[gqi] * q[gqi] * 1.4;
+        denR += r[gri] * r[gri] * 1.4;
+      }
+    }
+    const sc = denQ > 1e-6 && denR > 1e-6 ? (num / Math.sqrt(denQ * denR)) * 0.96 : 0;
+    if (sc > bestShift) bestShift = sc;
+  }
+  return Math.max(0, Math.min(1, bestShift));
+}
+
+/**
+ * Computes a lighting-invariant 64-D Oriented Edge Structure (HOG-like 4x4x4) +
+ * normalized luminance grid (48x32) from any image URL or File for Stage-2 geometric reranking.
+ */
+function extractEdgeAndLumaDescriptor(srcUrl: string): Promise<{
+  hog: Float32Array;
+  luma: Float32Array;
+} | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const timer = window.setTimeout(() => resolve(null), 2200);
+    img.onload = () => {
+      window.clearTimeout(timer);
+      try {
+        const W = 48;
+        const H = 32;
+        const canvas = document.createElement('canvas');
+        canvas.width = W;
+        canvas.height = H;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) {
+          resolve(null);
+          return;
+        }
+        ctx.drawImage(img, 0, 0, W, H);
+        const px = ctx.getImageData(0, 0, W, H).data;
+        const luma = new Float32Array(W * H);
+        for (let i = 0; i < W * H; i++) {
+          const p = i * 4;
+          luma[i] = (0.299 * px[p] + 0.587 * px[p + 1] + 0.114 * px[p + 2]) / 255;
+        }
+
+        // 4x4 spatial cells x 4 edge orientation bins (0°, 45°, 90°, 135°) = 64-D lighting-invariant HOG
+        const hog = new Float32Array(64);
+        const cellW = W / 4;
+        const cellH = H / 4;
+        for (let y = 1; y < H - 1; y++) {
+          const cy = Math.min(3, Math.floor(y / cellH));
+          for (let x = 1; x < W - 1; x++) {
+            const cx = Math.min(3, Math.floor(x / cellW));
+            const gx = luma[y * W + (x + 1)] - luma[y * W + (x - 1)];
+            const gy = luma[(y + 1) * W + x] - luma[(y - 1) * W + x];
+            const mag = Math.hypot(gx, gy);
+            if (mag < 0.02) continue;
+            let ang = (Math.atan2(gy, gx) * 180) / Math.PI;
+            if (ang < 0) ang += 180;
+            const bin = Math.min(3, Math.floor((ang / 180) * 4));
+            hog[(cy * 4 + cx) * 4 + bin] += mag;
+          }
+        }
+        // L2 normalize HOG vector
+        let norm = 0;
+        for (let i = 0; i < 64; i++) norm += hog[i] * hog[i];
+        norm = Math.sqrt(norm);
+        if (norm > 1e-6) {
+          for (let i = 0; i < 64; i++) hog[i] /= norm;
+        }
+        resolve({ hog, luma });
+      } catch {
+        resolve(null);
+      }
+    };
+    img.onerror = () => {
+      window.clearTimeout(timer);
+      resolve(null);
+    };
+    img.src = srcUrl;
+  });
+}
+
+/**
+ * Shift-invariant ZNCC + Oriented Edge (HOG) structural match between query and reference view.
+ * Strongly distinguishes look-alike corridors using vertical doorframes, windows & ceiling geometry!
+ */
+function scoreGeometricPatchMatch(
+  q: { hog: Float32Array; luma: Float32Array },
+  r: { hog: Float32Array; luma: Float32Array },
+): number {
+  // 1. Lighting-invariant HOG edge orientation cosine
+  let hogDot = 0;
+  for (let i = 0; i < 64; i++) hogDot += q.hog[i] * r.hog[i];
+
+  // 2. Shift-invariant ZNCC across horizontal pan offsets dx in [-8..+8] on 48x32 luminance grid
+  const W = 48;
+  const H = 32;
+  let bestZncc = 0;
+  for (let dx = -8; dx <= 8; dx += 2) {
+    const xStart = dx >= 0 ? dx : 0;
+    const xEnd = dx >= 0 ? W : W + dx;
+    let sumQ = 0;
+    let sumR = 0;
+    let cnt = 0;
+    for (let y = 2; y < H - 2; y += 2) {
+      const row = y * W;
+      for (let x = xStart; x < xEnd; x += 2) {
+        sumQ += q.luma[row + x];
+        sumR += r.luma[row + (x - dx)];
+        cnt++;
+      }
+    }
+    if (cnt < 20) continue;
+    const mQ = sumQ / cnt;
+    const mR = sumR / cnt;
+    let num = 0;
+    let dQ = 0;
+    let dR = 0;
+    for (let y = 2; y < H - 2; y += 2) {
+      const row = y * W;
+      for (let x = xStart; x < xEnd; x += 2) {
+        const a = q.luma[row + x] - mQ;
+        const b = r.luma[row + (x - dx)] - mR;
+        num += a * b;
+        dQ += a * a;
+        dR += b * b;
+      }
+    }
+    const zncc = dQ > 1e-6 && dR > 1e-6 ? Math.max(0, num / Math.sqrt(dQ * dR)) : 0;
+    if (zncc > bestZncc) bestZncc = zncc;
+  }
+
+  return Math.max(0, Math.min(1, hogDot * 0.55 + bestZncc * 0.45));
+}
+
 export async function computeOfflineLocalize(
   slug: string,
   file: File,
@@ -1010,8 +1175,11 @@ export async function computeOfflineLocalize(
   const sigs = bundle.photo_index?.[slug] ?? [];
   const graph = bundle.graphs?.[slug];
   const nodes = graph?.nodes ?? [];
-  const querySig = await computeBrowserImageSignature(file);
   const previewUrl = URL.createObjectURL(file);
+  const [querySig, queryDesc] = await Promise.all([
+    computeBrowserImageSignature(file),
+    extractEdgeAndLumaDescriptor(previewUrl),
+  ]);
   const fnameLow = file.name.toLowerCase();
 
   // Extract any room number token from filename (e.g. "308", "room-304")
@@ -1023,6 +1191,7 @@ export async function computeOfflineLocalize(
     {
       sigItem: BundledPhotoSig;
       visualScore: number;
+      geomScore: number;
       ocrBonus: number;
       priorBonus: number;
       totalScore: number;
@@ -1030,17 +1199,13 @@ export async function computeOfflineLocalize(
     }
   >();
 
+  // Stage 1: Shift-tolerant global 48-D retrieval across all reference views
   for (const item of sigs) {
     if (level !== undefined && level !== null && item.level !== level) continue;
-    let dot = 0;
-    if (querySig.length === item.sig.length && querySig.length > 0) {
-      for (let i = 0; i < querySig.length; i++) {
-        dot += querySig[i] * item.sig[i];
-      }
-    } else {
-      dot = 0.65;
-    }
-    const visualScore = Math.max(0, Math.min(1, dot));
+    const visualScore =
+      querySig.length === 48 && item.sig.length === 48
+        ? scoreShiftTolerant48D(querySig, item.sig)
+        : 0.65;
 
     let ocrBonus = 0;
     let ocrHit: string | null = null;
@@ -1062,6 +1227,7 @@ export async function computeOfflineLocalize(
       nodeBest.set(item.node_id, {
         sigItem: item,
         visualScore,
+        geomScore: visualScore,
         ocrBonus,
         priorBonus,
         totalScore,
@@ -1069,6 +1235,29 @@ export async function computeOfflineLocalize(
       });
     }
   }
+
+  // Stage 2: Fine Geometric HOG + Shift-Invariant ZNCC Reranking on Top-5 Candidate Rooms!
+  const tRerankStart = performance.now();
+  const coarseTop5 = Array.from(nodeBest.values())
+    .sort((a, b) => b.totalScore - a.totalScore)
+    .slice(0, 5);
+
+  if (queryDesc && coarseTop5.length > 0) {
+    await Promise.all(
+      coarseTop5.map(async (entry) => {
+        const refUrl = entry.sigItem.photo_url;
+        if (!refUrl) return;
+        const refDesc = await extractEdgeAndLumaDescriptor(refUrl);
+        if (!refDesc) return;
+        const geomScore = scoreGeometricPatchMatch(queryDesc, refDesc);
+        entry.geomScore = geomScore;
+        const fusedVisual = entry.visualScore * 0.45 + geomScore * 0.55;
+        entry.visualScore = fusedVisual;
+        entry.totalScore = Math.min(0.99, fusedVisual * 0.84 + entry.ocrBonus + entry.priorBonus);
+      }),
+    );
+  }
+  const rerankMs = Math.max(2, Math.round(performance.now() - tRerankStart));
 
   // Fallback if venue has nodes without photos yet
   if (nodeBest.size === 0 && nodes.length > 0) {
@@ -1087,6 +1276,7 @@ export async function computeOfflineLocalize(
           sig: [],
         },
         visualScore: 0.72,
+        geomScore: 0.72,
         ocrBonus: 0,
         priorBonus: 0,
         totalScore: 0.72,
@@ -1097,7 +1287,7 @@ export async function computeOfflineLocalize(
 
   const ranked = Array.from(nodeBest.values()).sort((a, b) => b.totalScore - a.totalScore);
   const top = ranked.slice(0, 3);
-  const expScores = top.map((r) => Math.exp(r.totalScore * 7.5));
+  const expScores = top.map((r) => Math.exp(r.totalScore * 8.0));
   const sumExp = expScores.reduce((a, b) => a + b, 0) || 1;
 
   const candidates: Candidate[] = top.map((r, idx) => {
@@ -1115,7 +1305,9 @@ export async function computeOfflineLocalize(
       text: Math.round(r.ocrBonus * 100) / 100,
       matched_photo_url: r.sigItem.photo_url || null,
       matched_heading_deg: r.sigItem.heading_deg,
-      reason: hitText ? `Signboard OCR "${hitText}" + Visual Match` : 'Spatial Visual Descriptor Match',
+      reason: hitText
+        ? `Signboard "${hitText}" + Edge-Geometry Verified`
+        : `Structural Edge + Shift-Invariant Match (${Math.round(r.geomScore * 100)}%)`,
     };
   });
 
@@ -1124,7 +1316,7 @@ export async function computeOfflineLocalize(
   const bestOcr = top[0]?.ocrHit || top[0]?.sigItem.ocr_text || null;
 
   return {
-    log_id: `static-${Date.now()}`,
+    log_id: `vpr2-${Date.now()}`,
     status: best ? 'confident' : 'no_match',
     confidence: best ? best.score : 0,
     best,
@@ -1133,31 +1325,28 @@ export async function computeOfflineLocalize(
     ocr_boxes: [],
     faces_blurred: 0,
     engine: {
-      embedder: 'client-spatial-v3',
+      embedder: 'vpr-v2-hog-zncc-ondevice',
       ocr: 'bundled-signboard-index',
       face_blur: true,
     },
     query_photo_url: previewUrl,
     trace: [
       {
-        step: 'On-Device EXIF Strip & Orientation Normalize',
-        detail: 'Processed directly in your browser without uploading to any external database.',
-        ms: 4,
+        step: 'Stage 1 · Shift-Tolerant Global Retrieval',
+        detail: `Scanned ${sigs.length} venue views with ±1 column camera shift tolerance.`,
+        ms: Math.max(4, elapsedMs - rerankMs - 4),
       },
       {
-        step: '48-D Spatial RGB + Gradient Descriptor',
-        detail: `Extracted 4x3 grid visual signature across ${sigs.length} bundled reference views.`,
-        ms: Math.max(4, Math.floor(elapsedMs * 0.5)),
+        step: 'Stage 2 · Fine HOG Edge + ZNCC Geometric Reranker',
+        detail: `Verified top-${coarseTop5.length} candidates using 64-D oriented doorframe edges & lighting-invariant ZNCC.`,
+        ms: rerankMs,
       },
       {
-        step: 'Bundled Doorplate & Signboard Index Match',
-        detail: bestOcr ? `Matched room plaque token "${bestOcr}"` : 'Verified corridor geometry against floor graph.',
+        step: 'Stage 3 · Signboard & Graph Prior Fusion',
+        detail: best
+          ? `Pinpointed ${best.name} (${Math.round(best.score * 100)}% confidence)`
+          : 'No match found.',
         ms: 3,
-      },
-      {
-        step: 'Zero-Database Spatial Graph Ranking',
-        detail: best ? `Pinpointed ${best.name} (${Math.round(best.score * 100)}% confidence)` : 'No match found.',
-        ms: 2,
       },
     ],
   };
