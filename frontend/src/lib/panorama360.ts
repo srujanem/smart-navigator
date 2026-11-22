@@ -1,9 +1,11 @@
 /**
- * On-Device 360° Video-to-Panorama Stitcher & Smart Media Processor.
+ * On-Device 360° Capture & Panorama Stitcher.
  *
- * Allows any normal smartphone (without an Insta360 camera) to capture a true 360°
- * room or corridor view by simply recording a 6–10 second slow spin video — OR
- * uploading a phone Panorama ("Pano") photo.
+ * Works 100% reliably on Android Chrome, iPhone Safari, and desktop browsers:
+ *  - Live 10-second 360° Spin Capture grabs frames directly from the live camera
+ *    and stitches them with smooth feathered seams (zero MediaRecorder codec bugs!).
+ *  - Gallery MP4/MOV/WebM videos are decoded safely and stitched into a 360° panorama.
+ *  - Wide Phone Panorama ("Pano") photos are auto-detected and preserved at wide resolution.
  */
 
 export interface ProcessedMediaResult {
@@ -35,7 +37,7 @@ function canvasToOptimizedFile(
 ): Promise<File> {
   return new Promise((resolve, reject) => {
     const finish = (blob: Blob | null, mime: string, ext: string) => {
-      if (!blob) {
+      if (!blob || blob.size === 0) {
         reject(new Error('Could not encode image canvas.'));
         return;
       }
@@ -60,6 +62,124 @@ function canvasToOptimizedFile(
   });
 }
 
+/**
+ * Stitches an ordered sequence of captured camera/video canvases (around a 360° turn)
+ * into one wide, feathered, seamless 360° panoramic WebP image.
+ */
+export async function stitchCanvasesToPanorama(
+  tempFrames: HTMLCanvasElement[],
+  baseName = 'room_360',
+  onProgress?: (pct: number, stage: string) => void,
+): Promise<ProcessedMediaResult> {
+  if (tempFrames.length === 0) {
+    throw new Error('No frames captured for 360° panorama.');
+  }
+
+  // If only 1 frame was captured, save it cleanly as a normal photo
+  if (tempFrames.length === 1) {
+    const fc = tempFrames[0];
+    const file = await canvasToOptimizedFile(fc, baseName, 0.85);
+    return {
+      file,
+      isPanorama360: fc.width / Math.max(1, fc.height) >= 1.75,
+      aspectRatio: fc.width / Math.max(1, fc.height),
+      width: fc.width,
+      height: fc.height,
+    };
+  }
+
+  onProgress?.(78, 'Blending seamless 360° panorama...');
+
+  const frameW = tempFrames[0].width;
+  const targetH = tempFrames[0].height;
+
+  // Keep clean center strip of each angle and softly feather overlapping edges
+  const stripRatio = tempFrames.length >= 6 ? 0.54 : 0.72;
+  const overlapRatio = 0.16;
+  const srcCropW = Math.max(80, Math.round(frameW * stripRatio));
+  const srcCropX = Math.max(0, Math.round((frameW - srcCropW) / 2));
+  const overlapPx = Math.round(srcCropW * overlapRatio);
+  const stepPx = Math.max(60, srcCropW - overlapPx);
+
+  const rawTotalW = stepPx * tempFrames.length + overlapPx;
+  const maxPanoW = 2400;
+  const outScale = Math.min(1, maxPanoW / Math.max(1, rawTotalW));
+  const outW = Math.max(640, Math.round(rawTotalW * outScale));
+  const outH = Math.max(320, Math.round(targetH * outScale));
+
+  const panoCanvas = document.createElement('canvas');
+  panoCanvas.width = outW;
+  panoCanvas.height = outH;
+  const pctx = panoCanvas.getContext('2d');
+  if (!pctx) {
+    throw new Error('Canvas 2D context unavailable.');
+  }
+
+  pctx.fillStyle = '#060a14';
+  pctx.fillRect(0, 0, outW, outH);
+
+  const scratch = document.createElement('canvas');
+  scratch.width = Math.max(1, Math.round(srcCropW * outScale));
+  scratch.height = outH;
+  const sctx = scratch.getContext('2d');
+  const featheredOverlap = Math.max(4, Math.round(overlapPx * outScale));
+
+  for (let i = 0; i < tempFrames.length; i++) {
+    const dx = Math.round(i * stepPx * outScale);
+    if (i === 0 || !sctx) {
+      pctx.drawImage(
+        tempFrames[i],
+        srcCropX,
+        0,
+        srcCropW,
+        targetH,
+        dx,
+        0,
+        scratch.width,
+        outH,
+      );
+    } else {
+      sctx.clearRect(0, 0, scratch.width, outH);
+      sctx.globalCompositeOperation = 'source-over';
+      sctx.drawImage(
+        tempFrames[i],
+        srcCropX,
+        0,
+        srcCropW,
+        targetH,
+        0,
+        0,
+        scratch.width,
+        outH,
+      );
+      sctx.globalCompositeOperation = 'destination-in';
+      const grad = sctx.createLinearGradient(0, 0, featheredOverlap, 0);
+      grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(1, 'rgba(0,0,0,1)');
+      sctx.fillStyle = grad;
+      sctx.fillRect(0, 0, featheredOverlap, outH);
+      sctx.fillStyle = 'rgba(0,0,0,1)';
+      sctx.fillRect(featheredOverlap, 0, scratch.width - featheredOverlap, outH);
+      sctx.globalCompositeOperation = 'source-over';
+
+      pctx.drawImage(scratch, dx, 0);
+    }
+  }
+
+  onProgress?.(92, 'Compressing 360° panorama...');
+  const cleanStem = baseName.replace(/[^a-zA-Z0-9_-]/g, '_') || 'room_360';
+  const panoFile = await canvasToOptimizedFile(panoCanvas, `${cleanStem}_pano360`, 0.84);
+  onProgress?.(100, '360° panorama ready!');
+
+  return {
+    file: panoFile,
+    isPanorama360: true,
+    aspectRatio: outW / Math.max(1, outH),
+    width: outW,
+    height: outH,
+  };
+}
+
 function loadVideoElement(videoFile: File): Promise<{
   video: HTMLVideoElement;
   duration: number;
@@ -72,44 +192,67 @@ function loadVideoElement(videoFile: File): Promise<{
     video.preload = 'auto';
     video.muted = true;
     video.playsInline = true;
-    video.crossOrigin = 'anonymous';
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('muted', 'true');
     const objUrl = URL.createObjectURL(videoFile);
 
     let settled = false;
     const cleanup = () => {
+      try {
+        video.pause();
+      } catch {
+        // Ignore
+      }
       URL.revokeObjectURL(objUrl);
       video.removeAttribute('src');
       video.load();
     };
 
-    const timer = window.setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        cleanup();
-        reject(new Error('Video timed out while loading. Try a shorter 6–12 second clip.'));
-      }
-    }, 15_000);
-
-    video.onloadeddata = () => {
+    const finishSuccess = () => {
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
-      const dur = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 6;
+      const dur =
+        Number.isFinite(video.duration) && video.duration > 0.2 ? video.duration : 8;
       const vw = video.videoWidth || 1280;
       const vh = video.videoHeight || 720;
       resolve({ video, duration: dur, width: vw, height: vh, cleanup });
     };
 
+    const timer = window.setTimeout(() => {
+      if (!settled) {
+        if (video.readyState >= 2 && video.videoWidth > 0) {
+          finishSuccess();
+        } else {
+          settled = true;
+          cleanup();
+          reject(
+            new Error(
+              'Could not load video frames on this phone browser. Tip: Use the built-in "Camera / 360°" button to record your 10-sec 360° spin directly!',
+            ),
+          );
+        }
+      }
+    }, 12_000);
+
+    video.onloadeddata = () => finishSuccess();
+    video.oncanplay = () => finishSuccess();
     video.onerror = () => {
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
       cleanup();
-      reject(new Error('Could not decode this video format on your browser. Try MP4 or WebM.'));
+      reject(
+        new Error(
+          'Unsupported video format. Use MP4/WebM or record directly with the "Camera / 360°" button.',
+        ),
+      );
     };
 
     video.src = objUrl;
     video.load();
+    // Kick mobile Safari/Chrome decoder to buffer first frame
+    void video.play().then(() => video.pause()).catch(() => {});
   });
 }
 
@@ -124,7 +267,7 @@ function seekVideo(video: HTMLVideoElement, timeSec: number): Promise<void> {
     };
     const onSeeked = () => finish();
     video.addEventListener('seeked', onSeeked);
-    window.setTimeout(finish, 1800);
+    window.setTimeout(finish, 1500);
     try {
       video.currentTime = Math.max(0, timeSec);
     } catch {
@@ -134,23 +277,21 @@ function seekVideo(video: HTMLVideoElement, timeSec: number): Promise<void> {
 }
 
 /**
- * Converts a 360° spin video (recorded live or picked from gallery) into a single
- * smooth, feathered 360° panoramic WebP image that wraps seamlessly around Street View!
+ * Converts an uploaded MP4/MOV/WebM 360° spin video into a smooth 360° panoramic WebP image.
  */
 export async function stitch360VideoToPanorama(
   videoFile: File,
   onProgress?: (pct: number, stage: string) => void,
 ): Promise<ProcessedMediaResult> {
-  onProgress?.(5, 'Reading 360° video metadata...');
+  onProgress?.(6, 'Opening 360° video...');
   const { video, duration, width, height, cleanup } = await loadVideoElement(videoFile);
 
   try {
     const sliceCount = 8;
-    const targetH = Math.min(720, Math.max(420, height));
+    const targetH = Math.min(720, Math.max(400, height));
     const frameScale = targetH / Math.max(1, height);
     const frameW = Math.max(240, Math.round(width * frameScale));
 
-    // Extract 8 evenly spaced frames across the full 360° spin
     const tempFrames: HTMLCanvasElement[] = [];
     for (let i = 0; i < sliceCount; i++) {
       const t = Math.min(
@@ -159,7 +300,7 @@ export async function stitch360VideoToPanorama(
       );
       onProgress?.(
         10 + Math.round(((i + 1) / sliceCount) * 65),
-        `Capturing 360° angle ${i + 1} of ${sliceCount}...`,
+        `Extracting 360° angle ${i + 1} of ${sliceCount}...`,
       );
       await seekVideo(video, t);
 
@@ -173,103 +314,8 @@ export async function stitch360VideoToPanorama(
       }
     }
 
-    if (tempFrames.length === 0) {
-      throw new Error('Could not extract frames from video.');
-    }
-
-    onProgress?.(82, 'Stitching seamless 360° panorama strip...');
-
-    // Keep the clean center 58% of each frame and feather edges for smooth panoramic stitching
-    const stripRatio = 0.58;
-    const overlapRatio = 0.14;
-    const srcCropW = Math.round(frameW * stripRatio);
-    const srcCropX = Math.round((frameW - srcCropW) / 2);
-    const overlapPx = Math.round(srcCropW * overlapRatio);
-    const stepPx = Math.max(80, srcCropW - overlapPx);
-
-    const rawTotalW = stepPx * tempFrames.length + overlapPx;
-    // Cap final panorama width to 2400px so it stays super crisp yet lightweight (~150-250 KB WebP)
-    const maxPanoW = 2400;
-    const outScale = Math.min(1, maxPanoW / Math.max(1, rawTotalW));
-    const outW = Math.max(640, Math.round(rawTotalW * outScale));
-    const outH = Math.max(320, Math.round(targetH * outScale));
-
-    const panoCanvas = document.createElement('canvas');
-    panoCanvas.width = outW;
-    panoCanvas.height = outH;
-    const pctx = panoCanvas.getContext('2d');
-    if (!pctx) {
-      throw new Error('Canvas 2D context unavailable.');
-    }
-
-    pctx.fillStyle = '#060a14';
-    pctx.fillRect(0, 0, outW, outH);
-
-    // Scratch canvas for horizontal alpha feathering on the left overlap edge
-    const scratch = document.createElement('canvas');
-    scratch.width = Math.max(1, Math.round(srcCropW * outScale));
-    scratch.height = outH;
-    const sctx = scratch.getContext('2d');
-    const featheredOverlap = Math.max(4, Math.round(overlapPx * outScale));
-
-    for (let i = 0; i < tempFrames.length; i++) {
-      const dx = Math.round(i * stepPx * outScale);
-      if (i === 0 || !sctx) {
-        pctx.drawImage(
-          tempFrames[i],
-          srcCropX,
-          0,
-          srcCropW,
-          targetH,
-          dx,
-          0,
-          scratch.width,
-          outH,
-        );
-      } else {
-        sctx.clearRect(0, 0, scratch.width, outH);
-        sctx.globalCompositeOperation = 'source-over';
-        sctx.drawImage(
-          tempFrames[i],
-          srcCropX,
-          0,
-          srcCropW,
-          targetH,
-          0,
-          0,
-          scratch.width,
-          outH,
-        );
-        // Feather left edge of this strip so it blends softly over the previous frame
-        sctx.globalCompositeOperation = 'destination-in';
-        const grad = sctx.createLinearGradient(0, 0, featheredOverlap, 0);
-        grad.addColorStop(0, 'rgba(0,0,0,0)');
-        grad.addColorStop(1, 'rgba(0,0,0,1)');
-        sctx.fillStyle = grad;
-        sctx.fillRect(0, 0, featheredOverlap, outH);
-        sctx.fillStyle = 'rgba(0,0,0,1)';
-        sctx.fillRect(featheredOverlap, 0, scratch.width - featheredOverlap, outH);
-        sctx.globalCompositeOperation = 'source-over';
-
-        pctx.drawImage(scratch, dx, 0);
-      }
-    }
-
-    onProgress?.(94, 'Compressing 360° panorama to WebP...');
-    const stem = (videoFile.name.replace(/\.[^.]+$/, '') || 'room_360').replace(
-      /[^a-zA-Z0-9_-]/g,
-      '_',
-    );
-    const panoFile = await canvasToOptimizedFile(panoCanvas, `${stem}_pano360`, 0.84);
-    onProgress?.(100, '360° panorama ready!');
-
-    return {
-      file: panoFile,
-      isPanorama360: true,
-      aspectRatio: outW / Math.max(1, outH),
-      width: outW,
-      height: outH,
-    };
+    const stem = videoFile.name.replace(/\.[^.]+$/, '') || 'room_360';
+    return await stitchCanvasesToPanorama(tempFrames, stem, onProgress);
   } finally {
     cleanup();
   }
@@ -277,7 +323,7 @@ export async function stitch360VideoToPanorama(
 
 /**
  * Optimizes any photo (normal vertical door photo OR wide phone Panorama photo)
- * on-device with proper EXIF orientation and returns dimensions + 360° panorama flag.
+ * or stitches a gallery 360° video into a seamless 360° Panorama WebP.
  */
 export async function optimizePhotoOrPanorama(
   rawFile: File,
@@ -328,7 +374,9 @@ export async function optimizePhotoOrPanorama(
       img.src = url;
     });
     if (!imgRes) {
-      throw new Error(`Could not read "${rawFile.name}". Please choose a JPG, PNG, WebP, or MP4 file.`);
+      throw new Error(
+        `Could not read "${rawFile.name}". Please choose a JPG, PNG, WebP, or MP4 file.`,
+      );
     }
     source = imgRes.img;
     width = imgRes.w;
@@ -339,7 +387,6 @@ export async function optimizePhotoOrPanorama(
   try {
     const aspectRatio = width / Math.max(1, height);
     const isPanorama360 = aspectRatio >= 1.75;
-    // Preserve wider resolution for 360° phone panoramas, keep normal photos light & sharp
     const maxSide = isPanorama360 ? 2400 : 1440;
     const scale = Math.min(1, maxSide / Math.max(width, height, 1));
     const outW = Math.max(1, Math.round(width * scale));

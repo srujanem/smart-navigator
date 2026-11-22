@@ -59,6 +59,7 @@ import {
   vaultDeletePhoto,
   vaultGetAdminDataset,
   vaultGetAdminOverview,
+  vaultGetAdminVenues,
   vaultGetIndexReport,
   vaultUpdateNode,
   vaultUpdatePhoto,
@@ -847,8 +848,7 @@ export async function revokeOtherSessions(): Promise<AuthResponse> {
 // ---------------------------------------------------------------------------
 
 export async function getAdminVenues(): Promise<VenueSummary[]> {
-  const bundle = await syncVaultIntoBundle();
-  return bundle?.venues ?? [];
+  return vaultGetAdminVenues();
 }
 
 export async function createAdminVenue(payload: CreateVenuePayload): Promise<VenueSummary> {

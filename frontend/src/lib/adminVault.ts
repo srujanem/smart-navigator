@@ -9,9 +9,11 @@ import type {
   DatasetResponse,
   GEdge,
   GNode,
+  Graph,
   IndexReport,
   UpdateNodePayload,
   UploadPhotosResponse,
+  VenueDetail,
   VenueSummary,
 } from './types';
 import {
@@ -39,11 +41,26 @@ interface VaultPhotoRecord {
   is_360?: boolean;
 }
 
+interface VaultCreatedVenue {
+  summary: VenueSummary;
+  detail: VenueDetail;
+  graph: Graph;
+}
+
 interface VaultState {
   addedPhotos: VaultPhotoRecord[];
   movedPhotos: Record<string, { node_id?: string; heading_deg?: number | null; ocr_text?: string }>;
   deletedPhotoIds: string[];
+  createdVenues?: VaultCreatedVenue[];
+  addedNodes?: { slug: string; node: GNode }[];
 }
+
+// Built-in demo platform venues hidden from Admin Studio so the admin only sees their own campus + created places
+const HIDDEN_DEMO_VENUE_SLUGS = new Set([
+  'city-care',
+  'metro-civic',
+  'horizon-campus',
+]);
 
 let memoryVault: VaultState | null = null;
 let idbLoadPromise: Promise<VaultState> | null = null;
@@ -73,7 +90,13 @@ async function getVaultState(): Promise<VaultState> {
   if (memoryVault) return memoryVault;
   if (!idbLoadPromise) {
     idbLoadPromise = (async () => {
-      const empty: VaultState = { addedPhotos: [], movedPhotos: {}, deletedPhotoIds: [] };
+      const empty: VaultState = {
+        addedPhotos: [],
+        movedPhotos: {},
+        deletedPhotoIds: [],
+        createdVenues: [],
+        addedNodes: [],
+      };
       const db = await openVaultDb();
       if (!db) {
         memoryVault = empty;
@@ -85,7 +108,15 @@ async function getVaultState(): Promise<VaultState> {
           const req = tx.objectStore(IDB_STORE).get(VAULT_STATE_KEY);
           req.onsuccess = () => {
             const val = req.result as VaultState | undefined;
-            memoryVault = val && Array.isArray(val.addedPhotos) ? val : empty;
+            memoryVault =
+              val && Array.isArray(val.addedPhotos)
+                ? {
+                    ...empty,
+                    ...val,
+                    createdVenues: Array.isArray(val.createdVenues) ? val.createdVenues : [],
+                    addedNodes: Array.isArray(val.addedNodes) ? val.addedNodes : [],
+                  }
+                : empty;
             resolve(memoryVault);
           };
           req.onerror = () => {
@@ -128,8 +159,8 @@ function fileToDataUrl(file: File): Promise<string> {
 }
 
 /**
- * Applies all on-device Admin Vault changes (added photos, moved photos, deleted photos)
- * into the live in-memory bundle so Street View, 2D Map, and Dataset Inspector reflect changes immediately.
+ * Applies all on-device Admin Vault changes (created venues, added rooms, photos, moves, deletes)
+ * into the live in-memory bundle so Street View, 2D Map, and Admin Studio stay 100% synced.
  */
 export async function syncVaultIntoBundle(): Promise<BundledOfflineSnapshot | null> {
   const bundle = await loadBundledOfflineSnapshot();
@@ -138,6 +169,26 @@ export async function syncVaultIntoBundle(): Promise<BundledOfflineSnapshot | nu
   const deletedSet = new Set(vault.deletedPhotoIds);
 
   if (!bundle.photo_index) bundle.photo_index = {};
+
+  // Merge any custom venues created by the admin
+  for (const cv of vault.createdVenues ?? []) {
+    const sl = cv.summary.slug;
+    if (!bundle.venues.some((v) => v.slug === sl)) {
+      bundle.venues.push(cv.summary);
+    }
+    if (!bundle.details[sl]) bundle.details[sl] = cv.detail;
+    if (!bundle.graphs[sl]) bundle.graphs[sl] = cv.graph;
+    if (!bundle.people[sl]) bundle.people[sl] = [];
+    if (!bundle.photo_index[sl]) bundle.photo_index[sl] = [];
+  }
+
+  // Merge any custom rooms/nodes added by the admin
+  for (const item of vault.addedNodes ?? []) {
+    const g = bundle.graphs[item.slug];
+    if (g && !g.nodes.some((n) => n.id === item.node.id)) {
+      g.nodes.push(item.node);
+    }
+  }
 
   for (const slug of Object.keys(bundle.graphs)) {
     const graph = bundle.graphs[slug];
@@ -571,8 +622,16 @@ export async function vaultGetAdminOverview(slug: string): Promise<AdminOverview
   };
 }
 
+export async function vaultGetAdminVenues(): Promise<VenueSummary[]> {
+  const bundle = await syncVaultIntoBundle();
+  const all = bundle?.venues ?? [];
+  const filtered = all.filter((v) => !HIDDEN_DEMO_VENUE_SLUGS.has(v.slug));
+  return filtered.length > 0 ? filtered : all;
+}
+
 export async function vaultCreateVenue(payload: CreateVenuePayload): Promise<VenueSummary> {
   const bundle = await syncVaultIntoBundle();
+  const vault = await getVaultState();
   const slug =
     payload.slug?.trim() ||
     payload.name
@@ -593,48 +652,58 @@ export async function vaultCreateVenue(payload: CreateVenuePayload): Promise<Ven
     cover_url: null,
     stats: { buildings: 1, floors: 1, places: 1, people: 0, photos: 0 },
   };
+  const detail: VenueDetail = {
+    ...summary,
+    description: payload.description || payload.tagline,
+    emergency_node_id: `${slug}:entrance`,
+    entrance_node_id: `${slug}:entrance`,
+    categories: [{ key: 'general', label: 'General', count: 1 }],
+    buildings: [
+      {
+        id: bId,
+        name: payload.initial_building_name || 'Main Building',
+        x: 10,
+        y: 10,
+        w: 80,
+        d: 50,
+        floors: [{ id: fId, level: 0, name: payload.initial_floor_name || 'Ground Floor' }],
+      },
+    ],
+  };
+  const graph: Graph = {
+    nodes: [
+      {
+        id: `${slug}:entrance`,
+        name: 'Main Entrance',
+        kind: 'entrance',
+        category: 'general',
+        building_id: bId,
+        building_name: payload.initial_building_name || 'Main Building',
+        floor_id: fId,
+        floor_name: payload.initial_floor_name || 'Ground Floor',
+        level: 0,
+        x: 50,
+        y: 52,
+        keywords: 'entrance gate reception',
+        is_place: true,
+        photo_url: null,
+        photo_count: 0,
+      },
+    ],
+    edges: [],
+  };
+
+  if (!vault.createdVenues) vault.createdVenues = [];
+  vault.createdVenues = vault.createdVenues.filter((v) => v.summary.slug !== slug);
+  vault.createdVenues.push({ summary, detail, graph });
+  await saveVaultState(vault);
+
   if (bundle) {
-    bundle.venues.push(summary);
-    bundle.details[slug] = {
-      ...summary,
-      description: payload.description || payload.tagline,
-      emergency_node_id: `${slug}:entrance`,
-      entrance_node_id: `${slug}:entrance`,
-      categories: [{ key: 'general', label: 'General', count: 1 }],
-      buildings: [
-        {
-          id: bId,
-          name: payload.initial_building_name || 'Main Building',
-          x: 10,
-          y: 10,
-          w: 80,
-          d: 50,
-          floors: [{ id: fId, level: 0, name: payload.initial_floor_name || 'Ground Floor' }],
-        },
-      ],
-    };
-    bundle.graphs[slug] = {
-      nodes: [
-        {
-          id: `${slug}:entrance`,
-          name: 'Main Entrance',
-          kind: 'entrance',
-          category: 'general',
-          building_id: bId,
-          building_name: payload.initial_building_name || 'Main Building',
-          floor_id: fId,
-          floor_name: payload.initial_floor_name || 'Ground Floor',
-          level: 0,
-          x: 50,
-          y: 52,
-          keywords: 'entrance gate reception',
-          is_place: true,
-          photo_url: null,
-          photo_count: 0,
-        },
-      ],
-      edges: [],
-    };
+    if (!bundle.venues.some((v) => v.slug === slug)) {
+      bundle.venues.push(summary);
+    }
+    bundle.details[slug] = detail;
+    bundle.graphs[slug] = graph;
     bundle.people[slug] = [];
     if (!bundle.photo_index) bundle.photo_index = {};
     bundle.photo_index[slug] = [];
@@ -644,6 +713,7 @@ export async function vaultCreateVenue(payload: CreateVenuePayload): Promise<Ven
 
 export async function vaultCreateNode(slug: string, payload: CreateNodePayload): Promise<GNode> {
   const bundle = await syncVaultIntoBundle();
+  const vault = await getVaultState();
   const detail = bundle?.details?.[slug];
   const graph = bundle?.graphs?.[slug];
   const bldg = detail?.buildings.find((b) => b.id === payload.building_id) ?? detail?.buildings[0];
@@ -666,6 +736,9 @@ export async function vaultCreateNode(slug: string, payload: CreateNodePayload):
     photo_count: 0,
   };
   graph?.nodes.push(node);
+  if (!vault.addedNodes) vault.addedNodes = [];
+  vault.addedNodes.push({ slug, node });
+  await saveVaultState(vault);
   return node;
 }
 

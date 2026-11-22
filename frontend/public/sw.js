@@ -1,4 +1,4 @@
-const CACHE_NAME = 'navigator-pwa-v9';
+const CACHE_NAME = 'navigator-pwa-v10';
 const SHELL_ASSETS = ['/', '/index.html', '/manifest.json', '/favicon.svg', '/offline-bundle.json'];
 
 self.addEventListener('install', (event) => {

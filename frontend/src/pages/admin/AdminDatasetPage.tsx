@@ -8,6 +8,7 @@ import {
   HardDrive,
   Image as ImageIcon,
   Loader2,
+  Plus,
   Search,
   Trash2,
   Upload,
@@ -16,6 +17,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import {
+  createAdminNode,
   deleteAdminPhoto,
   downloadUpdatedStaticBundle,
   getAdminDataset,
@@ -64,14 +66,22 @@ export const AdminDatasetPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterMode, setFilterMode] = useState<'all' | 'missing' | 'mapped'>('all');
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
-  const [show360Tip, setShow360Tip] = useState(false);
+
+  // "+ Add Room" Quick Inline Modal
+  const [addRoomOpen, setAddRoomOpen] = useState(false);
+  const [newRoomName, setNewRoomName] = useState('');
+  const [addingRoom, setAddingRoom] = useState(false);
 
   // Full-Screen Camera Modal Target Room
   const [cameraRoom, setCameraRoom] = useState<DatasetNode | null>(null);
 
-  // =========================================================================
-  // STAGED DRAFT QUEUE (Make all changes first -> Tap "Upload & Save Changes")
-  // =========================================================================
+  // Immediate Gallery Preview & Confirm Modal (so user NEVER wonders where their picked photo/video went!)
+  const [galleryConfirm, setGalleryConfirm] = useState<{
+    room: DatasetNode;
+    items: StagedUploadItem[];
+  } | null>(null);
+
+  // Staged Queue for Multi-Room Batch Uploads / Moves / Deletes
   const [stagedUploads, setStagedUploads] = useState<StagedUploadItem[]>([]);
   const [stagedMoves, setStagedMoves] = useState<Record<string, string>>({});
   const [stagedDeletes, setStagedDeletes] = useState<string[]>([]);
@@ -92,7 +102,7 @@ export const AdminDatasetPage: React.FC = () => {
         setVenue(v);
         setDataset(ds);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unable to load venue rooms.');
+        setError(err instanceof Error ? err.message : 'Unable to load rooms.');
       } finally {
         if (!silent) setLoading(false);
       }
@@ -104,21 +114,8 @@ export const AdminDatasetPage: React.FC = () => {
     void loadData(false);
   }, [loadData]);
 
-  // Cleanup staged object URLs when unmounting
-  useEffect(() => {
-    return () => {
-      stagedUploads.forEach((item) => {
-        if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
-      });
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const addFilesToQueue = (room: DatasetNode, fileList: FileList | File[]) => {
-    const incoming = Array.from(fileList);
-    if (incoming.length === 0) return;
-
-    const newItems: StagedUploadItem[] = incoming.map((file) => {
+  const buildStagedItems = (room: DatasetNode, fileList: FileList | File[]): StagedUploadItem[] => {
+    return Array.from(fileList).map((file) => {
       const vid = isVideoFile(file);
       return {
         id: `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -129,8 +126,6 @@ export const AdminDatasetPage: React.FC = () => {
         isVideo: vid,
       };
     });
-
-    setStagedUploads((prev) => [...prev, ...newItems]);
   };
 
   const removeStagedUpload = (id: string) => {
@@ -173,25 +168,27 @@ export const AdminDatasetPage: React.FC = () => {
     stagedUploads.length + pendingMoveCount + stagedDeletes.length;
 
   // =========================================================================
-  // EXECUTE ALL STAGED CHANGES WITH LIVE 0% -> 100% PROGRESS BAR
+  // CORE UPLOAD EXECUTOR WITH LIVE 0% -> 100% PROGRESS BAR
   // =========================================================================
-  const handleUploadAndSaveAll = async () => {
-    if (!selectedSlug || totalPendingChanges === 0) return;
-
-    const uploadsSnapshot = [...stagedUploads];
-    const movesEntries = Object.entries(stagedMoves);
-    const deletesSnapshot = [...stagedDeletes];
-    const totalOps = uploadsSnapshot.length + movesEntries.length + deletesSnapshot.length;
+  const runUploadBatch = async (
+    uploadsToRun: StagedUploadItem[],
+    movesToRun: [string, string][] = [],
+    deletesToRun: string[] = [],
+    clearQueueAfter = false,
+  ) => {
+    if (!selectedSlug) return;
+    const totalOps = uploadsToRun.length + movesToRun.length + deletesToRun.length;
+    if (totalOps === 0) return;
 
     let completedOps = 0;
     let succeeded = 0;
     const errors: string[] = [];
-    let lastRoomId: string | null = uploadsSnapshot[0]?.nodeId ?? null;
+    let lastRoomId: string | null = uploadsToRun[0]?.nodeId ?? null;
 
     setProgressState({
       active: true,
       done: false,
-      percent: 2,
+      percent: 4,
       stageText: 'Starting upload...',
       currentIndex: 1,
       totalItems: totalOps,
@@ -200,22 +197,22 @@ export const AdminDatasetPage: React.FC = () => {
       lastRoomId,
     });
 
-    // 1. Upload all staged photos & 360° spin videos with live sub-file % progress
-    for (let i = 0; i < uploadsSnapshot.length; i++) {
-      const item = uploadsSnapshot[i];
+    // 1. Upload photos & 360° videos with live percentage progress
+    for (let i = 0; i < uploadsToRun.length; i++) {
+      const item = uploadsToRun[i];
       lastRoomId = item.nodeId;
-      const basePct = Math.round((completedOps / totalOps) * 95);
-      const spanPct = Math.max(1, Math.round(95 / totalOps));
+      const basePct = Math.round((completedOps / totalOps) * 94);
+      const spanPct = Math.max(4, Math.round(94 / totalOps));
 
       setProgressState((prev) =>
         prev
           ? {
               ...prev,
               currentIndex: completedOps + 1,
-              percent: Math.max(prev.percent, basePct + 2),
+              percent: Math.max(prev.percent, basePct + 3),
               stageText: item.isVideo
-                ? `Stitching 360° video for ${item.roomName}...`
-                : `Uploading photo for ${item.roomName}...`,
+                ? `Converting 360° video for ${item.roomName}...`
+                : `Uploading to ${item.roomName}...`,
               lastRoomId,
             }
           : prev,
@@ -242,9 +239,7 @@ export const AdminDatasetPage: React.FC = () => {
           },
         );
 
-        if (res.accepted.length > 0) {
-          succeeded += res.accepted.length;
-        }
+        if (res.accepted.length > 0) succeeded += res.accepted.length;
         if (res.rejected.length > 0) {
           res.rejected.forEach((r) => errors.push(`${item.roomName}: ${r.reason}`));
         }
@@ -257,9 +252,9 @@ export const AdminDatasetPage: React.FC = () => {
       completedOps++;
     }
 
-    // 2. Apply any photo room reassignments
-    for (const [photoId, targetNodeId] of movesEntries) {
-      const pct = Math.min(97, Math.round((completedOps / totalOps) * 95) + 2);
+    // 2. Apply moves
+    for (const [photoId, targetNodeId] of movesToRun) {
+      const pct = Math.min(97, Math.round((completedOps / totalOps) * 94) + 3);
       setProgressState((prev) =>
         prev
           ? {
@@ -279,16 +274,16 @@ export const AdminDatasetPage: React.FC = () => {
       completedOps++;
     }
 
-    // 3. Apply any photo deletions
-    for (const photoId of deletesSnapshot) {
-      const pct = Math.min(98, Math.round((completedOps / totalOps) * 95) + 2);
+    // 3. Apply deletes
+    for (const photoId of deletesToRun) {
+      const pct = Math.min(98, Math.round((completedOps / totalOps) * 94) + 3);
       setProgressState((prev) =>
         prev
           ? {
               ...prev,
               currentIndex: completedOps + 1,
               percent: Math.max(prev.percent, pct),
-              stageText: 'Removing deleted photo...',
+              stageText: 'Deleting photo...',
             }
           : prev,
       );
@@ -301,18 +296,24 @@ export const AdminDatasetPage: React.FC = () => {
       completedOps++;
     }
 
-    // 4. Refresh dataset smoothly IN PLACE (no blank loading screen!)
     setProgressState((prev) =>
       prev
         ? {
             ...prev,
             percent: 99,
-            stageText: 'Updating live Street View & room cards...',
+            stageText: 'Updating live map...',
           }
         : prev,
     );
 
-    discardAllChanges();
+    if (clearQueueAfter) {
+      discardAllChanges();
+    } else {
+      uploadsToRun.forEach((it) => {
+        if (it.previewUrl) URL.revokeObjectURL(it.previewUrl);
+      });
+    }
+
     await loadData(true);
 
     setProgressState({
@@ -321,14 +322,40 @@ export const AdminDatasetPage: React.FC = () => {
       percent: 100,
       stageText:
         errors.length === 0
-          ? `All ${succeeded} change${succeeded === 1 ? '' : 's'} uploaded & live!`
-          : `Finished: ${succeeded} saved, ${errors.length} failed.`,
+          ? `Successfully uploaded ${succeeded} item${succeeded === 1 ? '' : 's'}!`
+          : `Saved ${succeeded}, failed ${errors.length}.`,
       currentIndex: totalOps,
       totalItems: totalOps,
       succeeded,
       errors,
       lastRoomId,
     });
+  };
+
+  const handleQuickAddRoom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSlug || !venue || !newRoomName.trim()) return;
+    setAddingRoom(true);
+    try {
+      const bldg = venue.buildings[0];
+      const flr = bldg?.floors[0];
+      const existingCount = dataset?.nodes.length ?? 0;
+      await createAdminNode(selectedSlug, {
+        name: newRoomName.trim(),
+        kind: 'room',
+        category: 'classroom',
+        building_id: bldg?.id || `${selectedSlug}:main`,
+        floor_id: flr?.id || `${selectedSlug}:f0`,
+        x: 20 + (existingCount % 6) * 12,
+        y: 25 + Math.floor(existingCount / 6) * 14,
+        is_place: true,
+      });
+      setNewRoomName('');
+      setAddRoomOpen(false);
+      await loadData(true);
+    } finally {
+      setAddingRoom(false);
+    }
   };
 
   const filteredRooms = useMemo(() => {
@@ -342,7 +369,6 @@ export const AdminDatasetPage: React.FC = () => {
       if (!q) return true;
       return (
         rm.name.toLowerCase().includes(q) ||
-        rm.building_name.toLowerCase().includes(q) ||
         formatLevel(rm.level).toLowerCase().includes(q)
       );
     });
@@ -365,110 +391,61 @@ export const AdminDatasetPage: React.FC = () => {
     dataset.nodes.find((n) => n.name.toLowerCase().includes('entrance')) ?? dataset.nodes[0];
 
   return (
-    <div className={`max-w-5xl mx-auto space-y-4 ${totalPendingChanges > 0 ? 'pb-28' : 'pb-10'}`}>
+    <div className={`space-y-4 ${totalPendingChanges > 0 ? 'pb-28' : 'pb-10'}`}>
       {/* ================================================================= */}
-      {/* 1. CLEAN, SIMPLE HEADER (ZERO USELESS JARGON)                     */}
+      {/* 1. SUPER SIMPLE TOP ACTION STRIP (ZERO USELESS INFO!)             */}
       {/* ================================================================= */}
-      <div className="rounded-3xl bg-slate-950 p-4 sm:p-5 text-white ring-1 ring-white/15 shadow-xl space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="font-display text-xl sm:text-2xl font-extrabold text-white">
-              Room Photos &amp; 360° Uploader
-            </h1>
-            <p className="text-xs text-slate-300 mt-0.5">
-              <strong>{venue.name}</strong> ·{' '}
-              <span className="text-emerald-300 font-bold">
-                {dataset.totals.covered} of {dataset.totals.nodes} rooms mapped
-              </span>{' '}
-              ({dataset.totals.photos} total photos)
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <a
-              href={`/v/${encodeURIComponent(selectedSlug)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-extrabold text-slate-950 shadow hover:bg-emerald-400 transition"
-            >
-              <ExternalLink className="h-3.5 w-3.5" />
-              <span>View Live Map</span>
-            </a>
-            <button
-              type="button"
-              onClick={() => void downloadUpdatedStaticBundle()}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-white/10 px-3 py-2 text-xs font-bold text-slate-100 ring-1 ring-white/15 hover:bg-white/15 transition"
-              title="Download backup bundle file with your uploaded photos"
-            >
-              <HardDrive className="h-3.5 w-3.5 text-cyan-300" />
-              <span>Export Backup</span>
-            </button>
-          </div>
+      <div className="flex flex-wrap items-center justify-between gap-2.5 rounded-2xl bg-white p-3.5 ring-1 ring-slate-200 shadow-sm">
+        <div>
+          <h1 className="font-display text-lg sm:text-xl font-extrabold text-slate-950">
+            {venue.name} — Room Photos
+          </h1>
+          <p className="text-xs font-semibold text-slate-500">
+            <span className="text-emerald-700 font-extrabold">
+              {dataset.totals.covered} of {dataset.totals.nodes} rooms
+            </span>{' '}
+            have photos · Tap <strong>Camera / 360°</strong> or <strong>Gallery</strong> on any room
+          </p>
         </div>
 
-        {/* Simple 3-Step Visual Hint */}
-        <div className="grid grid-cols-3 gap-2 rounded-2xl bg-white/[0.06] p-2.5 text-center text-[11px] font-bold text-slate-200 ring-1 ring-white/10">
-          <div>
-            <span className="text-cyan-300">1.</span> Pick Room
-          </div>
-          <div>
-            <span className="text-emerald-300">2.</span> Camera / 360° Video
-          </div>
-          <div>
-            <span className="text-amber-300">3.</span> Tap Upload
-          </div>
-        </div>
-
-        {/* Collapsible 360° Full-View Guide */}
-        <div className="rounded-2xl bg-cyan-500/10 ring-1 ring-cyan-400/30 overflow-hidden">
+        <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => setShow360Tip((v) => !v)}
-            className="w-full flex items-center justify-between gap-2 px-3.5 py-2.5 text-left text-xs font-extrabold text-cyan-200"
+            onClick={() => setAddRoomOpen(true)}
+            className="inline-flex items-center gap-1 rounded-xl bg-indigo-600 px-3 py-2 text-xs font-extrabold text-white shadow hover:bg-indigo-500 active:scale-95 transition"
           >
-            <span>🌐 Want full 360° view on a normal phone? (Tap for 2 easy ways)</span>
-            {show360Tip ? (
-              <ChevronUp className="h-4 w-4 shrink-0" />
-            ) : (
-              <ChevronDown className="h-4 w-4 shrink-0" />
-            )}
+            <Plus className="h-3.5 w-3.5 stroke-[2.5]" />
+            <span>Add Room</span>
           </button>
-          {show360Tip && (
-            <div className="px-3.5 pb-3 text-xs text-slate-200 space-y-1.5 border-t border-cyan-400/20 pt-2">
-              <p>
-                <strong>Option A (Best — 360° Spin Video):</strong> Tap{' '}
-                <strong className="text-emerald-300">📷 Camera / 360°</strong> on any room, switch to{' '}
-                <strong className="text-rose-300">🌐 360° Video</strong>, and slowly spin in a full
-                circle (6–10 sec). When you tap Upload, we automatically stitch it into a seamless
-                360° panorama!
-              </p>
-              <p>
-                <strong>Option B (Phone Panorama Mode):</strong> Take a wide{' '}
-                <strong>Panorama ("Pano")</strong> photo in your phone&apos;s camera app and pick it
-                via <strong className="text-cyan-300">🖼️ Gallery / Video</strong>. Street View
-                wraps wide panoramas 360° automatically!
-              </p>
-            </div>
-          )}
+
+          <button
+            type="button"
+            onClick={() => void downloadUpdatedStaticBundle()}
+            className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 ring-1 ring-slate-200 hover:bg-slate-200 transition"
+            title="Download backup file with your uploaded photos"
+          >
+            <HardDrive className="h-3.5 w-3.5 text-indigo-600" />
+            <span>Backup</span>
+          </button>
         </div>
       </div>
 
       {/* ================================================================= */}
-      {/* 2. SIMPLE SEARCH & FILTER BAR                                     */}
+      {/* 2. SEARCH + SIMPLE 3-TAB FILTER                                   */}
       {/* ================================================================= */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search room (e.g. Room 308, Entrance)..."
+            placeholder="Find room (e.g. Room 308, Entrance)..."
             className="w-full rounded-2xl bg-white pl-10 pr-4 py-2.5 text-sm font-semibold text-slate-900 ring-1 ring-slate-200 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
           />
         </div>
 
-        <div className="flex items-center gap-1.5 rounded-2xl bg-white p-1 ring-1 ring-slate-200 shadow-sm">
+        <div className="flex items-center gap-1 rounded-2xl bg-white p-1 ring-1 ring-slate-200 shadow-sm">
           {(
             [
               { id: 'all', label: `All (${dataset.nodes.length})` },
@@ -476,7 +453,7 @@ export const AdminDatasetPage: React.FC = () => {
                 id: 'missing',
                 label: `Needs Photo (${dataset.nodes.length - dataset.totals.covered})`,
               },
-              { id: 'mapped', label: `Mapped (${dataset.totals.covered})` },
+              { id: 'mapped', label: `Done (${dataset.totals.covered})` },
             ] as const
           ).map((tab) => (
             <button
@@ -496,7 +473,7 @@ export const AdminDatasetPage: React.FC = () => {
       </div>
 
       {/* ================================================================= */}
-      {/* 3. CLEAN ROOM-BY-ROOM CARDS (DIRECT CAMERA + GALLERY + QUEUE)     */}
+      {/* 3. CLEAN ROOM CARDS                                               */}
       {/* ================================================================= */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
         {filteredRooms.map((rm) => {
@@ -511,18 +488,18 @@ export const AdminDatasetPage: React.FC = () => {
               key={rm.node_id}
               className={`rounded-3xl bg-white p-3.5 shadow-sm transition flex flex-col justify-between gap-3 ${
                 roomStaged.length > 0
-                  ? 'ring-2 ring-amber-400 shadow-amber-100'
+                  ? 'ring-2 ring-amber-400'
                   : 'ring-1 ring-slate-200'
               }`}
             >
-              {/* Room Title + Status Badge */}
+              {/* Title + Status */}
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <h2 className="font-display text-base font-extrabold text-slate-950 truncate">
                     {rm.name}
                   </h2>
                   <p className="text-[11px] font-semibold text-slate-500 truncate">
-                    {rm.building_name} · {formatLevel(rm.level)}
+                    {formatLevel(rm.level)}
                   </p>
                 </div>
 
@@ -540,26 +517,19 @@ export const AdminDatasetPage: React.FC = () => {
                   </span>
                   {roomStaged.length > 0 && (
                     <span className="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-extrabold text-slate-950">
-                      +{roomStaged.length} Ready to Upload
+                      +{roomStaged.length} Queued
                     </span>
                   )}
                 </div>
               </div>
 
-              {/* Main Un-Cropped Preview (Shows Staged Photo First if Added!) */}
+              {/* Photo / 360° Preview */}
               <div className="relative h-36 w-full overflow-hidden rounded-2xl bg-slate-950 flex items-center justify-center">
                 {latestStaged ? (
                   latestStaged.isVideo ? (
-                    <div className="flex flex-col items-center justify-center gap-1.5 text-center px-4">
-                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-rose-500/20 text-rose-400 ring-1 ring-rose-400/40">
-                        <Video className="h-6 w-6" />
-                      </div>
-                      <span className="text-xs font-extrabold text-white">
-                        🌐 360° Spin Video Staged
-                      </span>
-                      <span className="text-[10px] text-amber-300 font-semibold">
-                        Will stitch to 360° panorama on Upload
-                      </span>
+                    <div className="text-center px-4 space-y-1">
+                      <Video className="h-7 w-7 text-rose-400 mx-auto" />
+                      <div className="text-xs font-extrabold text-white">360° Video Queued</div>
                     </div>
                   ) : (
                     <img
@@ -577,23 +547,23 @@ export const AdminDatasetPage: React.FC = () => {
                   />
                 ) : (
                   <div className="text-center px-4 text-xs font-semibold text-slate-400">
-                    No photo yet — tap Camera or Gallery below
+                    No photo yet
                   </div>
                 )}
 
                 {latestStaged && (
                   <span className="absolute top-2 left-2 rounded-lg bg-amber-400 px-2 py-0.5 text-[10px] font-black text-slate-950 shadow">
-                    NEW · NOT UPLOADED YET
+                    QUEUED · TAP UPLOAD
                   </span>
                 )}
                 {!latestStaged && latestSaved?.ocr_text === '360° Panorama' && (
                   <span className="absolute top-2 left-2 rounded-lg bg-cyan-400 px-2 py-0.5 text-[10px] font-black text-slate-950 shadow">
-                    🌐 360° PANO
+                    🌐 360° VIEW
                   </span>
                 )}
               </div>
 
-              {/* Staged Queue Mini-Strip for This Room (with easy Remove X) */}
+              {/* Queued Strip (Remove X) */}
               {roomStaged.length > 0 && (
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
                   {roomStaged.map((st) => (
@@ -609,8 +579,7 @@ export const AdminDatasetPage: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => removeStagedUpload(st.id)}
-                        className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-rose-600 text-white shadow"
-                        title="Remove from upload queue"
+                        className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-rose-600 text-white"
                       >
                         <X className="h-3 w-3" />
                       </button>
@@ -619,7 +588,7 @@ export const AdminDatasetPage: React.FC = () => {
                 </div>
               )}
 
-              {/* Primary Action Buttons: Full-Screen Camera/360° + Gallery/Video */}
+              {/* 2 Giant Clear Action Buttons */}
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -640,7 +609,8 @@ export const AdminDatasetPage: React.FC = () => {
                     className="hidden"
                     onChange={(e) => {
                       if (e.target.files?.length) {
-                        addFilesToQueue(rm, e.target.files);
+                        const picked = buildStagedItems(rm, e.target.files);
+                        setGalleryConfirm({ room: rm, items: picked });
                       }
                       e.target.value = '';
                     }}
@@ -648,7 +618,7 @@ export const AdminDatasetPage: React.FC = () => {
                 </label>
               </div>
 
-              {/* Manage Saved Photos (Expandable Drawer — Keeps Main Card Clean!) */}
+              {/* Expandable Saved Photos Manager */}
               {rm.photos.length > 0 && (
                 <div className="pt-1 border-t border-slate-100">
                   <button
@@ -656,7 +626,7 @@ export const AdminDatasetPage: React.FC = () => {
                     onClick={() => setExpandedRoomId(isExpanded ? null : rm.node_id)}
                     className="w-full flex items-center justify-between text-[11px] font-bold text-slate-600 hover:text-slate-950 py-1"
                   >
-                    <span>Manage Saved Photos ({rm.photos.length})</span>
+                    <span>Saved Photos ({rm.photos.length})</span>
                     {isExpanded ? (
                       <ChevronUp className="h-3.5 w-3.5" />
                     ) : (
@@ -702,7 +672,7 @@ export const AdminDatasetPage: React.FC = () => {
                               </select>
                               {markedDelete && (
                                 <span className="text-[10px] font-extrabold text-rose-700">
-                                  Marked for delete (tap Upload to confirm)
+                                  Tap Upload &amp; Save below to delete
                                 </span>
                               )}
                             </div>
@@ -714,7 +684,6 @@ export const AdminDatasetPage: React.FC = () => {
                                   ? 'bg-rose-600 text-white'
                                   : 'bg-white text-slate-500 hover:text-rose-600 ring-1 ring-slate-200'
                               }`}
-                              title={markedDelete ? 'Undo delete' : 'Mark photo for deletion'}
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </button>
@@ -731,23 +700,17 @@ export const AdminDatasetPage: React.FC = () => {
       </div>
 
       {/* ================================================================= */}
-      {/* 4. STICKY BOTTOM "UPLOAD & SAVE ALL CHANGES" ACTION BAR           */}
+      {/* 4. STICKY BOTTOM "UPLOAD & SAVE ALL" BAR (WHEN CHANGES QUEUED)    */}
       {/* ================================================================= */}
       {totalPendingChanges > 0 && !progressState?.active && (
-        <div className="fixed bottom-3 inset-x-3 sm:inset-x-auto sm:right-6 sm:left-64 z-40 flex justify-center pointer-events-none">
+        <div className="fixed bottom-3 inset-x-3 z-40 flex justify-center pointer-events-none">
           <div className="pointer-events-auto w-full max-w-xl rounded-2xl bg-slate-950 p-3 text-white ring-2 ring-emerald-400 shadow-2xl flex items-center justify-between gap-3">
             <div className="min-w-0">
               <div className="text-xs sm:text-sm font-extrabold text-white truncate">
-                {totalPendingChanges} Pending Change{totalPendingChanges === 1 ? '' : 's'} Ready
+                {totalPendingChanges} Change{totalPendingChanges === 1 ? '' : 's'} Ready
               </div>
               <div className="text-[11px] text-slate-300 truncate">
-                {[
-                  stagedUploads.length > 0 ? `${stagedUploads.length} new media` : '',
-                  pendingMoveCount > 0 ? `${pendingMoveCount} moved` : '',
-                  stagedDeletes.length > 0 ? `${stagedDeletes.length} deleted` : '',
-                ]
-                  .filter(Boolean)
-                  .join(' · ')}
+                Tap Upload &amp; Save to apply now
               </div>
             </div>
 
@@ -755,14 +718,21 @@ export const AdminDatasetPage: React.FC = () => {
               <button
                 type="button"
                 onClick={discardAllChanges}
-                className="rounded-xl bg-white/10 px-3 py-2.5 text-xs font-bold text-slate-300 hover:bg-white/20"
+                className="rounded-xl bg-white/10 px-3 py-2.5 text-xs font-bold text-slate-300"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={() => void handleUploadAndSaveAll()}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-400 to-cyan-400 px-4 py-2.5 text-xs sm:text-sm font-black text-slate-950 shadow-lg hover:brightness-105 active:scale-95 transition"
+                onClick={() =>
+                  void runUploadBatch(
+                    [...stagedUploads],
+                    Object.entries(stagedMoves),
+                    [...stagedDeletes],
+                    true,
+                  )
+                }
+                className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-400 to-cyan-400 px-4 py-2.5 text-xs sm:text-sm font-black text-slate-950 shadow-lg active:scale-95 transition"
               >
                 <Upload className="h-4 w-4 stroke-[2.5]" />
                 <span>Upload &amp; Save</span>
@@ -773,7 +743,93 @@ export const AdminDatasetPage: React.FC = () => {
       )}
 
       {/* ================================================================= */}
-      {/* 5. LIVE 0% -> 100% UPLOAD PROGRESS MODAL                          */}
+      {/* 5. IMMEDIATE GALLERY PICK CONFIRMATION POPUP (NEVER CONFUSING!)   */}
+      {/* ================================================================= */}
+      {galleryConfirm && (
+        <div className="fixed inset-0 !m-0 z-50 flex items-center justify-center bg-slate-950/85 p-4">
+          <div className="w-full max-w-md rounded-3xl bg-white p-5 text-slate-900 shadow-2xl ring-1 ring-slate-200 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-display text-lg font-extrabold text-slate-950">
+                  Upload to {galleryConfirm.room.name}?
+                </h3>
+                <p className="text-xs font-semibold text-slate-500">
+                  {galleryConfirm.items.length} file
+                  {galleryConfirm.items.length === 1 ? '' : 's'} selected
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  galleryConfirm.items.forEach((it) => {
+                    if (it.previewUrl) URL.revokeObjectURL(it.previewUrl);
+                  });
+                  setGalleryConfirm(null);
+                }}
+                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 max-h-56 overflow-y-auto">
+              {galleryConfirm.items.map((it) => (
+                <div
+                  key={it.id}
+                  className="rounded-2xl bg-slate-950 overflow-hidden ring-1 ring-slate-200 h-32 flex items-center justify-center"
+                >
+                  {it.isVideo ? (
+                    <div className="text-center p-2 space-y-1">
+                      <Video className="h-7 w-7 text-rose-400 mx-auto" />
+                      <div className="text-[11px] font-extrabold text-white truncate max-w-[130px]">
+                        {it.file.name}
+                      </div>
+                      <div className="text-[10px] font-bold text-cyan-300">
+                        🌐 360° Video → Pano
+                      </div>
+                    </div>
+                  ) : (
+                    <img
+                      src={it.previewUrl}
+                      alt={it.roomName}
+                      className="h-full w-full object-contain"
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const batch = galleryConfirm.items;
+                  setGalleryConfirm(null);
+                  void runUploadBatch(batch, [], [], false);
+                }}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-500 to-cyan-500 px-4 py-3.5 text-sm font-black text-slate-950 shadow-lg active:scale-95 transition"
+              >
+                <Upload className="h-4 w-4 stroke-[2.5]" />
+                <span>⬆ Upload &amp; Save Now</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setStagedUploads((prev) => [...prev, ...galleryConfirm.items]);
+                  setGalleryConfirm(null);
+                }}
+                className="w-full rounded-2xl bg-slate-100 px-4 py-2.5 text-xs font-extrabold text-slate-700 hover:bg-slate-200 transition"
+              >
+                + Keep in Queue (Add More Rooms First)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* 6. LIVE 0% -> 100% UPLOAD PROGRESS MODAL                          */}
       {/* ================================================================= */}
       {progressState?.active && (
         <div className="fixed inset-0 !m-0 z-50 flex items-center justify-center bg-slate-950/85 p-4">
@@ -791,7 +847,7 @@ export const AdminDatasetPage: React.FC = () => {
                 )}
                 <div>
                   <h3 className="font-display text-lg font-extrabold text-slate-950">
-                    {progressState.done ? 'Upload Complete!' : 'Uploading Changes...'}
+                    {progressState.done ? 'Upload Complete!' : 'Uploading...'}
                   </h3>
                   <p className="text-xs font-semibold text-slate-500">
                     Item {progressState.currentIndex} of {progressState.totalItems}
@@ -804,7 +860,6 @@ export const AdminDatasetPage: React.FC = () => {
               </span>
             </div>
 
-            {/* Live Percentage Bar */}
             <div className="space-y-2">
               <div className="h-4 w-full overflow-hidden rounded-full bg-slate-100 ring-1 ring-slate-200">
                 <div
@@ -822,7 +877,7 @@ export const AdminDatasetPage: React.FC = () => {
             </div>
 
             {progressState.errors.length > 0 && (
-              <div className="rounded-2xl bg-rose-50 p-3 text-xs text-rose-800 ring-1 ring-rose-200 space-y-1 max-h-32 overflow-y-auto">
+              <div className="rounded-2xl bg-rose-50 p-3 text-xs text-rose-800 ring-1 ring-rose-200 space-y-1 max-h-36 overflow-y-auto">
                 {progressState.errors.map((errMsg, idx) => (
                   <div key={idx} className="font-semibold">
                     • {errMsg}
@@ -843,7 +898,7 @@ export const AdminDatasetPage: React.FC = () => {
                     className="inline-flex items-center justify-center gap-1.5 rounded-2xl bg-emerald-600 px-4 py-3 text-xs font-extrabold text-white shadow hover:bg-emerald-500 transition"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
-                    <span>See in Street View</span>
+                    <span>See 360° Live View</span>
                   </a>
                 )}
                 <button
@@ -860,18 +915,75 @@ export const AdminDatasetPage: React.FC = () => {
       )}
 
       {/* ================================================================= */}
-      {/* 6. FULL-SCREEN 100% EDGE-TO-EDGE PHONE CAMERA & 360° RECORDER     */}
+      {/* 7. QUICK "+ ADD ROOM" MODAL                                       */}
+      {/* ================================================================= */}
+      {addRoomOpen && (
+        <div
+          className="fixed inset-0 !m-0 z-50 flex items-center justify-center bg-slate-950/75 p-4"
+          onClick={() => setAddRoomOpen(false)}
+        >
+          <div
+            className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl ring-1 ring-slate-200 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="font-display text-lg font-extrabold text-slate-950">
+                Add New Room
+              </h3>
+              <button
+                type="button"
+                onClick={() => setAddRoomOpen(false)}
+                className="rounded-xl p-1.5 text-slate-400 hover:bg-slate-100"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <form onSubmit={(e) => void handleQuickAddRoom(e)} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Room Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  autoFocus
+                  value={newRoomName}
+                  onChange={(e) => setNewRoomName(e.target.value)}
+                  placeholder="e.g. Room 311 or Seminar Hall"
+                  className="w-full rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm font-semibold text-slate-900 ring-1 ring-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={addingRoom}
+                className="w-full inline-flex items-center justify-center gap-1.5 rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-extrabold text-white shadow hover:bg-indigo-500 disabled:opacity-50"
+              >
+                {addingRoom ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
+                <span>Add Room</span>
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================================================================= */}
+      {/* 8. FULL-SCREEN 100% EDGE-TO-EDGE PHONE CAMERA & 10s 360° SPIN     */}
       {/* ================================================================= */}
       <Camera360CaptureModal
         open={cameraRoom !== null}
         onClose={() => setCameraRoom(null)}
         venueName={venue.name}
-        targetLabel={cameraRoom ? `${cameraRoom.name} (${formatLevel(cameraRoom.level)})` : ''}
-        onSubmitFrames={(files) => {
-          if (cameraRoom && files.length > 0) {
-            addFilesToQueue(cameraRoom, files);
-          }
+        targetLabel={cameraRoom ? cameraRoom.name : ''}
+        onSubmitFrames={(files, uploadImmediately = true) => {
+          const room = cameraRoom;
           setCameraRoom(null);
+          if (!room || files.length === 0) return;
+          const items = buildStagedItems(room, files);
+          if (uploadImmediately) {
+            void runUploadBatch(items, [], [], false);
+          } else {
+            setStagedUploads((prev) => [...prev, ...items]);
+          }
         }}
       />
     </div>
