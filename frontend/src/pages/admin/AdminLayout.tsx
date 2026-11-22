@@ -33,12 +33,12 @@ const SELECTED_VENUE_KEY = 'navigator_admin_selected_venue';
 const DIRECT_TABS = [
   {
     to: '/admin/dataset',
-    label: 'Photos & 360°',
+    label: 'Photos 360°',
     icon: Camera,
   },
   {
     to: '/admin/map-editor',
-    label: 'Rooms & Map',
+    label: 'Map',
     icon: MapIcon,
   },
   {

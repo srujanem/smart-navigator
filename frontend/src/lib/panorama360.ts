@@ -152,14 +152,15 @@ export async function stitchCanvasesToPanorama(
         scratch.width,
         outH,
       );
+      // Single-pass destination-in gradient across full width so left overlap feathers smoothly without erasing the right side!
       sctx.globalCompositeOperation = 'destination-in';
-      const grad = sctx.createLinearGradient(0, 0, featheredOverlap, 0);
+      const grad = sctx.createLinearGradient(0, 0, scratch.width, 0);
+      const featherStop = Math.min(0.35, featheredOverlap / Math.max(1, scratch.width));
       grad.addColorStop(0, 'rgba(0,0,0,0)');
+      grad.addColorStop(featherStop, 'rgba(0,0,0,1)');
       grad.addColorStop(1, 'rgba(0,0,0,1)');
       sctx.fillStyle = grad;
-      sctx.fillRect(0, 0, featheredOverlap, outH);
-      sctx.fillStyle = 'rgba(0,0,0,1)';
-      sctx.fillRect(featheredOverlap, 0, scratch.width - featheredOverlap, outH);
+      sctx.fillRect(0, 0, scratch.width, outH);
       sctx.globalCompositeOperation = 'source-over';
 
       pctx.drawImage(scratch, dx, 0);
