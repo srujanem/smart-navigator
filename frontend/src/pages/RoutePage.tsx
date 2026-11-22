@@ -51,6 +51,7 @@ import {
   ZoomIn,
 } from 'lucide-react';
 import { FloorPlan2D } from '../components/FloorPlan2D';
+import { GoogleStreetViewStage } from '../components/GoogleStreetViewStage';
 import { IsometricVenueArt } from '../components/VenueCard';
 import { PhotoLocateModal, type ConfirmedSpot } from '../components/PhotoLocateModal';
 import { ErrorState, Skeleton3D } from '../components/ErrorState';
@@ -223,7 +224,7 @@ export const RoutePage: React.FC = () => {
   // Active alternative index (-1 = primary route)
   const [altIndex, setAltIndex] = useState<number>(-1);
   const [activeStepIdx, setActiveStepIdx] = useState<number>(0);
-  const [mobileViewMode, setMobileViewMode] = useState<'guide' | 'map' | 'all'>('guide');
+  const [mobileViewMode, setMobileViewMode] = useState<'street' | 'guide' | 'map' | 'all'>('street');
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const touchStartXRef = React.useRef<number | null>(null);
 
@@ -241,9 +242,9 @@ export const RoutePage: React.FC = () => {
   const [hapticsEnabled, setHapticsEnabled] = useState(true);
   const [hapticPulseLabel, setHapticPulseLabel] = useState<string | null>(null);
 
-  // Re-check Location Modal & Lightbox
+  // Re-check Location Modal & Lightbox (Google Street View enabled by default)
   const [recheckOpen, setRecheckOpen] = useState(false);
-  const [showStreetStage, setShowStreetStage] = useState(false);
+  const [showStreetStage, setShowStreetStage] = useState(true);
   const [lightboxZoom, setLightboxZoom] = useState<number>(1);
   const [lightboxUrl, setLightboxUrl] = useState<{
     url: string;
@@ -1433,8 +1434,22 @@ export const RoutePage: React.FC = () => {
           </div>
         ) : route ? (
           <div>
-            {/* Mobile-First 3-Tab Native Navigation Switcher */}
+            {/* Mobile-First 3-Tab Native Navigation Switcher (Google Street View Default) */}
             <div className="lg:hidden grid grid-cols-3 gap-1 rounded-2xl bg-white p-1 ring-1 ring-slate-200/90 shadow-soft mb-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileViewMode('street');
+                  setShowStreetStage(true);
+                }}
+                className={`py-2.5 text-xs font-extrabold rounded-xl transition ${
+                  mobileViewMode === 'street'
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                🚶 Street View
+              </button>
               <button
                 type="button"
                 onClick={() => setMobileViewMode('guide')}
@@ -1459,13 +1474,6 @@ export const RoutePage: React.FC = () => {
                 }`}
               >
                 🗺️ {twinMode === '3d' ? '3D' : '2D'} Map
-              </button>
-              <button
-                type="button"
-                onClick={() => setStoryModeOpen(true)}
-                className="py-2.5 text-xs font-extrabold rounded-xl text-emerald-700 bg-emerald-50 ring-1 ring-emerald-200 hover:bg-emerald-100 transition"
-              >
-                📱 Photo Story
               </button>
             </div>
 
@@ -1697,221 +1705,35 @@ export const RoutePage: React.FC = () => {
                 </div>
 
                 {/* FULL-BLEED WORKSPACE STAGE (Never squished, never cut off) */}
-                <div className="relative h-[440px] sm:h-[520px] lg:h-[calc(100dvh-14.5rem)] min-h-[420px] max-h-[660px] w-full overflow-hidden rounded-3xl bg-[#060A16] ring-1 ring-slate-900/15 shadow-2xl">
+                <div className="relative h-[470px] sm:h-[540px] lg:h-[calc(100dvh-14.5rem)] min-h-[440px] max-h-[680px] w-full overflow-hidden rounded-3xl bg-[#060A16] ring-1 ring-slate-900/15 shadow-2xl">
                   {showStreetStage ? (
-                    /* CINEMA STREET-VIEW FULL STAGE */
-                    <div className="relative h-full w-full overflow-hidden flex flex-col justify-between">
-                      {/* Media Image / Video */}
-                      <div className="absolute inset-0">
-                        {activeStepNode?.video_url ? (
-                          <video
-                            src={mediaUrl(activeStepNode.video_url)}
-                            poster={
-                              activeStep?.photo_url
-                                ? mediaUrl(activeStep.photo_url)
-                                : undefined
-                            }
-                            autoPlay
-                            loop
-                            muted
-                            playsInline
-                            className="h-full w-full object-cover"
-                          />
-                        ) : activeStep?.photo_url && !failedPhotoUrls.has(activeStep.photo_url) ? (
-                          <>
-                            <img
-                              src={mediaUrl(activeStep.photo_url)}
-                              alt=""
-                              aria-hidden="true"
-                              className="absolute inset-0 h-full w-full object-cover blur-2xl scale-110 opacity-40"
-                            />
-                            <img
-                              src={mediaUrl(activeStep.photo_url)}
-                              alt={activeStep.name}
-                              loading="lazy"
-                              onError={() => markPhotoFailed(activeStep.photo_url!)}
-                              className="relative z-[1] h-full w-full object-contain"
-                            />
-                          </>
-                        ) : (
-                          <IsometricVenueArt
-                            accent={venue.accent || '#0ea5e9'}
-                            buildings={venue.buildings.length}
-                            floors={Math.max(2, route.levels.length)}
-                            compact
-                          />
-                        )}
-                        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-slate-950/60" />
-                      </div>
-
-                      {/* Top Bar inside Street View */}
-                      <div className="relative z-10 flex items-center justify-between p-3.5">
-                        <div className="flex items-center gap-2">
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-950/85 px-3 py-1 text-xs font-bold text-cyan-300 ring-1 ring-cyan-400/40">
-                            <Eye className="h-3.5 w-3.5" />
-                            STEP {activeStepIdx + 1} OF {route.steps.length}
-                          </span>
-                          <span className="rounded-full bg-slate-950/80 px-2.5 py-1 text-xs font-semibold text-white ring-1 ring-white/15">
-                            {formatLevel(activeStep?.level ?? 0)}
-                          </span>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          {activeStep?.photo_url && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setLightboxZoom(1);
-                                setLightboxUrl({
-                                  url: mediaUrl(activeStep.photo_url)!,
-                                  caption: `${activeStep.name} (${formatLevel(activeStep.level)})`,
-                                });
-                              }}
-                              className="inline-flex items-center gap-1 rounded-xl bg-slate-950/80 px-2.5 py-1.5 text-xs font-bold text-white ring-1 ring-white/20 hover:bg-slate-900 transition"
-                            >
-                              <Maximize2 className="h-3.5 w-3.5 text-cyan-300" />
-                              HD Zoom
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => setShowStreetStage(false)}
-                            className="rounded-xl bg-slate-950/80 px-2.5 py-1.5 text-xs font-semibold text-slate-300 ring-1 ring-white/15 hover:text-white transition"
-                          >
-                            Close ✕
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* AR Turn Chevrons / Floor-Change Graphic / Arrival Celebration */}
-                      <div className="pointer-events-none relative z-10 flex items-center justify-center mb-6">
-                        {activeStep?.icon === 'arrive' || activeStepIdx === route.steps.length - 1 ? (
-                          <div className="arrival-pop relative flex flex-col items-center gap-1.5 rounded-3xl bg-emerald-950/85 px-6 py-4 ring-2 ring-emerald-400 shadow-[0_0_32px_rgba(16,185,129,0.45)] backdrop-blur-md">
-                            <span className="sparkle-float-1 absolute -top-2 -left-2 text-base">✨</span>
-                            <span className="sparkle-float-2 absolute -top-2 -right-2 text-base">🎉</span>
-                            <span className="sparkle-float-3 absolute -bottom-2 right-3 text-sm">✨</span>
-                            <svg viewBox="0 0 60 60" className="h-12 w-12">
-                              <circle
-                                cx="30"
-                                cy="30"
-                                r="24"
-                                fill="rgba(16,185,129,0.18)"
-                                stroke="#34d399"
-                                strokeWidth="3.5"
-                                className="arrival-ring-draw"
-                              />
-                              <path
-                                d="M19 31 L27 39 L42 22"
-                                fill="none"
-                                stroke="#ffffff"
-                                strokeWidth="4"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                              />
-                            </svg>
-                            <span className="text-xs font-extrabold uppercase tracking-widest text-emerald-200">
-                              You Have Arrived!
-                            </span>
-                            <span className="text-xs font-bold text-white">
-                              {activeStep?.name}
-                            </span>
-                          </div>
-                        ) : activeStep?.icon === 'lift' ||
-                          activeStep?.icon === 'up' ||
-                          activeStep?.icon === 'down' ? (
-                          <div className="flex items-center gap-3 rounded-2xl bg-slate-950/85 px-5 py-3 ring-2 ring-amber-400/90 shadow-[0_0_24px_rgba(245,158,11,0.35)] backdrop-blur-md">
-                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-amber-500/25 ring-1 ring-amber-300/60">
-                              {activeStep?.icon === 'down' ? (
-                                <ArrowDown className="h-5 w-5 text-amber-300 animate-bounce" />
-                              ) : (
-                                <ArrowUp className="h-5 w-5 text-amber-300 animate-bounce" />
-                              )}
-                            </div>
-                            <div className="text-left">
-                              <div className="text-[10px] font-extrabold uppercase tracking-wider text-amber-300">
-                                {activeStep?.icon === 'lift' ? '🛗 Elevator Transition' : '🪜 Staircase Transition'}
-                              </div>
-                              <div className="text-xs font-extrabold text-white">
-                                {activeStepIdx > 0 && route.steps[activeStepIdx - 1]?.level !== activeStep.level
-                                  ? `${formatLevel(route.steps[activeStepIdx - 1].level)} → ${formatLevel(activeStep.level)}`
-                                  : `Go to ${formatLevel(activeStep.level)}`}
-                              </div>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex flex-col items-center gap-2">
-                            <div
-                              style={{
-                                transform: `perspective(420px) rotateX(56deg) rotateZ(${
-                                  activeStep?.icon === 'left'
-                                    ? '-40deg'
-                                    : activeStep?.icon === 'right'
-                                      ? '40deg'
-                                      : '0deg'
-                                })`,
-                              }}
-                              className="flex flex-col items-center -space-y-3.5 drop-shadow-[0_0_14px_rgba(34,211,238,0.85)]"
-                            >
-                              <ChevronUp className="h-11 w-11 text-cyan-300 stroke-[3.2] street-chevron-3" />
-                              <ChevronUp className="h-12 w-12 text-cyan-200 stroke-[3.2] street-chevron-2" />
-                              <ChevronUp className="h-14 w-14 text-white stroke-[3.4] street-chevron-1" />
-                            </div>
-                            <span className="rounded-full bg-slate-950/80 px-3 py-1 text-[10px] font-extrabold uppercase tracking-widest text-cyan-300 ring-1 ring-cyan-400/40 backdrop-blur-md">
-                              {activeStep?.icon === 'left'
-                                ? '← Turn Left Ahead'
-                                : activeStep?.icon === 'right'
-                                  ? 'Turn Right Ahead →'
-                                  : '↑ Continue Straight'}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Bottom Instruction & Navigation */}
-                      <div className="relative z-10 m-3 flex items-center justify-between gap-3 rounded-2xl bg-slate-950/85 p-3 text-white ring-1 ring-white/15">
-                        <div className="min-w-0">
-                          <div className="text-sm font-extrabold truncate">
-                            {activeStep?.instruction}
-                          </div>
-                          <div className="text-xs text-cyan-300 truncate">
-                            {activeStep?.name}
-                            {activeStep && activeStep.distance_m > 0
-                              ? ` · Walk ${Math.round(activeStep.distance_m)} m`
-                              : ''}
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <button
-                            type="button"
-                            disabled={activeStepIdx <= 0}
-                            onClick={() => {
-                              const prev = Math.max(0, activeStepIdx - 1);
-                              handleStepClick(route.steps[prev], prev);
-                            }}
-                            className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-white/10 text-white hover:bg-white/20 disabled:opacity-30 transition"
-                            aria-label="Previous step"
-                          >
-                            <ChevronLeft className="h-4 w-4" />
-                          </button>
-                          <button
-                            type="button"
-                            disabled={activeStepIdx >= route.steps.length - 1}
-                            onClick={() => {
-                              const nxt = Math.min(
-                                route.steps.length - 1,
-                                activeStepIdx + 1,
-                              );
-                              handleStepClick(route.steps[nxt], nxt);
-                            }}
-                            className="inline-flex items-center gap-1 rounded-xl bg-cyan-500 px-3 py-1.5 text-xs font-extrabold text-slate-950 hover:bg-cyan-400 disabled:opacity-30 transition"
-                          >
-                            Next
-                            <ChevronRight className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+                    <GoogleStreetViewStage
+                      venue={venue}
+                      graph={graph}
+                      route={route}
+                      activeStepIdx={activeStepIdx}
+                      onSelectStep={(st, idx) => handleStepClick(st, idx)}
+                      onClose={() => {
+                        setShowStreetStage(false);
+                        if (mobileViewMode === 'street') {
+                          setMobileViewMode('map');
+                        }
+                      }}
+                      onSpeakStep={(st) => speakSingleStep(st)}
+                      onShareRoute={() => {
+                        try {
+                          void navigator.clipboard.writeText(window.location.href);
+                          setCopiedRouteLink(true);
+                          window.setTimeout(() => setCopiedRouteLink(false), 2400);
+                        } catch {
+                          // Ignore clipboard errors
+                        }
+                      }}
+                      onOpenLightbox={(url, caption) => {
+                        setLightboxZoom(1);
+                        setLightboxUrl({ url, caption });
+                      }}
+                    />
                   ) : twinMode === '3d' ? (
                     /* 3D INTERACTIVE TWIN (Full Frame + Floating PiP Card) */
                     <div className="relative h-full w-full">

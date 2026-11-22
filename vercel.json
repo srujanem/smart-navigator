@@ -10,7 +10,6 @@
   },
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.py" },
-    { "source": "/media/(.*)", "destination": "/api/index.py" },
-    { "source": "/((?!api/|media/).*)", "destination": "/index.html" }
+    { "source": "/((?!api/|media/|offline-bundle\\.json|photos/).*)", "destination": "/index.html" }
   ]
 }

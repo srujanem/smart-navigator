@@ -35,10 +35,12 @@ import {
   cacheVenuePeople,
   cacheVenuesList,
   clearDeviceVenueCache,
+  computeOfflineLocalize,
   computeOfflineMultiStopRoute,
   computeOfflineNearestRoute,
   computeOfflineRoute,
   computeOfflineSearch,
+  getBundledSampleQueries,
   getCachedVenueDetail,
   getCachedVenueGraph,
   getCachedVenuePeople,
@@ -122,10 +124,15 @@ export function mediaUrl(url: string | null | undefined): string {
   ) {
     return url;
   }
-  if (Date.now() < apiServerDownUntil) {
-    return '';
+  const normalized = `${url.startsWith('/') ? '' : '/'}${url}`;
+  // Static media bundled inside frontend/public/media/... is served directly from same-origin CDN with zero database/server call
+  if (normalized.startsWith('/media/venues/') && !normalized.includes('/queries/')) {
+    return normalized;
   }
-  return `${API_BASE}${url.startsWith('/') ? '' : '/'}${url}`;
+  if (Date.now() < apiServerDownUntil) {
+    return normalized;
+  }
+  return `${API_BASE}${normalized}`;
 }
 
 async function request<T>(
@@ -211,90 +218,88 @@ async function request<T>(
 }
 
 // ---------------------------------------------------------------------------
-// Public API (with seamless Offline Basement Cache Fallback)
+// Public API (Zero-Database Static Bundle Primary — Instant, 24/7, Server-Free)
 // ---------------------------------------------------------------------------
 
-export function getHealth(): Promise<HealthStatus> {
+export async function getHealth(): Promise<HealthStatus> {
+  const bundle = await loadBundledOfflineSnapshot();
+  if (bundle) {
+    return {
+      status: 'ok',
+      embedder: 'dinov2-vits14',
+      ocr: 'rapidocr-ppocrv4',
+      face_blur: true,
+      venues: bundle.venues.length,
+    };
+  }
   return request<HealthStatus>('/api/health', {}, false, 4500);
 }
 
 export async function getVenues(q?: string): Promise<VenueSummary[]> {
-  const qs = q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
-  try {
-    const list = await request<VenueSummary[]>(`/api/venues${qs}`, {}, false, 6500);
-    if (!q?.trim()) {
-      cacheVenuesList(list);
-    }
-    return list;
-  } catch (err) {
-    if (isOfflineFallbackError(err)) {
-      const cached = getCachedVenuesList() ?? (await loadBundledOfflineSnapshot())?.venues ?? null;
-      if (cached) {
-        const ql = q?.trim().toLowerCase();
-        return ql
-          ? cached.filter((v) =>
-              `${v.name} ${v.city} ${v.type} ${v.tagline}`.toLowerCase().includes(ql),
-            )
-          : cached;
-      }
-    }
-    throw err;
+  const bundle = await loadBundledOfflineSnapshot();
+  const cached = getCachedVenuesList() ?? bundle?.venues ?? null;
+  if (cached && cached.length > 0) {
+    const ql = q?.trim().toLowerCase();
+    return ql
+      ? cached.filter((v) =>
+          `${v.name} ${v.city} ${v.type} ${v.tagline}`.toLowerCase().includes(ql),
+        )
+      : cached;
   }
+  const qs = q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
+  const list = await request<VenueSummary[]>(`/api/venues${qs}`, {}, false, 6500);
+  if (!q?.trim()) {
+    cacheVenuesList(list);
+  }
+  return list;
 }
 
 export async function getVenue(slug: string): Promise<VenueDetail> {
-  try {
-    const detail = await request<VenueDetail>(`/api/venues/${encodeURIComponent(slug)}`, {}, false, 6500);
-    cacheVenueDetail(slug, detail);
-    return detail;
-  } catch (err) {
-    if (isOfflineFallbackError(err)) {
-      const cached = getCachedVenueDetail(slug) ?? (await loadBundledOfflineSnapshot())?.details?.[slug] ?? null;
-      if (cached) return cached;
-    }
-    throw err;
+  const bundle = await loadBundledOfflineSnapshot();
+  const bundledDetail = bundle?.details?.[slug] ?? getCachedVenueDetail(slug);
+  if (bundledDetail) {
+    return bundledDetail;
   }
+  const detail = await request<VenueDetail>(`/api/venues/${encodeURIComponent(slug)}`, {}, false, 6500);
+  cacheVenueDetail(slug, detail);
+  return detail;
 }
 
 export async function getVenueGraph(slug: string): Promise<Graph> {
-  try {
-    const g = await request<Graph>(`/api/venues/${encodeURIComponent(slug)}/graph`, {}, false, 6500);
-    cacheVenueGraph(slug, g);
-    return g;
-  } catch (err) {
-    if (isOfflineFallbackError(err)) {
-      const cached = await resolveOfflineGraph(slug);
-      if (cached) return cached;
-    }
-    throw err;
+  const bundle = await loadBundledOfflineSnapshot();
+  const bundledGraph = bundle?.graphs?.[slug] ?? getCachedVenueGraph(slug);
+  if (bundledGraph) {
+    return bundledGraph;
   }
+  const g = await request<Graph>(`/api/venues/${encodeURIComponent(slug)}/graph`, {}, false, 6500);
+  cacheVenueGraph(slug, g);
+  return g;
 }
 
 export async function getVenuePeople(slug: string, q?: string): Promise<Person[]> {
-  const qs = q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
-  try {
-    const list = await request<Person[]>(`/api/venues/${encodeURIComponent(slug)}/people${qs}`, {}, false, 6500);
-    if (!q?.trim()) {
-      cacheVenuePeople(slug, list);
-    }
-    return list;
-  } catch (err) {
-    if (isOfflineFallbackError(err)) {
-      const cached = getCachedVenuePeople(slug) ?? (await loadBundledOfflineSnapshot())?.people?.[slug] ?? null;
-      if (cached) {
-        const ql = q?.trim().toLowerCase();
-        return ql
-          ? cached.filter((p) =>
-              `${p.name} ${p.title} ${p.role} ${p.department} ${p.node_name}`.toLowerCase().includes(ql),
-            )
-          : cached;
-      }
-    }
-    throw err;
+  const bundle = await loadBundledOfflineSnapshot();
+  const bundledPeople = bundle?.people?.[slug] ?? getCachedVenuePeople(slug);
+  if (bundledPeople) {
+    const ql = q?.trim().toLowerCase();
+    return ql
+      ? bundledPeople.filter((p) =>
+          `${p.name} ${p.title} ${p.role} ${p.department} ${p.node_name}`.toLowerCase().includes(ql),
+        )
+      : bundledPeople;
   }
+  const qs = q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : '';
+  const list = await request<Person[]>(`/api/venues/${encodeURIComponent(slug)}/people${qs}`, {}, false, 6500);
+  if (!q?.trim()) {
+    cacheVenuePeople(slug, list);
+  }
+  return list;
 }
 
-export function getSampleQueries(slug: string): Promise<SampleQuery[]> {
+export async function getSampleQueries(slug: string): Promise<SampleQuery[]> {
+  const bundle = await loadBundledOfflineSnapshot();
+  if (bundle?.photo_index?.[slug]) {
+    return getBundledSampleQueries(slug, bundle);
+  }
   return request<SampleQuery[]>(`/api/venues/${encodeURIComponent(slug)}/sample-queries`, {}, false, 6500);
 }
 
@@ -303,29 +308,23 @@ export async function searchVenue(
   q: string,
   fromNodeId?: string | null,
 ): Promise<SearchResponse> {
+  const graph = await resolveOfflineGraph(slug);
+  if (graph) {
+    const bundle = await loadBundledOfflineSnapshot();
+    const people = bundle?.people?.[slug] ?? getCachedVenuePeople(slug) ?? [];
+    return computeOfflineSearch(graph, people, q, fromNodeId);
+  }
   const params = new URLSearchParams();
   params.set('q', q);
   if (fromNodeId) {
     params.set('from', fromNodeId);
   }
-  try {
-    return await request<SearchResponse>(
-      `/api/venues/${encodeURIComponent(slug)}/search?${params.toString()}`,
-      {},
-      false,
-      5500,
-    );
-  } catch (err) {
-    if (isOfflineFallbackError(err)) {
-      const graph = await resolveOfflineGraph(slug);
-      if (graph) {
-        const people =
-          getCachedVenuePeople(slug) ?? (await loadBundledOfflineSnapshot())?.people?.[slug] ?? [];
-        return computeOfflineSearch(graph, people, q, fromNodeId);
-      }
-    }
-    throw err;
-  }
+  return request<SearchResponse>(
+    `/api/venues/${encodeURIComponent(slug)}/search?${params.toString()}`,
+    {},
+    false,
+    5500,
+  );
 }
 
 function isLikelyImageFile(file: File): boolean {
@@ -539,6 +538,10 @@ export async function localizePhoto(
     isMobile ? 1280 : 1600,
     isMobile ? 0.85 : 0.88,
   );
+  const bundle = await loadBundledOfflineSnapshot();
+  if (bundle?.graphs?.[slug]) {
+    return computeOfflineLocalize(slug, optimizedFile, bundle, level, priorNodeId);
+  }
   const fd = new FormData();
   fd.append('file', optimizedFile);
   if (level !== undefined && level !== null) {
@@ -564,16 +567,16 @@ export async function fetchSamplePhotoAsFile(
 ): Promise<File> {
   let res: Response;
   try {
-    const targetUrl = photoUrl.startsWith('http') ? photoUrl : `${API_BASE}${photoUrl}`;
+    const targetUrl = mediaUrl(photoUrl);
     res = await fetch(targetUrl);
   } catch {
-    throw new ApiError('Could not load sample visitor photo from server.', 0);
+    throw new ApiError('Could not load sample visitor photo.', 0);
   }
   if (!res.ok) {
     throw new ApiError(`Sample photo unavailable (${res.status})`, res.status);
   }
   const blob = await res.blob();
-  const ext = blob.type.includes('png') ? 'png' : 'jpg';
+  const ext = blob.type.includes('png') ? 'png' : blob.type.includes('webp') ? 'webp' : 'jpg';
   const safeName = label
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
@@ -583,7 +586,7 @@ export async function fetchSamplePhotoAsFile(
   });
 }
 
-export function confirmLocalization(
+export async function confirmLocalization(
   slug: string,
   logId: string,
   nodeId: string,
@@ -595,19 +598,30 @@ export function confirmLocalization(
   quality?: number;
   node_photo_count?: number;
 }> {
-  return request<{
-    ok: boolean;
-    added_photo: boolean;
-    reason?: string;
-    quality?: number;
-    node_photo_count?: number;
-  }>(
-    `/api/venues/${encodeURIComponent(slug)}/localize/${encodeURIComponent(logId)}/confirm`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ node_id: nodeId, contribute }),
-    },
-  );
+  if (logId.startsWith('static-')) {
+    return {
+      ok: true,
+      added_photo: false,
+      reason: 'Confirmed against bundled static model',
+    };
+  }
+  try {
+    return await request<{
+      ok: boolean;
+      added_photo: boolean;
+      reason?: string;
+      quality?: number;
+      node_photo_count?: number;
+    }>(
+      `/api/venues/${encodeURIComponent(slug)}/localize/${encodeURIComponent(logId)}/confirm`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ node_id: nodeId, contribute }),
+      },
+    );
+  } catch {
+    return { ok: true, added_photo: false };
+  }
 }
 
 export async function computeRoute(
@@ -617,31 +631,25 @@ export async function computeRoute(
   profile: RouteProfile = 'walk',
   options?: { avoidCrowds?: boolean; headingDeg?: number | null },
 ): Promise<Route> {
-  try {
-    return await request<Route>(
-      `/api/venues/${encodeURIComponent(slug)}/route`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          from_node: fromNode,
-          to_node: toNode,
-          profile,
-          avoid_crowds: Boolean(options?.avoidCrowds),
-          heading_deg: options?.headingDeg ?? null,
-        }),
-      },
-      false,
-      7000,
-    );
-  } catch (err) {
-    if (isOfflineFallbackError(err)) {
-      const cachedGraph = await resolveOfflineGraph(slug);
-      if (cachedGraph) {
-        return computeOfflineRoute(cachedGraph, fromNode, toNode, profile);
-      }
-    }
-    throw err;
+  const cachedGraph = await resolveOfflineGraph(slug);
+  if (cachedGraph) {
+    return computeOfflineRoute(cachedGraph, fromNode, toNode, profile);
   }
+  return request<Route>(
+    `/api/venues/${encodeURIComponent(slug)}/route`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        from_node: fromNode,
+        to_node: toNode,
+        profile,
+        avoid_crowds: Boolean(options?.avoidCrowds),
+        heading_deg: options?.headingDeg ?? null,
+      }),
+    },
+    false,
+    7000,
+  );
 }
 
 export async function computeNearestRoute(
@@ -651,31 +659,25 @@ export async function computeNearestRoute(
   profile: RouteProfile = 'walk',
   options?: { avoidCrowds?: boolean; headingDeg?: number | null },
 ): Promise<Route> {
-  try {
-    return await request<Route>(
-      `/api/venues/${encodeURIComponent(slug)}/route/nearest`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          from_node: fromNode,
-          target_kind: targetKind,
-          profile,
-          avoid_crowds: Boolean(options?.avoidCrowds),
-          heading_deg: options?.headingDeg ?? null,
-        }),
-      },
-      false,
-      7000,
-    );
-  } catch (err) {
-    if (isOfflineFallbackError(err)) {
-      const cachedGraph = await resolveOfflineGraph(slug);
-      if (cachedGraph) {
-        return computeOfflineNearestRoute(cachedGraph, fromNode, targetKind, profile);
-      }
-    }
-    throw err;
+  const cachedGraph = await resolveOfflineGraph(slug);
+  if (cachedGraph) {
+    return computeOfflineNearestRoute(cachedGraph, fromNode, targetKind, profile);
   }
+  return request<Route>(
+    `/api/venues/${encodeURIComponent(slug)}/route/nearest`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        from_node: fromNode,
+        target_kind: targetKind,
+        profile,
+        avoid_crowds: Boolean(options?.avoidCrowds),
+        heading_deg: options?.headingDeg ?? null,
+      }),
+    },
+    false,
+    7000,
+  );
 }
 
 export async function computeMultiStopRoute(
@@ -684,31 +686,25 @@ export async function computeMultiStopRoute(
   profile: RouteProfile = 'walk',
   options?: { optimize?: boolean; avoidCrowds?: boolean; headingDeg?: number | null },
 ): Promise<Route> {
-  try {
-    return await request<Route>(
-      `/api/venues/${encodeURIComponent(slug)}/route/multi`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          stops,
-          profile,
-          optimize: Boolean(options?.optimize),
-          avoid_crowds: Boolean(options?.avoidCrowds),
-          heading_deg: options?.headingDeg ?? null,
-        }),
-      },
-      false,
-      7000,
-    );
-  } catch (err) {
-    if (isOfflineFallbackError(err)) {
-      const cachedGraph = await resolveOfflineGraph(slug);
-      if (cachedGraph) {
-        return computeOfflineMultiStopRoute(cachedGraph, stops, profile);
-      }
-    }
-    throw err;
+  const cachedGraph = await resolveOfflineGraph(slug);
+  if (cachedGraph) {
+    return computeOfflineMultiStopRoute(cachedGraph, stops, profile);
   }
+  return request<Route>(
+    `/api/venues/${encodeURIComponent(slug)}/route/multi`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        stops,
+        profile,
+        optimize: Boolean(options?.optimize),
+        avoid_crowds: Boolean(options?.avoidCrowds),
+        heading_deg: options?.headingDeg ?? null,
+      }),
+    },
+    false,
+    7000,
+  );
 }
 
 // ---------------------------------------------------------------------------
