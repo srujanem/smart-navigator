@@ -61,12 +61,20 @@ import {
   vaultGetAdminOverview,
   vaultGetAdminVenues,
   vaultGetIndexReport,
+  vaultGetPublishStatus,
+  vaultPublishVenue,
   vaultUpdateNode,
   vaultUpdatePhoto,
   vaultUploadPhotosToNode,
+  type VenuePublishStatus,
 } from './adminVault';
 
-export { downloadUpdatedStaticBundle };
+export {
+  downloadUpdatedStaticBundle,
+  vaultGetPublishStatus as getVenuePublishStatus,
+  vaultPublishVenue as publishAdminVenue,
+  type VenuePublishStatus,
+};
 
 const ADMIN_TOKEN_KEY = 'navigator_admin_token';
 const ADMIN_USER_KEY = 'navigator_admin_user';

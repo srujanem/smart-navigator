@@ -33,7 +33,8 @@ interface Camera360CaptureModalProps {
   onSubmitFrames: (files: File[], uploadImmediately?: boolean) => Promise<void> | void;
 }
 
-const SPIN_TOTAL_FRAMES = 10;
+const SPIN_TOTAL_FRAMES = 20;
+const SPIN_INTERVAL_MS = 400;
 
 export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
   open,
@@ -169,8 +170,10 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
           file: result.file,
           previewUrl,
           isVideo: false,
-          isPanorama360: true,
-          label: `360° Panorama (${frames.length} angles stitched)`,
+          isPanorama360: result.isPanorama360,
+          label: result.isPanorama360
+            ? 'Aligned 360° Panorama'
+            : 'Room Photo (Turn more for 360°)',
         },
       ]);
       // Immediately open crystal-clear Preview & Upload Screen so user knows exactly what to tap!
@@ -193,13 +196,14 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
     setSpinCount(0);
     setIsSpinning360(true);
 
-    // Grab angle 1 immediately so even a quick stop has frames
+    // Grab first angle immediately
     const first = grabLiveFrameCanvas(600);
     if (first) {
       spinCanvasesRef.current.push(first);
       setSpinCount(1);
     }
 
+    // Sample densely every 400ms so pixel-alignment has high overlap and zero duplicate seams!
     spinTimerRef.current = window.setInterval(() => {
       const c = grabLiveFrameCanvas(600);
       if (c) {
@@ -210,7 +214,7 @@ export const Camera360CaptureModal: React.FC<Camera360CaptureModalProps> = ({
           void finish360Spin();
         }
       }
-    }, 1000);
+    }, SPIN_INTERVAL_MS);
   }, [cameraReady, finish360Spin, grabLiveFrameCanvas]);
 
   const toggleTorch = async () => {
