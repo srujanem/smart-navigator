@@ -675,12 +675,12 @@ export const VenuePage: React.FC = () => {
       )}
 
       {/* =================================================================== */}
-      {/* HERO ACTION ROW: WHERE AM I PHOTO CARD + SMART SEARCH               */}
+      {/* HERO ACTION ROW: SMART SEARCH FIRST ON PHONES + WHERE AM I CARD     */}
       {/* =================================================================== */}
-      <div className="bg-gradient-to-b from-[#070B18] via-[#0B1329] to-slate-50 pt-7 pb-8">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 space-y-5">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-            {/* Prominent "Where am I? Upload Photo" Hero Card */}
+      <div className="bg-gradient-to-b from-[#070B18] via-[#0B1329] to-slate-50 pt-4 sm:pt-7 pb-6 sm:pb-8">
+        <div className="mx-auto max-w-7xl px-3.5 sm:px-6 lg:px-8 space-y-4 sm:space-y-5">
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 items-stretch">
+            {/* Prominent "Where am I? Upload Photo" Hero Card (Second on Mobile so Search is immediately at thumb reach) */}
             <div
               onDragOver={(e) => {
                 e.preventDefault();
@@ -697,7 +697,7 @@ export const VenuePage: React.FC = () => {
                   setLocateOpen(true);
                 }
               }}
-              className={`lg:col-span-5 relative rounded-3xl p-6 text-white transition-all overflow-hidden flex flex-col justify-between ${
+              className={`order-2 lg:order-1 lg:col-span-5 relative rounded-3xl p-4 sm:p-6 text-white transition-all overflow-hidden flex flex-col justify-between ${
                 heroDragActive
                   ? 'bg-cyan-950 ring-2 ring-cyan-400 scale-[1.01]'
                   : 'bg-gradient-to-br from-[#0F1B3D] via-[#0C1530] to-[#080E20] ring-1 ring-white/15 shadow-2xl'
@@ -948,8 +948,8 @@ export const VenuePage: React.FC = () => {
               </div>
             </div>
 
-            {/* Smart Destination, Symptom & Doctor Search Card */}
-            <div className="lg:col-span-7 rounded-3xl bg-white p-6 shadow-lift ring-1 ring-slate-900/[0.07] flex flex-col justify-between">
+            {/* Smart Destination, Symptom & Doctor Search Card (First on Mobile for instant 1-tap routing!) */}
+            <div className="order-1 lg:order-2 lg:col-span-7 rounded-3xl bg-white p-4 sm:p-6 shadow-lift ring-1 ring-slate-900/[0.07] flex flex-col justify-between">
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>

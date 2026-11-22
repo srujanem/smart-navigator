@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft,
   ChevronLeft,
   ChevronRight,
   Maximize2,
@@ -329,7 +328,7 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
   return (
     <div
       ref={stageRef}
-      style={{ touchAction: 'none' }}
+      style={{ touchAction: 'pan-y' }}
       className={`relative h-full w-full overflow-hidden select-none bg-[#070B14] text-white ${
         isDraggingLook ? 'cursor-grabbing' : 'cursor-grab'
       }`}
@@ -521,22 +520,22 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
       {/* ===================================================================== */}
       {/* 3. GOOGLE STREET VIEW 3D GROUND-PROJECTED ROAD, FLOOR TEXT & DISC (^) */}
       {/* ===================================================================== */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[56%] z-[9] flex items-end justify-center overflow-hidden">
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[54%] z-[9] flex items-end justify-center overflow-hidden">
         {/* 3D Perspective Road / Corridor Carpet on the Floor */}
         <div
           style={{
             transform: `perspective(360px) rotateX(${clamp(60 - pitch * 0.35, 50, 70)}deg) rotateZ(${groundRoadAngle}deg)`,
             transformOrigin: '50% 100%',
           }}
-          className="relative w-64 sm:w-80 h-full flex flex-col items-center justify-start pt-3 transition-transform duration-100"
+          className="relative w-52 sm:w-80 h-full flex flex-col items-center justify-start pt-2 transition-transform duration-100"
         >
           {/* Google Street View Translucent Corridor Path Strip */}
           <div
             className="absolute inset-x-4 inset-y-0 rounded-t-full"
             style={{
               background:
-                'linear-gradient(to top, rgba(37, 99, 235, 0.44) 0%, rgba(56, 189, 248, 0.32) 65%, rgba(56, 189, 248, 0.04) 100%)',
-              boxShadow: 'inset 0 0 28px rgba(56, 189, 248, 0.35)',
+                'linear-gradient(to top, rgba(37, 99, 235, 0.42) 0%, rgba(56, 189, 248, 0.30) 65%, rgba(56, 189, 248, 0.04) 100%)',
+              boxShadow: 'inset 0 0 28px rgba(56, 189, 248, 0.32)',
               borderLeft: '2.5px solid rgba(186, 230, 253, 0.55)',
               borderRight: '2.5px solid rgba(186, 230, 253, 0.55)',
             }}
@@ -544,29 +543,26 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
 
           {/* Google Street View White 'X' Intersection Waypoint Marker on Road */}
           {!isFinalStep && (
-            <div className="relative z-10 mt-1 text-white/85 font-sans text-xl font-black tracking-widest select-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
+            <div className="relative z-10 mt-1 text-white/85 font-sans text-lg sm:text-xl font-black tracking-widest select-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.9)]">
               ✕
             </div>
           )}
-
-          {/* 3D Perspective Corridor / Street Name Printed Directly on the Floor (like "Moodabidri - Karkala Rd"!) */}
-          <div
-            style={{
-              writingMode: 'vertical-rl',
-              textOrientation: 'mixed',
-              transform: 'rotate(180deg)',
-              textShadow:
-                '0 2px 6px rgba(0,0,0,0.98), 0 0 3px rgba(0,0,0,1), 1px 1px 0 #0f172a, -1px -1px 0 #0f172a',
-            }}
-            className="relative z-10 mt-2 font-display text-lg sm:text-2xl font-black tracking-wider text-white uppercase whitespace-nowrap"
-          >
-            {corridorFloorTitle}
-          </div>
         </div>
       </div>
 
-      {/* Clickable Ground Chevron Disc ( ( ^ ) ) Positioned Cleanly in Center-Floor (Never Blocked by Mini-Map or 3D Hit Box!) */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-[22%] sm:bottom-[20%] z-[15] flex flex-col items-center justify-center">
+      {/* Centered 3D Floor Text + Clickable Ground Chevron Disc ( ( ^ ) ) — Never Overlapped by Mini-Map! */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-[21%] sm:bottom-[20%] z-[15] flex flex-col items-center justify-center gap-2">
+        {/* 3D Perspective Corridor Name Badge on Floor */}
+        <div
+          style={{
+            transform: 'perspective(300px) rotateX(28deg)',
+            textShadow: '0 2px 6px rgba(0,0,0,0.95)',
+          }}
+          className="rounded-full bg-slate-950/75 px-3.5 py-1 font-display text-xs sm:text-sm font-black uppercase tracking-wider text-white ring-1 ring-white/25 shadow-lg max-w-[230px] sm:max-w-xs truncate"
+        >
+          {corridorFloorTitle}
+        </div>
+
         {!isFinalStep ? (
           <button
             type="button"
@@ -579,7 +575,7 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
             style={{
               transform: `perspective(260px) rotateX(46deg) rotateZ(${clamp(groundRoadAngle * 0.5, -35, 35)}deg)`,
             }}
-            className="pointer-events-auto group flex h-16 w-20 sm:h-20 sm:w-24 items-center justify-center rounded-full bg-white/55 ring-4 ring-white/95 shadow-[0_8px_32px_rgba(0,0,0,0.65)] hover:bg-white/80 hover:scale-110 active:scale-95 transition-all cursor-pointer"
+            className="pointer-events-auto group flex h-16 w-20 sm:h-20 sm:w-24 items-center justify-center rounded-full bg-white/60 ring-4 ring-white shadow-[0_8px_32px_rgba(0,0,0,0.7)] hover:bg-white/85 hover:scale-110 active:scale-95 transition-all cursor-pointer"
           >
             <svg viewBox="0 0 48 48" className="h-11 w-11 drop-shadow-[0_2px_4px_rgba(0,0,0,0.75)]">
               <path
@@ -610,173 +606,154 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
       </div>
 
       {/* ===================================================================== */}
-      {/* 4. TOP-LEFT GOOGLE MAPS STREET VIEW DARK FLOATING CARD                */}
+      {/* 4. TOP BAR: GOOGLE MAPS STREET VIEW CARD + ACTION BUTTONS (0 OVERLAP) */}
       {/* ===================================================================== */}
       <div
         data-no-drag="true"
-        className="absolute top-2.5 left-2.5 z-20 w-[calc(100%-7.5rem)] max-w-[248px] sm:max-w-[315px] rounded-2xl bg-[#11161F] p-2.5 sm:p-3.5 text-white ring-1 ring-white/20 shadow-2xl"
+        className="absolute top-2.5 inset-x-2.5 z-20 flex items-start justify-between gap-2 pointer-events-none"
       >
-        <div className="flex items-start gap-2.5">
-          {onClose ? (
-            <button
-              type="button"
-              onClick={onClose}
-              className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/10 text-slate-200 hover:bg-white/20 transition"
-              title="Back"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-          ) : null}
-
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-1.5">
+        {/* Left: Compact Google Street View Info Card */}
+        <div className="pointer-events-auto min-w-0 flex-1 max-w-[235px] sm:max-w-[325px] rounded-2xl bg-[#11161F]/95 p-2.5 sm:p-3.5 text-white ring-1 ring-white/20 shadow-2xl">
+          <div className="flex items-center justify-between gap-1.5">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-black text-blue-600">
+                G
+              </span>
               <h3 className="font-display text-xs sm:text-sm font-extrabold text-white truncate">
                 {activeStep?.short_action || activeStep?.name || venue.name}
               </h3>
-              <span className="shrink-0 rounded-md bg-blue-600 px-1.5 py-0.5 text-[10px] font-extrabold text-white">
-                {activeStepIdx + 1}/{steps.length}
-              </span>
             </div>
+            <span className="shrink-0 rounded-md bg-blue-600 px-1.5 py-0.5 text-[10px] font-extrabold text-white">
+              {activeStepIdx + 1}/{steps.length}
+            </span>
+          </div>
 
-            <p className="text-[11px] text-slate-300 truncate mt-0.5">
-              {venue.name}
-              {venue.city ? ` · ${venue.city}` : ''} ·{' '}
+          <div className="mt-1 flex flex-wrap items-center gap-1 text-[10px] text-slate-300">
+            <span className="truncate">
               {formatLevel(activeStep?.level ?? 0, activeNode?.floor_name)}
-            </p>
-
-            {/* Google Street View Badge Row */}
-            <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-white/10 pt-2">
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-0.5 text-[10px] font-bold text-sky-300 ring-1 ring-white/15">
-                <span className="flex h-3.5 w-3.5 items-center justify-center rounded-full bg-white text-[9px] font-black text-blue-600">
-                  G
-                </span>
-                Street View Route
+            </span>
+            {activeStep && activeStep.distance_m > 0 && (
+              <span className="rounded bg-emerald-500/20 px-1.5 py-0.2 font-extrabold text-emerald-300">
+                {Math.round(activeStep.distance_m)}m · ~{activeStep.steps_count || Math.max(1, Math.round(activeStep.distance_m / 0.72))} steps
               </span>
+            )}
+            {activeStep?.door_side && activeStep.door_side !== 'ahead' && (
+              <span className="rounded bg-amber-500/25 px-1.5 py-0.2 font-extrabold text-amber-200">
+                🚪 {activeStep.door_side.toUpperCase()}
+              </span>
+            )}
+          </div>
 
-              {activeStep && activeStep.distance_m > 0 && (
-                <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-extrabold text-emerald-300 ring-1 ring-emerald-400/35">
-                  {Math.round(activeStep.distance_m)} m
-                  {activeStep.steps_count ? ` · ~${activeStep.steps_count} steps` : ''}
-                </span>
+          <p className="mt-1 text-[11px] font-semibold text-slate-100 leading-snug line-clamp-2">
+            {activeStep?.instruction}
+          </p>
+
+          {/* Desktop-Only Card Button Row (Mobile uses bottom thumb bar + top-right Auto-Walk pill!) */}
+          <div className="hidden sm:flex mt-2.5 items-center gap-1.5 border-t border-white/10 pt-2">
+            <button
+              type="button"
+              disabled={activeStepIdx <= 0}
+              onClick={() => triggerStepMove(activeStepIdx - 1, 'backward')}
+              className="inline-flex items-center justify-center rounded-xl bg-white/10 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-white/20 disabled:opacity-35 transition"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+              Prev
+            </button>
+            <button
+              type="button"
+              onClick={() => setAutoWalk((v) => !v)}
+              className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-[11px] font-extrabold transition ${
+                autoWalk
+                  ? 'bg-amber-400 text-slate-950 shadow-md'
+                  : 'bg-white/10 text-cyan-300 hover:bg-white/20'
+              }`}
+            >
+              {autoWalk ? (
+                <>
+                  <Pause className="h-3 w-3" /> Pause
+                </>
+              ) : (
+                <>
+                  <Play className="h-3 w-3" /> Auto-Walk
+                </>
               )}
-
-              {activeStep?.door_side && activeStep.door_side !== 'ahead' && (
-                <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-extrabold text-amber-200 ring-1 ring-amber-400/40">
-                  🚪 Door on {activeStep.door_side.toUpperCase()}
-                </span>
-              )}
-            </div>
-
-            {/* Plain-English Human Instruction */}
-            <p className="mt-1.5 text-[11px] sm:text-xs font-semibold text-slate-100 leading-snug line-clamp-2">
-              {activeStep?.instruction}
-            </p>
-
-            {/* Step Controls & Auto-Walk Inside Card */}
-            <div className="mt-2.5 flex items-center gap-1.5">
+            </button>
+            {onSpeakStep && activeStep && (
               <button
                 type="button"
-                disabled={activeStepIdx <= 0}
-                onClick={() => triggerStepMove(activeStepIdx - 1, 'backward')}
-                className="inline-flex items-center justify-center rounded-xl bg-white/10 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-white/20 disabled:opacity-35 transition"
-                title="Previous Step"
+                onClick={() => onSpeakStep(activeStep)}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-xl bg-white/10 text-slate-200 hover:bg-white/20 transition"
+                title="Speak direction"
               >
-                <ChevronLeft className="h-3.5 w-3.5" />
-                Prev
+                <Volume2 className="h-3.5 w-3.5 text-cyan-300" />
               </button>
-
-              <button
-                type="button"
-                onClick={() => setAutoWalk((v) => !v)}
-                className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-[11px] font-extrabold transition ${
-                  autoWalk
-                    ? 'bg-amber-400 text-slate-950 shadow-md'
-                    : 'bg-white/10 text-cyan-300 hover:bg-white/20'
-                }`}
-                title="Auto-Walk down the corridor route"
-              >
-                {autoWalk ? (
-                  <>
-                    <Pause className="h-3 w-3" /> Pause
-                  </>
-                ) : (
-                  <>
-                    <Play className="h-3 w-3" /> Auto-Walk
-                  </>
-                )}
-              </button>
-
-              {onSpeakStep && activeStep && (
-                <button
-                  type="button"
-                  onClick={() => onSpeakStep(activeStep)}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-xl bg-white/10 text-slate-200 hover:bg-white/20 transition"
-                  title="Speak direction"
-                >
-                  <Volume2 className="h-3.5 w-3.5 text-cyan-300" />
-                </button>
-              )}
-
-              <button
-                type="button"
-                disabled={isFinalStep}
-                onClick={() => triggerStepMove(activeStepIdx + 1, 'forward')}
-                className="ml-auto inline-flex items-center gap-1 rounded-xl bg-blue-600 px-3 py-1.5 text-[11px] font-extrabold text-white hover:bg-blue-500 disabled:opacity-35 transition shadow-md"
-                title="Step Forward"
-              >
-                Step
-                <ChevronRight className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            )}
+            <button
+              type="button"
+              disabled={isFinalStep}
+              onClick={() => triggerStepMove(activeStepIdx + 1, 'forward')}
+              className="ml-auto inline-flex items-center gap-1 rounded-xl bg-blue-600 px-3 py-1.5 text-[11px] font-extrabold text-white hover:bg-blue-500 disabled:opacity-35 transition shadow-md"
+            >
+              Step
+              <ChevronRight className="h-3.5 w-3.5" />
+            </button>
           </div>
         </div>
-      </div>
 
-      {/* ===================================================================== */}
-      {/* 5. TOP-RIGHT SHARE & CLOSE / FULLSCREEN BUTTONS                       */}
-      {/* ===================================================================== */}
-      <div
-        data-no-drag="true"
-        className="absolute top-3 right-3 z-20 flex items-center gap-1.5"
-      >
-        {onShareRoute && (
+        {/* Right: Non-Overlapping Quick Action Pills (Auto-Walk on Mobile + Zoom + Share) */}
+        <div className="pointer-events-auto flex flex-col sm:flex-row items-end sm:items-center gap-1.5 shrink-0">
           <button
             type="button"
-            onClick={onShareRoute}
-            className="inline-flex items-center gap-1.5 rounded-full bg-[#11161F]/90 px-3 py-2 text-xs font-bold text-white ring-1 ring-white/15 shadow-lg hover:bg-[#1B2230] transition"
-            title="Share Route"
+            onClick={() => setAutoWalk((v) => !v)}
+            className={`sm:hidden inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-extrabold ring-1 shadow-lg transition ${
+              autoWalk
+                ? 'bg-amber-400 text-slate-950 ring-amber-200'
+                : 'bg-[#11161F]/95 text-cyan-300 ring-white/20'
+            }`}
+            title="Auto-Walk Route"
           >
-            <Share2 className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Share</span>
+            {autoWalk ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+            <span>{autoWalk ? 'Pause' : 'Walk'}</span>
           </button>
-        )}
 
-        {currentPhotoUrl && onOpenLightbox && (
-          <button
-            type="button"
-            onClick={() =>
-              onOpenLightbox(
-                currentPhotoUrl,
-                `${activeStep?.name || venue.name} (${formatLevel(activeStep?.level ?? 0)})`,
-              )
-            }
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#11161F]/90 text-white ring-1 ring-white/15 shadow-lg hover:bg-[#1B2230] transition"
-            title="Inspect full photo"
-          >
-            <Maximize2 className="h-3.5 w-3.5 text-cyan-300" />
-          </button>
-        )}
-
-        {onClose && (
-          <button
-            type="button"
-            onClick={onClose}
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#11161F]/90 text-white ring-1 ring-white/15 shadow-lg hover:bg-[#1B2230] transition"
-            title="Exit Street View"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        )}
+          <div className="flex items-center gap-1">
+            {currentPhotoUrl && onOpenLightbox && (
+              <button
+                type="button"
+                onClick={() =>
+                  onOpenLightbox(
+                    currentPhotoUrl,
+                    `${activeStep?.name || venue.name} (${formatLevel(activeStep?.level ?? 0)})`,
+                  )
+                }
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#11161F]/95 text-white ring-1 ring-white/20 shadow-lg hover:bg-[#1B2230] transition"
+                title="Inspect full photo"
+              >
+                <Maximize2 className="h-3.5 w-3.5 text-cyan-300" />
+              </button>
+            )}
+            {onShareRoute && (
+              <button
+                type="button"
+                onClick={onShareRoute}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#11161F]/95 text-white ring-1 ring-white/20 shadow-lg hover:bg-[#1B2230] transition"
+                title="Share Route"
+              >
+                <Share2 className="h-3.5 w-3.5" />
+              </button>
+            )}
+            {onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                className="hidden sm:inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#11161F]/95 text-white ring-1 ring-white/20 shadow-lg hover:bg-[#1B2230] transition"
+                title="Exit Street View"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ===================================================================== */}
@@ -784,10 +761,10 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
       {/* ===================================================================== */}
       <div
         data-no-drag="true"
-        className={`absolute bottom-3 left-3 z-20 overflow-hidden rounded-2xl bg-[#E8EEF5] ring-2 ring-white shadow-2xl transition-all duration-200 ${
+        className={`absolute bottom-2.5 left-2.5 z-20 overflow-hidden rounded-2xl bg-[#E8EEF5] ring-2 ring-white shadow-2xl transition-all duration-200 ${
           miniMapExpanded
-            ? 'h-48 w-64 sm:h-56 sm:w-72'
-            : 'h-24 w-36 sm:h-28 sm:w-44'
+            ? 'h-44 w-56 sm:h-56 sm:w-72'
+            : 'h-20 w-28 sm:h-28 sm:w-44'
         }`}
       >
         <svg

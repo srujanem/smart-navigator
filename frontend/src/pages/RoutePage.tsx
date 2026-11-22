@@ -1245,7 +1245,13 @@ export const RoutePage: React.FC = () => {
         )}
 
         {(route?.orientation_hint || stepWayfindingHints[0]?.facing) && (
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-indigo-50 px-4 py-3 text-xs text-indigo-950 ring-1 ring-indigo-200">
+          <div
+            className={`${
+              mobileViewMode === 'street' || activeStepIdx > 0
+                ? 'hidden sm:flex'
+                : 'flex'
+            } flex-wrap items-center justify-between gap-3 rounded-2xl bg-indigo-50 px-4 py-2.5 text-xs text-indigo-950 ring-1 ring-indigo-200`}
+          >
             <div className="flex items-center gap-2.5">
               <Compass className="h-4 w-4 text-indigo-600 shrink-0" />
               <div>
@@ -1603,8 +1609,8 @@ export const RoutePage: React.FC = () => {
                   mobileViewMode === 'guide' ? 'hidden lg:block' : ''
                 }`}
               >
-                {/* Unified Workspace Header Ribbon */}
-                <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-white p-2 ring-1 ring-slate-200/80 shadow-soft">
+                {/* Unified Workspace Header Ribbon (Desktop Only — Mobile uses the single 3-Tab Switcher above) */}
+                <div className="hidden lg:flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-white p-2 ring-1 ring-slate-200/80 shadow-soft">
                   <div className="flex items-center gap-1.5">
                     <button
                       type="button"
@@ -1704,8 +1710,46 @@ export const RoutePage: React.FC = () => {
                   </div>
                 </div>
 
-                {/* FULL-BLEED WORKSPACE STAGE (Never squished, never cut off) */}
-                <div className="relative h-[470px] sm:h-[540px] lg:h-[calc(100dvh-14.5rem)] min-h-[440px] max-h-[680px] w-full overflow-hidden rounded-3xl bg-[#060A16] ring-1 ring-slate-900/15 shadow-2xl">
+                {/* Mobile 2D / 3D Sub-Switcher (Only shown when Map tab is active on phones) */}
+                {mobileViewMode === 'map' && !showStreetStage && (
+                  <div className="lg:hidden flex items-center justify-between rounded-xl bg-white px-3 py-1.5 ring-1 ring-slate-200/80">
+                    <span className="text-[11px] font-bold text-slate-600">
+                      Floor Blueprint & 3D Twin
+                    </span>
+                    <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setTwinMode('2d');
+                          if (selectedLevel === 'all') {
+                            setSelectedLevel(activeStep?.level ?? route.levels[0] ?? 0);
+                          }
+                        }}
+                        className={`rounded-md px-2.5 py-1 text-[11px] font-extrabold transition ${
+                          twinMode === '2d'
+                            ? 'bg-slate-900 text-white'
+                            : 'text-slate-600'
+                        }`}
+                      >
+                        2D Map
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTwinMode('3d')}
+                        className={`rounded-md px-2.5 py-1 text-[11px] font-extrabold transition ${
+                          twinMode === '3d'
+                            ? 'bg-indigo-600 text-white'
+                            : 'text-slate-600'
+                        }`}
+                      >
+                        3D Twin
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* FULL-BLEED WORKSPACE STAGE (Sized so Mobile Header + Tabs + Stage + Bottom Thumb Dock fit in 1 screen) */}
+                <div className="relative h-[calc(100dvh-13.75rem)] min-h-[370px] max-h-[520px] sm:h-[540px] lg:h-[calc(100dvh-14.5rem)] lg:max-h-[680px] w-full overflow-hidden rounded-3xl bg-[#060A16] ring-1 ring-slate-900/15 shadow-2xl">
                   {showStreetStage ? (
                     <GoogleStreetViewStage
                       venue={venue}
