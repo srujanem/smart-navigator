@@ -1009,20 +1009,49 @@ export const VenuePage: React.FC = () => {
                   </button>
                 </div>
 
-                {/* Example Natural Queries */}
+                {/* Example Natural Queries + 1-Tap Instant Go-To Rooms */}
                 {!searchQuery && (
-                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                    <span className="text-xs text-slate-400 mr-1">Try asking:</span>
-                    {exampleQueries.map((eq) => (
-                      <button
-                        key={eq}
-                        type="button"
-                        onClick={() => setSearchQuery(eq)}
-                        className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition"
-                      >
-                        "{eq}"
-                      </button>
-                    ))}
+                  <div className="space-y-3 pt-1">
+                    {/* 1-Tap Instant Go-To Rooms Bar (Zero Typing Needed on Phones!) */}
+                    {placeNodes.length > 0 && (
+                      <div className="rounded-2xl bg-slate-50 p-3 ring-1 ring-slate-200/80 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-extrabold uppercase tracking-wider text-indigo-700">
+                            ⚡ 1-Tap Instant Go-To Rooms (No Typing Needed)
+                          </span>
+                          <span className="text-[10px] font-semibold text-slate-500">
+                            Tap to launch Street View →
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto thin-scrollbar">
+                          {placeNodes.slice(0, 14).map((rm) => (
+                            <button
+                              key={`quick-go-${rm.id}`}
+                              type="button"
+                              onClick={() => handleNavigateToDestination(rm.id, rm.name)}
+                              className="inline-flex items-center gap-1 rounded-xl bg-white px-2.5 py-1.5 text-xs font-extrabold text-slate-900 ring-1 ring-slate-200/90 shadow-sm hover:bg-indigo-600 hover:text-white hover:ring-indigo-600 active:scale-95 transition"
+                            >
+                              <Navigation className="h-3 w-3 text-indigo-600 shrink-0" />
+                              <span>{rm.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-xs text-slate-400 mr-1">Try asking:</span>
+                      {exampleQueries.map((eq) => (
+                        <button
+                          key={eq}
+                          type="button"
+                          onClick={() => setSearchQuery(eq)}
+                          className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition"
+                        >
+                          "{eq}"
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
 

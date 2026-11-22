@@ -877,7 +877,7 @@ export function computeOfflineSearch(
  * Computes the identical 48-dim L2-normalized spatial RGB + gradient descriptor
  * in browser <canvas> so photo localization works 100% client-side with zero database server.
  */
-async function computeBrowserImageSignature(file: File): Promise<number[]> {
+export async function computeBrowserImageSignature(file: File): Promise<number[]> {
   return new Promise((resolve) => {
     const img = new Image();
     const url = URL.createObjectURL(file);

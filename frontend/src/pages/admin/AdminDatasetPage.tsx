@@ -24,6 +24,7 @@ import {
   autoMapAdminDataset,
   cleanAdminVenueData,
   deleteAdminPhoto,
+  downloadUpdatedStaticBundle,
   getAdminDataset,
   getAdminIndexReport,
   getVenue,
@@ -454,6 +455,16 @@ export const AdminDatasetPage: React.FC = () => {
 
           <button
             type="button"
+            onClick={() => void downloadUpdatedStaticBundle()}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-extrabold text-white shadow-md hover:bg-indigo-500 transition"
+            title="Download updated offline-bundle.json with all new photos"
+          >
+            <HardDrive className="h-3.5 w-3.5" />
+            <span>💾 Export Static Bundle</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setQrModalOpen(true)}
             className="inline-flex items-center gap-1.5 rounded-xl bg-white px-4 py-2.5 text-xs font-extrabold text-slate-900 ring-1 ring-slate-200 shadow-sm hover:bg-slate-50 transition"
           >
@@ -492,6 +503,162 @@ export const AdminDatasetPage: React.FC = () => {
             )}
             {rebuilding ? 'Rebuilding Vision Index...' : 'Rebuild AI Vision Index'}
           </button>
+        </div>
+      </div>
+
+      {/* =================================================================== */}
+      {/* 1-TAP PHONE ROOM-BY-ROOM PHOTO CHECKLIST (ZERO STRUGGLE · AS-IT-IS) */}
+      {/* =================================================================== */}
+      <div className="rounded-3xl bg-gradient-to-br from-[#071026] via-[#0B1736] to-slate-900 p-4 sm:p-6 text-white ring-2 ring-cyan-400/40 shadow-2xl space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/20 px-3 py-1 text-[11px] font-extrabold uppercase tracking-wider text-emerald-300 ring-1 ring-emerald-400/40">
+              📱 Easiest Phone Upload Mode · 100% Direct Room Pinning
+            </span>
+            <h2 className="font-display text-lg sm:text-xl font-extrabold mt-1.5">
+              1-Tap Room-by-Room Photo Checklist (Pins Exactly Where You Tap)
+            </h2>
+            <p className="text-xs text-slate-300 mt-0.5 max-w-3xl">
+              No complex settings or wrong AI guesses: just tap <strong>📷 Snap Camera</strong> or <strong>🖼️ Add Gallery</strong> directly on any room card below. Your photo is compressed on your phone, saved immediately, and pinned <strong>100% as-it-is</strong> to that exact room!
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-xs font-extrabold">
+            <span className="rounded-xl bg-white/10 px-3 py-1.5 text-cyan-300 ring-1 ring-white/15">
+              {dataset.totals.covered} / {dataset.totals.nodes} Rooms Mapped
+            </span>
+          </div>
+        </div>
+
+        {uploading && (
+          <div className="flex items-center gap-2.5 rounded-2xl bg-cyan-500/20 px-4 py-3 text-xs font-extrabold text-cyan-200 ring-1 ring-cyan-400/50">
+            <Loader2 className="h-4 w-4 animate-spin text-cyan-300 shrink-0" />
+            <span>Compressing & pinning photo directly to selected room...</span>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 max-h-[440px] overflow-y-auto pr-1 thin-scrollbar">
+          {dataset.nodes.map((rm) => {
+            const latestPhoto = rm.photos[0] ?? null;
+            const isActiveRm = rm.node_id === selectedNodeId;
+            return (
+              <div
+                key={`quick-rm-${rm.node_id}`}
+                onClick={() => {
+                  setSelectedNodeId(rm.node_id);
+                  setSelectedLevel(rm.level);
+                }}
+                className={`cursor-pointer rounded-2xl p-3 transition flex flex-col justify-between gap-2.5 ${
+                  isActiveRm
+                    ? 'bg-cyan-950/80 ring-2 ring-cyan-400 shadow-lg'
+                    : 'bg-white/[0.06] ring-1 ring-white/12 hover:bg-white/[0.1]'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-display text-sm font-extrabold text-white truncate">
+                      {rm.name}
+                    </div>
+                    <div className="text-[10px] text-slate-400 truncate">
+                      {rm.building_name} · {formatLevel(rm.level)}
+                    </div>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
+                      rm.photo_count > 0
+                        ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/40'
+                        : 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-400/40'
+                    }`}
+                  >
+                    {rm.photo_count > 0 ? `${rm.photo_count} ✓` : 'Needs Photo'}
+                  </span>
+                </div>
+
+                {/* Un-Cropped Preview Thumbnail */}
+                <div className="relative h-28 w-full overflow-hidden rounded-xl bg-slate-950 ring-1 ring-white/10 flex items-center justify-center">
+                  {latestPhoto ? (
+                    <img
+                      src={mediaUrl(latestPhoto.thumbnail_url || latestPhoto.url)}
+                      alt={rm.name}
+                      loading="lazy"
+                      className="h-full w-full object-contain"
+                    />
+                  ) : (
+                    <div className="text-center text-[11px] text-slate-500 px-2">
+                      No photo yet — tap Snap or Gallery below
+                    </div>
+                  )}
+                </div>
+
+                {/* Direct 1-Tap Camera & Gallery Labels Pinned Strictly to This Room */}
+                <div
+                  className="grid grid-cols-2 gap-1.5"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <label className="cursor-pointer inline-flex items-center justify-center gap-1 rounded-xl bg-emerald-600 px-2.5 py-2 text-[11px] font-extrabold text-white shadow hover:bg-emerald-500 active:scale-95 transition">
+                    <Camera className="h-3.5 w-3.5 shrink-0" />
+                    <span>📷 Snap</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const files = e.target.files;
+                        if (!files || files.length === 0 || !selectedSlug) return;
+                        setSelectedNodeId(rm.node_id);
+                        setUploading(true);
+                        try {
+                          const res = await uploadAdminPhotos(
+                            selectedSlug,
+                            rm.node_id,
+                            Array.from(files),
+                            null,
+                            true,
+                          );
+                          setUploadResult(res);
+                          await loadAll();
+                        } finally {
+                          setUploading(false);
+                          e.target.value = '';
+                        }
+                      }}
+                    />
+                  </label>
+
+                  <label className="cursor-pointer inline-flex items-center justify-center gap-1 rounded-xl bg-cyan-500 px-2.5 py-2 text-[11px] font-extrabold text-slate-950 shadow hover:bg-cyan-400 active:scale-95 transition">
+                    <ImageIcon className="h-3.5 w-3.5 shrink-0" />
+                    <span>🖼️ Gallery</span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={async (e) => {
+                        const files = e.target.files;
+                        if (!files || files.length === 0 || !selectedSlug) return;
+                        setSelectedNodeId(rm.node_id);
+                        setUploading(true);
+                        try {
+                          const res = await uploadAdminPhotos(
+                            selectedSlug,
+                            rm.node_id,
+                            Array.from(files),
+                            null,
+                            true,
+                          );
+                          setUploadResult(res);
+                          await loadAll();
+                        } finally {
+                          setUploading(false);
+                          e.target.value = '';
+                        }
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
