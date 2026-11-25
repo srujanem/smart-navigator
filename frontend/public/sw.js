@@ -1,4 +1,5 @@
-const CACHE_NAME = 'navigator-pwa-v16';
+const CACHE_NAME = 'navigator-pwa-v17';
+const OFFLINE_VENUES_CACHE = 'navigator-offline-venues-v1';
 const SHELL_ASSETS = ['/', '/index.html', '/manifest.json', '/favicon.svg', '/offline-bundle.json'];
 
 self.addEventListener('install', (event) => {
@@ -15,7 +16,11 @@ self.addEventListener('activate', (event) => {
     caches
       .keys()
       .then((keys) =>
-        Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))),
+        Promise.all(
+          keys
+            .filter((k) => k !== CACHE_NAME && k !== OFFLINE_VENUES_CACHE)
+            .map((k) => caches.delete(k)),
+        ),
       )
       .then(() => self.clients.claim()),
   );

@@ -6,15 +6,19 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  Cloud,
   Copy,
   Download,
   ExternalLink,
   FolderUp,
+  GraduationCap,
   Image as ImageIcon,
   Layers,
   Loader2,
   Maximize2,
+  MousePointerClick,
   Plus,
+  QrCode,
   Rocket,
   RotateCw,
   Search,
@@ -36,12 +40,14 @@ import {
   exportVenuePackage,
   getAdminDataset,
   getVenue,
+  getVenueGraph,
   getVenuePublishStatus,
   importVenuePackage,
   mediaUrl,
   promoteAdminPhotoCover,
   publishAdminVenue,
   rotateAdminPhoto90,
+  syncVenueToCloudNow,
   updateAdminPhoto,
   uploadAdminPhotos,
   type VenuePublishStatus,
@@ -49,9 +55,15 @@ import {
 import { isVideoFile, stitchMultiplePhotosTo360 } from '../../lib/panorama360';
 import { formatLevel } from '../../lib/locationStore';
 import { Camera360CaptureModal } from '../../components/Camera360CaptureModal';
+import {
+  CloudSyncModal,
+  ExamEventManagerModal,
+  HotspotEditorModal,
+} from '../../components/AdminSmartToolsModals';
+import { PrintableQrSheetModal } from '../../components/PrintableQrSheetModal';
 import { ErrorState } from '../../components/ErrorState';
 import { useAdminVenue } from './adminVenueContext';
-import type { DatasetNode, DatasetResponse, VenueDetail } from '../../lib/types';
+import type { DatasetNode, DatasetResponse, GNode, VenueDetail } from '../../lib/types';
 
 interface PublishModalState {
   active: boolean;
@@ -72,11 +84,18 @@ export const AdminDatasetPage: React.FC = () => {
   const importPackageRef = useRef<HTMLInputElement>(null);
 
   const [venue, setVenue] = useState<VenueDetail | null>(null);
+  const [graphNodes, setGraphNodes] = useState<GNode[]>([]);
   const [dataset, setDataset] = useState<DatasetResponse | null>(null);
   const [publishStatus, setPublishStatus] = useState<VenuePublishStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+
+  // Smart Admin Power Modals (Cloud Sync, Exam USN Finder, QR Sheet, 360° Door Hotspots)
+  const [cloudModalOpen, setCloudModalOpen] = useState(false);
+  const [examModalOpen, setExamModalOpen] = useState(false);
+  const [qrModalOpen, setQrModalOpen] = useState(false);
+  const [hotspotRoom, setHotspotRoom] = useState<DatasetNode | null>(null);
 
   // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
@@ -119,12 +138,14 @@ export const AdminDatasetPage: React.FC = () => {
       if (!silent) setLoading(true);
       setError(null);
       try {
-        const [v, ds, pub] = await Promise.all([
+        const [v, g, ds, pub] = await Promise.all([
           getVenue(selectedSlug),
+          getVenueGraph(selectedSlug),
           getAdminDataset(selectedSlug),
           getVenuePublishStatus(selectedSlug),
         ]);
         setVenue(v);
+        setGraphNodes(g.nodes);
         setDataset(ds);
         setPublishStatus(pub);
         const firstFloor = v.buildings[0]?.floors[0]?.id || '';
@@ -542,9 +563,36 @@ export const AdminDatasetPage: React.FC = () => {
             />
             <button
               type="button"
+              onClick={() => setCloudModalOpen(true)}
+              className="inline-flex items-center gap-1 rounded-xl bg-cyan-500/15 px-2.5 py-2 text-[11px] font-bold text-cyan-200 ring-1 ring-cyan-400/35 hover:bg-cyan-500/25 transition"
+              title="Configure Cloud Sync across all devices"
+            >
+              <Cloud className="h-3.5 w-3.5 text-cyan-300" />
+              <span>Cloud Sync</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setExamModalOpen(true)}
+              className="inline-flex items-center gap-1 rounded-xl bg-indigo-500/20 px-2.5 py-2 text-[11px] font-bold text-indigo-200 ring-1 ring-indigo-400/35 hover:bg-indigo-500/30 transition"
+              title="Upload Exam USN or Event Hall CSV mapping"
+            >
+              <GraduationCap className="h-3.5 w-3.5 text-indigo-300" />
+              <span>Exams / USN</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setQrModalOpen(true)}
+              className="inline-flex items-center gap-1 rounded-xl bg-white/10 px-2.5 py-2 text-[11px] font-bold text-slate-200 ring-1 ring-white/15 hover:bg-white/15 transition"
+              title="Generate Printable Wall QR Stickers"
+            >
+              <QrCode className="h-3.5 w-3.5 text-emerald-300" />
+              <span>QR Sheet</span>
+            </button>
+            <button
+              type="button"
               onClick={() => void exportVenuePackage(selectedSlug)}
-              className="inline-flex items-center gap-1 rounded-xl bg-white/10 px-3 py-2 text-[11px] font-bold text-cyan-200 ring-1 ring-white/15 hover:bg-white/15 transition"
-              title="Export portable venue file to open on another phone or laptop"
+              className="inline-flex items-center gap-1 rounded-xl bg-white/10 px-2.5 py-2 text-[11px] font-bold text-slate-200 ring-1 ring-white/15 hover:bg-white/15 transition"
+              title="Export portable venue file"
             >
               <Download className="h-3.5 w-3.5" />
               <span>Export</span>
@@ -552,8 +600,8 @@ export const AdminDatasetPage: React.FC = () => {
             <button
               type="button"
               onClick={() => importPackageRef.current?.click()}
-              className="inline-flex items-center gap-1 rounded-xl bg-white/10 px-3 py-2 text-[11px] font-bold text-slate-200 ring-1 ring-white/15 hover:bg-white/15 transition"
-              title="Import a venue package exported from another device"
+              className="inline-flex items-center gap-1 rounded-xl bg-white/10 px-2.5 py-2 text-[11px] font-bold text-slate-200 ring-1 ring-white/15 hover:bg-white/15 transition"
+              title="Import a venue package"
             >
               <FolderUp className="h-3.5 w-3.5" />
               <span>Import</span>
@@ -1134,21 +1182,32 @@ export const AdminDatasetPage: React.FC = () => {
                   </label>
                 </div>
 
-                {/* Expandable Saved Photos Manager (1-Tap Rotate, Cover, Move, Delete) */}
+                {/* Expandable Saved Photos Manager + 360° Door Hotspot Linker */}
                 {rm.photos.length > 0 && (
                   <div className="pt-1 border-t border-slate-100">
-                    <button
-                      type="button"
-                      onClick={() => setExpandedRoomId(isExpanded ? null : rm.node_id)}
-                      className="w-full flex items-center justify-between text-[11px] font-bold text-slate-600 hover:text-slate-950 py-1"
-                    >
-                      <span>Manage Photos ({rm.photos.length})</span>
-                      {isExpanded ? (
-                        <ChevronUp className="h-3.5 w-3.5" />
-                      ) : (
-                        <ChevronDown className="h-3.5 w-3.5" />
-                      )}
-                    </button>
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setHotspotRoom(rm)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-emerald-50 px-2 py-1 text-[10px] font-extrabold text-emerald-800 ring-1 ring-emerald-200 hover:bg-emerald-100 transition"
+                        title="Tap doors inside this photo to create clickable Street View portals"
+                      >
+                        <MousePointerClick className="h-3 w-3 text-emerald-600" />
+                        <span>Link Door Hotspots</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setExpandedRoomId(isExpanded ? null : rm.node_id)}
+                        className="flex items-center justify-end gap-1 text-[11px] font-bold text-slate-600 hover:text-slate-950 py-1"
+                      >
+                        <span>Manage ({rm.photos.length})</span>
+                        {isExpanded ? (
+                          <ChevronUp className="h-3.5 w-3.5" />
+                        ) : (
+                          <ChevronDown className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
 
                     {isExpanded && (
                       <div className="mt-2 space-y-2">
@@ -1399,6 +1458,45 @@ export const AdminDatasetPage: React.FC = () => {
           if (!room || files.length === 0) return;
           void uploadDirectToRoom(room, files, false);
         }}
+      />
+
+      {/* CLOUD SYNC, EXAM USN FINDER, PRINTABLE QR SHEET & 360° DOOR HOTSPOT MODALS */}
+      <CloudSyncModal
+        open={cloudModalOpen}
+        onClose={() => setCloudModalOpen(false)}
+        venueName={venue.name}
+        onTriggerCloudSync={async () => {
+          const res = await syncVenueToCloudNow(selectedSlug);
+          showToast(
+            res.synced
+              ? `Synced "${venue.name}" to ${res.target === 'supabase' ? 'Supabase Cloud' : 'Cloud API Relay'}!`
+              : 'Saved to local vault (configure Supabase URL & Key for global sync).',
+          );
+        }}
+      />
+
+      <ExamEventManagerModal
+        open={examModalOpen}
+        onClose={() => setExamModalOpen(false)}
+        slug={selectedSlug}
+        venueName={venue.name}
+        nodes={graphNodes}
+        onUpdated={() => showToast('Updated Exam / Event allocations!')}
+      />
+
+      <PrintableQrSheetModal
+        open={qrModalOpen}
+        onClose={() => setQrModalOpen(false)}
+        venue={venue}
+        nodes={graphNodes}
+      />
+
+      <HotspotEditorModal
+        open={hotspotRoom !== null}
+        onClose={() => setHotspotRoom(null)}
+        slug={selectedSlug}
+        room={hotspotRoom}
+        allNodes={graphNodes}
       />
     </div>
   );

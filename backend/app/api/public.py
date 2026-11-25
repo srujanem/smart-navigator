@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
 
 from ..auth import validate_media_upload
-from ..config import MEDIA_DIR
+from ..config import DATA_DIR, MEDIA_DIR
 from ..db import get_session
 from ..models import Building, Closure, Edge, Floor, LocalizeLog, Node, Person, Photo, Venue
 from ..services.routing import (
@@ -530,3 +530,59 @@ def venue_multistop_route(slug: str, payload: MultiStopRoutePayload, session: Se
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Cross-Device Cloud Venue Sync Relay (/api/cloud-venues)
+# ---------------------------------------------------------------------------
+
+import re as _re
+
+_SAFE_SLUG_RE = _re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+
+
+def _cloud_venues_dir():
+    d = DATA_DIR / "cloud_venues"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+@router.get("/cloud-venues")
+def list_cloud_venues():
+    d = _cloud_venues_dir()
+    items = []
+    files = sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:25]
+    for fp in files:
+        try:
+            items.append(json.loads(fp.read_text(encoding="utf-8")))
+        except Exception:
+            continue
+    return items
+
+
+@router.get("/cloud-venues/{slug}")
+def get_cloud_venue(slug: str):
+    clean = slug.strip().lower()
+    if not _SAFE_SLUG_RE.match(clean):
+        raise HTTPException(status_code=400, detail="Invalid venue slug.")
+    fp = _cloud_venues_dir() / f"{clean}.json"
+    if not fp.exists():
+        raise HTTPException(status_code=404, detail="Cloud venue package not found.")
+    try:
+        return json.loads(fp.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Corrupt venue package.") from exc
+
+
+@router.post("/cloud-venues/{slug}")
+async def upsert_cloud_venue(slug: str, payload: dict):
+    clean = slug.strip().lower()
+    if not _SAFE_SLUG_RE.match(clean):
+        raise HTTPException(status_code=400, detail="Invalid venue slug.")
+    raw = json.dumps(payload, ensure_ascii=False)
+    if len(raw.encode("utf-8")) > 18 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Venue package exceeds 18 MB limit.")
+    fp = _cloud_venues_dir() / f"{clean}.json"
+    fp.write_text(raw, encoding="utf-8")
+    return {"ok": True, "slug": clean}
+

@@ -29,6 +29,15 @@ import {
   loadBundledOfflineSnapshot,
 } from './offlineRouter';
 import { optimizePhotoOrPanorama, rotateDataUrl90 } from './panorama360';
+import { pullCloudVenueList, pullVenueFromCloud, pushVenueToCloud } from './cloudSync';
+import {
+  type DoorHotspot,
+  type ExamAllocationRule,
+  getVenueExamRules,
+  getVenueHotspots,
+  saveVenueExamRules,
+  saveVenueHotspots,
+} from './examStore';
 
 const IDB_NAME = 'navigator_admin_vault_v1';
 const IDB_STORE = 'kv';
@@ -72,6 +81,8 @@ export interface PortableVenuePackage {
   people: Person[];
   photos: VaultPhotoRecord[];
   blueprints: Record<string, string>;
+  exams?: ExamAllocationRule[];
+  hotspots?: DoorHotspot[];
 }
 
 interface VaultState {
@@ -1622,25 +1633,30 @@ export async function vaultPublishVenue(
     paths,
   };
 
-  onProgress?.(92, 'Updating Campus Directory...');
+  onProgress?.(90, 'Syncing venue to Cloud & Campus Directory...');
   await saveVaultState(vault);
   await syncVaultIntoBundle();
-  onProgress?.(100, 'Venue is published & ready!');
+
+  // Push published venue package to Cloud Sync (Supabase + /api/cloud-venues relay)
+  const pkg = await buildPortableVenuePackage(slug);
+  if (pkg) {
+    await pushVenueToCloud(pkg, getActiveOwnerEmail());
+  }
+
+  onProgress?.(100, 'Venue is published & synced!');
 
   return { ok: true, slug, rooms, photos, paths, publishedAt };
 }
 
-/**
- * Exports a single self-contained `.navigator.json` venue package (including photos, blueprints,
- * floors, walking paths, and staff) so an admin can share or import a venue onto any other phone or PC!
- */
-export async function exportPortableVenuePackage(slug: string): Promise<void> {
+export async function buildPortableVenuePackage(
+  slug: string,
+): Promise<PortableVenuePackage | null> {
   const bundle = await syncVaultIntoBundle();
   const vault = await getVaultState();
   const summary = bundle?.venues.find((v) => v.slug === slug);
   const detail = bundle?.details?.[slug];
   const graph = bundle?.graphs?.[slug];
-  if (!summary || !detail || !graph) return;
+  if (!summary || !detail || !graph) return null;
 
   const blueprints: Record<string, string> = {};
   for (const b of detail.buildings) {
@@ -1649,7 +1665,7 @@ export async function exportPortableVenuePackage(slug: string): Promise<void> {
     }
   }
 
-  const pkg: PortableVenuePackage = {
+  return {
     version: 1,
     exportedAt: new Date().toISOString(),
     slug,
@@ -1659,7 +1675,83 @@ export async function exportPortableVenuePackage(slug: string): Promise<void> {
     people: bundle?.people?.[slug] ?? [],
     photos: vault.addedPhotos.filter((p) => p.slug === slug),
     blueprints,
+    exams: getVenueExamRules(slug, graph.nodes),
+    hotspots: getVenueHotspots(slug, graph.nodes),
   };
+}
+
+export async function syncVenueToCloudNow(
+  slug: string,
+): Promise<{ synced: boolean; target: 'supabase' | 'api' | 'local' }> {
+  const pkg = await buildPortableVenuePackage(slug);
+  if (!pkg) return { synced: false, target: 'local' };
+  return pushVenueToCloud(pkg, getActiveOwnerEmail());
+}
+
+async function ingestCloudPackageIntoVault(parsed: PortableVenuePackage): Promise<void> {
+  const vault = await getVaultState();
+  const slug = parsed.slug;
+  if (vault.deletedVenueSlugs?.includes(slug)) return;
+
+  if (!vault.createdVenues) vault.createdVenues = [];
+  if (!vault.createdVenues.some((cv) => cv.summary.slug === slug)) {
+    vault.createdVenues.push({
+      owner_email: 'cloud@shared.navigator',
+      summary: parsed.summary,
+      detail: parsed.detail,
+      graph: parsed.graph,
+    });
+  }
+  if (Array.isArray(parsed.photos) && parsed.photos.length > 0) {
+    const existingIds = new Set(vault.addedPhotos.map((p) => p.id));
+    for (const ph of parsed.photos) {
+      if (!existingIds.has(ph.id)) vault.addedPhotos.push(ph);
+    }
+  }
+  if (parsed.blueprints) {
+    vault.blueprints = { ...parsed.blueprints, ...(vault.blueprints ?? {}) };
+  }
+  if (Array.isArray(parsed.exams) && parsed.exams.length > 0) {
+    saveVenueExamRules(slug, parsed.exams);
+  }
+  if (Array.isArray(parsed.hotspots) && parsed.hotspots.length > 0) {
+    saveVenueHotspots(slug, parsed.hotspots);
+  }
+  await saveVaultState(vault);
+}
+
+export async function hydrateCloudVenueIfMissing(slug: string): Promise<BundledOfflineSnapshot | null> {
+  let bundle = await syncVaultIntoBundle();
+  if (bundle?.details?.[slug] && bundle?.graphs?.[slug]) {
+    return bundle;
+  }
+  const remote = await pullVenueFromCloud(slug);
+  if (remote) {
+    await ingestCloudPackageIntoVault(remote);
+    bundle = await syncVaultIntoBundle();
+  }
+  return bundle;
+}
+
+let lastCloudListFetch = 0;
+export async function hydrateCloudVenueDirectory(): Promise<BundledOfflineSnapshot | null> {
+  if (Date.now() - lastCloudListFetch > 15_000) {
+    lastCloudListFetch = Date.now();
+    const remotes = await pullCloudVenueList();
+    for (const pkg of remotes) {
+      await ingestCloudPackageIntoVault(pkg);
+    }
+  }
+  return syncVaultIntoBundle();
+}
+
+/**
+ * Exports a single self-contained `.navigator.json` venue package (including photos, blueprints,
+ * floors, walking paths, exams, hotspots, and staff) so an admin can share or import a venue onto any device!
+ */
+export async function exportPortableVenuePackage(slug: string): Promise<void> {
+  const pkg = await buildPortableVenuePackage(slug);
+  if (!pkg) return;
 
   const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -1716,6 +1808,12 @@ export async function importPortableVenuePackage(file: File): Promise<VenueSumma
         vault.addedPeople.push({ slug, person: p });
       }
     }
+  }
+  if (Array.isArray(parsed.exams)) {
+    saveVenueExamRules(slug, parsed.exams);
+  }
+  if (Array.isArray(parsed.hotspots)) {
+    saveVenueHotspots(slug, parsed.hotspots);
   }
   if (!vault.publishedVenues) vault.publishedVenues = {};
   vault.publishedVenues[slug] = {

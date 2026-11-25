@@ -50,8 +50,11 @@ import {
 import {
   downloadUpdatedStaticBundle,
   exportPortableVenuePackage,
+  hydrateCloudVenueDirectory,
+  hydrateCloudVenueIfMissing,
   importPortableVenuePackage,
   syncVaultIntoBundle,
+  syncVenueToCloudNow,
   vaultAutoConnectGraph,
   vaultAutoMapPhotos,
   vaultBulkCreateRoomsFromPhotos,
@@ -88,6 +91,7 @@ import {
 
 export {
   downloadUpdatedStaticBundle,
+  syncVenueToCloudNow,
   vaultGetPublishStatus as getVenuePublishStatus,
   vaultPublishVenue as publishAdminVenue,
   type VenuePublishStatus,
@@ -282,7 +286,7 @@ export async function getHealth(): Promise<HealthStatus> {
 }
 
 export async function getVenues(q?: string): Promise<VenueSummary[]> {
-  const bundle = await syncVaultIntoBundle();
+  const bundle = await hydrateCloudVenueDirectory();
   const cached = bundle?.venues ?? getCachedVenuesList() ?? null;
   if (cached && cached.length > 0) {
     const ql = q?.trim().toLowerCase();
@@ -301,7 +305,7 @@ export async function getVenues(q?: string): Promise<VenueSummary[]> {
 }
 
 export async function getVenue(slug: string): Promise<VenueDetail> {
-  const bundle = await syncVaultIntoBundle();
+  const bundle = await hydrateCloudVenueIfMissing(slug);
   const bundledDetail = bundle?.details?.[slug] ?? getCachedVenueDetail(slug);
   if (bundledDetail) {
     return bundledDetail;
@@ -312,7 +316,7 @@ export async function getVenue(slug: string): Promise<VenueDetail> {
 }
 
 export async function getVenueGraph(slug: string): Promise<Graph> {
-  const bundle = await syncVaultIntoBundle();
+  const bundle = await hydrateCloudVenueIfMissing(slug);
   const bundledGraph = bundle?.graphs?.[slug] ?? getCachedVenueGraph(slug);
   if (bundledGraph) {
     return bundledGraph;

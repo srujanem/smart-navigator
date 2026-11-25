@@ -52,6 +52,7 @@ import {
 } from 'lucide-react';
 import { FloorPlan2D } from '../components/FloorPlan2D';
 import { GoogleStreetViewStage } from '../components/GoogleStreetViewStage';
+import { LiveCameraArModal } from '../components/LiveCameraArModal';
 import { IsometricVenueArt } from '../components/VenueCard';
 import { PhotoLocateModal, type ConfirmedSpot } from '../components/PhotoLocateModal';
 import { ErrorState, Skeleton3D } from '../components/ErrorState';
@@ -252,6 +253,7 @@ export const RoutePage: React.FC = () => {
   } | null>(null);
   const [failedPhotoUrls, setFailedPhotoUrls] = useState<Set<string>>(() => new Set());
   const [storyModeOpen, setStoryModeOpen] = useState(false);
+  const [liveArOpen, setLiveArOpen] = useState(false);
   const [helpCardOpen, setHelpCardOpen] = useState(false);
   const [torchActive, setTorchActive] = useState(false);
   const [compassHeading, setCompassHeading] = useState<number | null>(null);
@@ -885,8 +887,19 @@ export const RoutePage: React.FC = () => {
               </div>
             </div>
 
-            {/* Mobile Quick Actions (Voice + Collapsible Tools Drawer) */}
+            {/* Mobile Quick Actions (Live AR + Voice + Collapsible Tools Drawer) */}
             <div className="flex lg:hidden items-center gap-1.5 shrink-0">
+              {route && (
+                <button
+                  type="button"
+                  onClick={() => setLiveArOpen(true)}
+                  className="inline-flex h-9 items-center gap-1 rounded-xl bg-emerald-500 px-2.5 text-xs font-extrabold text-slate-950 shadow"
+                  aria-label="Open Live Camera AR Wayfinding"
+                >
+                  <Camera className="h-3.5 w-3.5" />
+                  <span>AR</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handlePlayNarration}
@@ -936,6 +949,15 @@ export const RoutePage: React.FC = () => {
               >
                 <Camera className="h-3.5 w-3.5" />
                 Re-check spot
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setLiveArOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-2 text-xs font-extrabold text-slate-950 shadow-md hover:bg-emerald-400 transition"
+              >
+                <Camera className="h-3.5 w-3.5" />
+                Live AR View
               </button>
 
               <button
@@ -2437,6 +2459,19 @@ export const RoutePage: React.FC = () => {
         }
         onConfirmedLocation={handleRecheckedLocation}
       />
+
+      {/* LIVE CAMERA AR "LIVE VIEW" WAYFINDING MODAL */}
+      {route && (
+        <LiveCameraArModal
+          open={liveArOpen}
+          onClose={() => setLiveArOpen(false)}
+          venue={venue}
+          route={route}
+          activeStepIdx={activeStepIdx}
+          onSelectStep={handleStepClick}
+          onSpeakStep={speakSingleStep}
+        />
+      )}
 
       {/* FULL-SCREEN SIMPLE PHOTO STORY WALKING MODE */}
       {storyModeOpen && route && activeStep && (

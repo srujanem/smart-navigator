@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import type { GNode, Graph, Route, Step, VenueDetail } from '../lib/types';
 import { mediaUrl } from '../lib/api';
+import { getVenueHotspots } from '../lib/examStore';
 import { formatLevel } from '../lib/locationStore';
 import { IsometricVenueArt } from './VenueCard';
 
@@ -363,6 +364,14 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
     return activeStep.name;
   }, [activeStep, nextStep, venue.name]);
 
+  // Clickable 360° Door Portal Hotspots placed by Admin on this node
+  const activeDoorHotspots = useMemo(() => {
+    if (!activeStep) return [];
+    return getVenueHotspots(venue.slug, graph.nodes).filter(
+      (h) => h.fromNodeId === activeStep.node_id,
+    );
+  }, [venue.slug, graph.nodes, activeStep]);
+
   // Nearby rooms on the same floor to render as 3D world-space pins as you pan around
   const nearbyWorldPins = useMemo(() => {
     if (!activeNode) return [];
@@ -592,6 +601,34 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
 
         {/* Subtle Google Street View Horizon & Ground Vignette */}
         <div className="pointer-events-none absolute inset-0 z-[4] bg-gradient-to-t from-black/75 via-transparent to-black/35" />
+
+        {/* Interactive Click-on-Door 360° Street View Portal Hotspots */}
+        {activeDoorHotspots.map((hs) => {
+          const shiftedX = isTruePanorama
+            ? ((((hs.xPct - (yaw / 360) * 100) % 100) + 100) % 100)
+            : clamp(hs.xPct + panShiftPct * 0.8, 8, 92);
+          if (shiftedX < 6 || shiftedX > 94) return null;
+          return (
+            <button
+              key={hs.id}
+              type="button"
+              data-no-drag="true"
+              style={{ left: `${shiftedX}%`, top: `${hs.yPct}%` }}
+              onClick={(e) => {
+                e.stopPropagation();
+                const stepIdx = steps.findIndex((s) => s.node_id === hs.toNodeId);
+                if (stepIdx >= 0) {
+                  triggerStepMove(stepIdx, stepIdx > activeStepIdx ? 'forward' : 'backward');
+                } else if (onChangeDestination) {
+                  onChangeDestination(hs.toNodeId);
+                }
+              }}
+              className="pointer-events-auto -translate-x-1/2 -translate-y-1/2 absolute z-[14] inline-flex items-center gap-1.5 rounded-full bg-emerald-500/95 px-3 py-1.5 text-[11px] font-black text-slate-950 shadow-[0_0_22px_rgba(16,185,129,0.75)] ring-2 ring-white hover:scale-105 active:scale-95 transition"
+            >
+              <span>🚪 Enter {hs.toName} →</span>
+            </button>
+          );
+        })}
       </div>
 
       {/* ===================================================================== */}

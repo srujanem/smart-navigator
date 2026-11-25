@@ -16,6 +16,8 @@ import {
   Check,
   CheckCircle2,
   Compass,
+  Download,
+  GraduationCap,
   Hash,
   Layers,
   ListChecks,
@@ -27,6 +29,7 @@ import {
   MicOff,
   Navigation,
   Plus,
+  QrCode,
   Search,
   Share2,
   ShieldCheck,
@@ -40,6 +43,7 @@ import {
 import { FloorPlan2D } from '../components/FloorPlan2D';
 import { IsometricVenueArt } from '../components/VenueCard';
 import { PhotoLocateModal, type ConfirmedSpot } from '../components/PhotoLocateModal';
+import { PrintableQrSheetModal } from '../components/PrintableQrSheetModal';
 import { StatusChip, VenueTypeBadge } from '../components/StatusChip';
 import { ErrorState, Skeleton3D, VenueHubSkeleton } from '../components/ErrorState';
 import { Canvas3DErrorBoundary } from '../components/ErrorBoundary';
@@ -51,6 +55,8 @@ import {
   mediaUrl,
   searchVenue,
 } from '../lib/api';
+import { getSavedOfflineVenues, saveVenueOfflinePack } from '../lib/cloudSync';
+import { getVenueExamRules, lookupExamOrEvent } from '../lib/examStore';
 import { formatLevel, useVisitorLocation } from '../lib/locationStore';
 import type {
   GNode,
@@ -130,6 +136,13 @@ export const VenuePage: React.FC = () => {
   const [searchRes, setSearchRes] = useState<SearchResponse | null>(null);
   const [searching, setSearching] = useState(false);
   const [listening, setListening] = useState(false);
+
+  // Offline Pack & Printable QR Sheet State
+  const [qrSheetOpen, setQrSheetOpen] = useState(false);
+  const [savingOfflinePct, setSavingOfflinePct] = useState<number | null>(null);
+  const [savedOfflineReady, setSavedOfflineReady] = useState<boolean>(() =>
+    Boolean(getSavedOfflineVenues()[slug]),
+  );
 
   // Twin & Places State (default 2D on mobile phones for instant zero-lag startup)
   const [twinMode, setTwinMode] = useState<'3d' | '2d'>(() =>
@@ -275,13 +288,33 @@ export const VenuePage: React.FC = () => {
       .slice(0, 4);
   }, [placeNodes, doorPadQuery]);
 
+  const examHits = useMemo(() => {
+    if (!graph || !searchQuery.trim()) return [];
+    const rules = getVenueExamRules(slug, graph.nodes);
+    return lookupExamOrEvent(searchQuery, rules);
+  }, [slug, graph, searchQuery]);
+
+  const handleSaveCampusOffline = async () => {
+    if (!graph || savingOfflinePct !== null) return;
+    setSavingOfflinePct(5);
+    try {
+      const urls = graph.nodes
+        .map((n) => (n.photo_url ? mediaUrl(n.photo_url) : ''))
+        .filter(Boolean);
+      await saveVenueOfflinePack(slug, urls, (pct) => setSavingOfflinePct(pct));
+      setSavedOfflineReady(true);
+    } finally {
+      window.setTimeout(() => setSavingOfflinePct(null), 600);
+    }
+  };
+
   const exampleQueries = useMemo(() => {
     if (!venue) return ['nearest washroom', 'reception'];
     if (venue.type === 'hospital') {
       return ['heart doctor', 'nearest washroom', 'X-Ray', 'pharmacy', 'emergency'];
     }
     if (venue.type === 'campus') {
-      return ['AI Lab', 'nearest washroom', 'library', 'cafeteria', 'auditorium'];
+      return ['4MT23CS024', 'Coding Hackathon', 'Room 308', 'AI Lab'];
     }
     return ['nearest washroom', 'help desk', 'cafeteria', 'lift'];
   }, [venue]);
@@ -535,6 +568,44 @@ export const VenuePage: React.FC = () => {
                   <span className="hidden sm:inline">Location not set · Upload photo</span>
                 </>
               )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void handleSaveCampusOffline()}
+              className={`inline-flex items-center gap-1.5 rounded-xl px-2.5 sm:px-3 py-1.5 text-xs font-semibold transition ring-1 ${
+                savedOfflineReady
+                  ? 'bg-emerald-500/15 text-emerald-200 ring-emerald-400/35'
+                  : 'bg-white/[0.07] text-cyan-200 ring-white/10 hover:bg-white/15'
+              }`}
+              title="Download this venue's photos & map for zero-internet basement offline use"
+            >
+              {savingOfflinePct !== null ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-cyan-300" />
+                  <span>{savingOfflinePct}%</span>
+                </>
+              ) : savedOfflineReady ? (
+                <>
+                  <Check className="h-3.5 w-3.5 text-emerald-400" />
+                  <span className="hidden sm:inline">Offline Ready</span>
+                </>
+              ) : (
+                <>
+                  <Download className="h-3.5 w-3.5 text-cyan-300" />
+                  <span className="hidden sm:inline">Save Offline</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setQrSheetOpen(true)}
+              className="hidden sm:inline-flex items-center gap-1.5 rounded-xl bg-white/[0.07] px-2.5 py-1.5 text-xs font-semibold text-slate-200 ring-1 ring-white/10 hover:bg-white/15 transition"
+              title="Printable QR Checkpoints"
+            >
+              <QrCode className="h-3.5 w-3.5 text-emerald-400" />
+              <span>QR</span>
             </button>
 
             <Link
@@ -973,8 +1044,8 @@ export const VenuePage: React.FC = () => {
                       onChange={(e) => setSearchQuery(e.target.value)}
                       placeholder={
                         venue.type === 'hospital'
-                          ? 'Search rooms, doctors, or symptoms ("heart doctor", "nearest washroom", "X-Ray")...'
-                          : 'Search labs, rooms, faculty, or amenities ("nearest washroom", "AI Lab")...'
+                          ? 'Search rooms, doctors, or symptoms ("heart doctor", "X-Ray")...'
+                          : 'Search room, Exam USN ("4MT23CS024"), event, or faculty...'
                       }
                       className="w-full rounded-2xl bg-slate-50 pl-11 pr-10 py-3.5 text-sm font-medium text-slate-900 ring-1 ring-slate-200/90 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
@@ -1082,9 +1153,53 @@ export const VenuePage: React.FC = () => {
                   </div>
                 )}
 
-                {/* Search Results Panel */}
+                {/* Search Results Panel (Including Instant Exam USN / Event Hall Matches!) */}
                 {searchQuery.trim() !== '' && (
                   <div className="space-y-2.5 pt-1">
+                    {examHits.length > 0 && (
+                      <div className="space-y-2">
+                        {examHits.map((hit) => (
+                          <div
+                            key={hit.rule.id}
+                            className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-gradient-to-r from-indigo-950 via-slate-900 to-emerald-950 p-3.5 text-white ring-2 ring-emerald-400/60 shadow-lg"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-400/40">
+                                <GraduationCap className="h-5 w-5" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-1.5 text-xs font-extrabold text-emerald-300">
+                                  <span>🎓 {hit.rule.title}</span>
+                                  {hit.computedSeat && (
+                                    <span className="rounded-md bg-emerald-400 px-1.5 py-0.5 text-[10px] font-black text-slate-950">
+                                      {hit.computedSeat}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="font-display text-base font-extrabold text-white truncate">
+                                  Assigned Hall: {hit.rule.roomName}
+                                </div>
+                                <div className="text-[11px] text-slate-300 truncate">
+                                  Matched USN / Event: {hit.matchedQuery}
+                                </div>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleNavigateToDestination(hit.rule.nodeId, hit.rule.roomName)
+                              }
+                              className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-emerald-400 to-cyan-400 px-4 py-2.5 text-xs font-black text-slate-950 shadow hover:brightness-105 active:scale-95 transition"
+                            >
+                              <Navigation className="h-3.5 w-3.5" />
+                              <span>Walk to Hall →</span>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     {searching && (
                       <div className="flex items-center gap-2 text-xs text-slate-500 py-2">
                         <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-600" />
@@ -1099,9 +1214,9 @@ export const VenuePage: React.FC = () => {
                       </div>
                     )}
 
-                    {!searching && searchRes && searchRes.results.length === 0 && (
+                    {!searching && searchRes && searchRes.results.length === 0 && examHits.length === 0 && (
                       <div className="rounded-xl bg-slate-50 p-4 text-center text-xs text-slate-500">
-                        No matching rooms or staff for "{searchQuery}". Try another keyword or browse categories below.
+                        No matching rooms, USNs, or staff for "{searchQuery}". Try another keyword or browse categories below.
                       </div>
                     )}
 
@@ -1714,6 +1829,13 @@ export const VenuePage: React.FC = () => {
         priorNodeId={visitorLoc?.nodeId}
         queuedDestination={queuedDest}
         onConfirmedLocation={handleSpotConfirmed}
+      />
+
+      <PrintableQrSheetModal
+        open={qrSheetOpen}
+        onClose={() => setQrSheetOpen(false)}
+        venue={venue}
+        nodes={graph.nodes}
       />
     </div>
   );
