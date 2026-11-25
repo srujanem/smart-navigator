@@ -16,6 +16,20 @@ import type { PortableVenuePackage } from './adminVault';
 const SUPABASE_CFG_KEY = 'navigator_supabase_cloud_cfg_v1';
 const OFFLINE_VENUES_META_KEY = 'navigator_offline_saved_venues_v1';
 const OFFLINE_MEDIA_CACHE = 'navigator-offline-venues-v1';
+const EXPLICIT_API_BASE = (
+  (import.meta.env.VITE_API_URL as string | undefined)?.trim() || ''
+).replace(/\/+$/, '');
+
+function getRelayApiBase(): string | null {
+  if (EXPLICIT_API_BASE) return EXPLICIT_API_BASE;
+  if (
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ) {
+    return '';
+  }
+  return null;
+}
 
 export interface SupabaseCloudConfig {
   url: string;
@@ -113,22 +127,25 @@ export async function pushVenueToCloud(
     }
   }
 
-  // 2. Also push to built-in `/api/cloud-venues/{slug}` FastAPI relay
-  try {
-    const ctrl = new AbortController();
-    const timer = window.setTimeout(() => ctrl.abort(), 4500);
-    const res = await fetch(`/api/cloud-venues/${encodeURIComponent(pkg.slug)}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(pkg),
-      signal: ctrl.signal,
-    });
-    window.clearTimeout(timer);
-    if (res.ok && syncedTarget === 'local') {
-      syncedTarget = 'api';
+  // 2. Also push to `/api/cloud-venues/{slug}` FastAPI relay when backend API host is active
+  const relayBase = getRelayApiBase();
+  if (relayBase !== null) {
+    try {
+      const ctrl = new AbortController();
+      const timer = window.setTimeout(() => ctrl.abort(), 4500);
+      const res = await fetch(`${relayBase}/api/cloud-venues/${encodeURIComponent(pkg.slug)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pkg),
+        signal: ctrl.signal,
+      });
+      window.clearTimeout(timer);
+      if (res.ok && syncedTarget === 'local') {
+        syncedTarget = 'api';
+      }
+    } catch {
+      // Graceful fallback when running pure static
     }
-  } catch {
-    // Graceful fallback when running pure static
   }
 
   return { synced: syncedTarget !== 'local', target: syncedTarget };
@@ -164,19 +181,22 @@ export async function pullVenueFromCloud(slug: string): Promise<PortableVenuePac
     }
   }
 
-  try {
-    const ctrl = new AbortController();
-    const timer = window.setTimeout(() => ctrl.abort(), 2800);
-    const res = await fetch(`/api/cloud-venues/${encodeURIComponent(slug)}`, {
-      signal: ctrl.signal,
-    });
-    window.clearTimeout(timer);
-    if (res.ok) {
-      const pkg = (await res.json()) as PortableVenuePackage;
-      if (pkg?.slug) return pkg;
+  const relayBase = getRelayApiBase();
+  if (relayBase !== null) {
+    try {
+      const ctrl = new AbortController();
+      const timer = window.setTimeout(() => ctrl.abort(), 2800);
+      const res = await fetch(`${relayBase}/api/cloud-venues/${encodeURIComponent(slug)}`, {
+        signal: ctrl.signal,
+      });
+      window.clearTimeout(timer);
+      if (res.ok && (res.headers.get('content-type') || '').includes('application/json')) {
+        const pkg = (await res.json()) as PortableVenuePackage;
+        if (pkg?.slug) return pkg;
+      }
+    } catch {
+      // Offline or not found
     }
-  } catch {
-    // Offline or not found
   }
 
   return null;
@@ -219,24 +239,27 @@ export async function pullCloudVenueList(): Promise<PortableVenuePackage[]> {
     }
   }
 
-  try {
-    const ctrl = new AbortController();
-    const timer = window.setTimeout(() => ctrl.abort(), 2200);
-    const res = await fetch('/api/cloud-venues', { signal: ctrl.signal });
-    window.clearTimeout(timer);
-    if (res.ok) {
-      const list = (await res.json()) as PortableVenuePackage[];
-      if (Array.isArray(list)) {
-        for (const pkg of list) {
-          if (pkg?.slug && !seen.has(pkg.slug)) {
-            seen.add(pkg.slug);
-            results.push(pkg);
+  const relayBase = getRelayApiBase();
+  if (relayBase !== null) {
+    try {
+      const ctrl = new AbortController();
+      const timer = window.setTimeout(() => ctrl.abort(), 2200);
+      const res = await fetch(`${relayBase}/api/cloud-venues`, { signal: ctrl.signal });
+      window.clearTimeout(timer);
+      if (res.ok && (res.headers.get('content-type') || '').includes('application/json')) {
+        const list = (await res.json()) as PortableVenuePackage[];
+        if (Array.isArray(list)) {
+          for (const pkg of list) {
+            if (pkg?.slug && !seen.has(pkg.slug)) {
+              seen.add(pkg.slug);
+              results.push(pkg);
+            }
           }
         }
       }
+    } catch {
+      // Ignore
     }
-  } catch {
-    // Ignore
   }
 
   return results;
