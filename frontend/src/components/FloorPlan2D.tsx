@@ -586,26 +586,41 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
             </radialGradient>
           </defs>
 
-          {/* Building Footprints + Optional Uploaded Floorplan Blueprint Image */}
+          {/* Building Footprints (auto-expanded to enclose all floor nodes) + Optional Uploaded Floorplan Blueprint Image */}
           {floorBuildings.map((b) => {
             const fl = b.floors.find((f) => f.level === selectedLevel);
+            const bNodes = floorNodes.filter(
+              (n) => !n.building_id || n.building_id === b.id || floorBuildings.length === 1,
+            );
+            let bx0 = b.x;
+            let by0 = b.y;
+            let bx1 = b.x + b.w;
+            let by1 = b.y + b.d;
+            for (const nd of bNodes) {
+              bx0 = Math.min(bx0, nd.x - unit * 6.5);
+              by0 = Math.min(by0, nd.y - unit * 5.5);
+              bx1 = Math.max(bx1, nd.x + unit * 6.5);
+              by1 = Math.max(by1, nd.y + unit * 5.5);
+            }
+            const bw = Math.max(20, bx1 - bx0);
+            const bd = Math.max(16, by1 - by0);
             return (
               <g key={b.id}>
                 {/* Subtle Architectural Floorplate Drop-Shadow */}
                 <rect
-                  x={b.x + unit * 0.45}
-                  y={b.y + unit * 0.55}
-                  width={b.w}
-                  height={b.d}
+                  x={bx0 + unit * 0.45}
+                  y={by0 + unit * 0.55}
+                  width={bw}
+                  height={bd}
                   rx={unit * 1.35}
                   fill={dark ? '#020617' : '#cbd5e1'}
                   opacity={dark ? 0.55 : 0.4}
                 />
                 <rect
-                  x={b.x}
-                  y={b.y}
-                  width={b.w}
-                  height={b.d}
+                  x={bx0}
+                  y={by0}
+                  width={bw}
+                  height={bd}
                   rx={unit * 1.25}
                   fill={dark ? '#0f172a' : '#ffffff'}
                   stroke={dark ? '#38bdf8' : '#94a3b8'}
@@ -614,10 +629,10 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
                 />
                 {/* Inner Architectural Wall Frame */}
                 <rect
-                  x={b.x + unit * 0.6}
-                  y={b.y + unit * 0.6}
-                  width={Math.max(0, b.w - unit * 1.2)}
-                  height={Math.max(0, b.d - unit * 1.2)}
+                  x={bx0 + unit * 0.6}
+                  y={by0 + unit * 0.6}
+                  width={Math.max(0, bw - unit * 1.2)}
+                  height={Math.max(0, bd - unit * 1.2)}
                   rx={unit * 0.9}
                   fill="none"
                   stroke={dark ? '#1e293b' : '#e2e8f0'}
@@ -626,17 +641,17 @@ export const FloorPlan2D: React.FC<FloorPlan2DProps> = ({
                 {fl?.blueprint_url && (
                   <image
                     href={mediaUrl(fl.blueprint_url)}
-                    x={b.x}
-                    y={b.y}
-                    width={b.w}
-                    height={b.d}
-                    preserveAspectRatio="none"
-                    opacity={dark ? 0.48 : 0.72}
+                    x={bx0}
+                    y={by0}
+                    width={bw}
+                    height={bd}
+                    preserveAspectRatio="xMidYMid slice"
+                    opacity={dark ? 0.56 : 0.78}
                   />
                 )}
                 <text
-                  x={b.x + unit * 0.6}
-                  y={b.y - unit * 0.9}
+                  x={bx0 + unit * 0.6}
+                  y={by0 - unit * 0.9}
                   fill={dark ? '#93c5fd' : '#475569'}
                   fontSize={unit * 1.55}
                   fontWeight={800}

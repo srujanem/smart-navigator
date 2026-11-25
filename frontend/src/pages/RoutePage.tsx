@@ -1814,9 +1814,9 @@ export const RoutePage: React.FC = () => {
                         </Suspense>
                       </Canvas3DErrorBoundary>
 
-                      {/* Floating Step Picture-in-Picture Landmark Card */}
+                      {/* Floating Step Picture-in-Picture Landmark Card (Desktop only; Mobile uses sticky bottom dock) */}
                       {activeStep && (
-                        <div className="absolute bottom-3 left-3 z-10 w-[calc(100%-1.5rem)] sm:w-auto max-w-sm rounded-2xl bg-slate-950/90 p-2 text-white ring-1 ring-white/15 shadow-2xl flex items-center gap-2.5">
+                        <div className="hidden lg:flex absolute bottom-3 left-3 z-10 w-[calc(100%-1.5rem)] sm:w-auto max-w-sm rounded-2xl bg-slate-950/90 p-2 text-white ring-1 ring-white/15 shadow-2xl items-center gap-2.5">
                           {activeStep.photo_url && !failedPhotoUrls.has(activeStep.photo_url) ? (
                             <img
                               src={mediaUrl(activeStep.photo_url)}
@@ -1917,9 +1917,9 @@ export const RoutePage: React.FC = () => {
                         }}
                       />
 
-                      {/* Floating Step Picture-in-Picture Landmark Card */}
+                      {/* Floating Step Picture-in-Picture Landmark Card (Desktop only; Mobile uses sticky bottom dock) */}
                       {activeStep && (
-                        <div className="absolute bottom-3 left-3 z-10 w-[calc(100%-1.5rem)] sm:w-auto max-w-sm rounded-2xl bg-slate-950/90 p-2 text-white ring-1 ring-white/15 shadow-2xl flex items-center gap-2.5">
+                        <div className="hidden lg:flex absolute bottom-3 left-3 z-10 w-[calc(100%-1.5rem)] sm:w-auto max-w-sm rounded-2xl bg-slate-950/90 p-2 text-white ring-1 ring-white/15 shadow-2xl items-center gap-2.5">
                           {activeStep.photo_url && !failedPhotoUrls.has(activeStep.photo_url) ? (
                             <img
                               src={mediaUrl(activeStep.photo_url)}
@@ -2327,7 +2327,7 @@ export const RoutePage: React.FC = () => {
                                   alt={step.name}
                                   loading="lazy"
                                   onError={() => markPhotoFailed(step.photo_url!)}
-                                  className="h-full w-full object-contain bg-slate-950 hdr-photo transition-transform duration-300 group-hover:scale-105"
+                                  className="h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-105"
                                 />
                                 <span className="absolute right-1 bottom-1 rounded bg-slate-950/75 p-0.5 text-cyan-300 opacity-0 group-hover:opacity-100 transition">
                                   <ZoomIn className="h-3 w-3" />

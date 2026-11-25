@@ -43,16 +43,20 @@ export const AdminPeoplePage: React.FC = () => {
   const [savedId, setSavedId] = useState<string | null>(null);
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
 
+  const isHospital = selectedVenue?.type === 'hospital';
+  const defaultRoleLabel = isHospital ? 'Doctor' : selectedVenue?.type === 'campus' ? 'Professor' : 'Coordinator';
+  const directoryNoun = isHospital ? 'Doctor / Staff' : selectedVenue?.type === 'campus' ? 'Faculty / Staff' : 'Staff Member';
+
   // Add Person Modal State
   const [addOpen, setAddOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [form, setForm] = useState({
     name: '',
     title: '',
-    role: 'Doctor',
+    role: defaultRoleLabel,
     department: '',
     node_id: '',
-    schedule: 'Mon–Sat · 9:00 AM – 4:00 PM',
+    schedule: 'Mon–Sat · 9:00 AM – 4:30 PM',
   });
 
   const loadData = useCallback(async () => {
@@ -178,21 +182,24 @@ export const AdminPeoplePage: React.FC = () => {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-slate-950">
-            Staff & Doctor Directory Manager
+          <h1 className="font-display text-xl sm:text-2xl font-extrabold text-slate-950">
+            {isHospital ? 'Doctor & Staff Directory' : 'Faculty & Staff Directory'}
           </h1>
           <p className="text-xs sm:text-sm text-slate-500">
-            {selectedVenue?.name} · Update live availability or temporarily redirect visitors to a relocated room/OT
+            {selectedVenue?.name} · Assign rooms/cabins and update live availability
           </p>
         </div>
 
         <button
           type="button"
-          onClick={() => setAddOpen(true)}
+          onClick={() => {
+            setForm((prev) => ({ ...prev, role: prev.role || defaultRoleLabel }));
+            setAddOpen(true);
+          }}
           className="btn-primary text-xs font-extrabold py-2.5 px-4"
         >
           <Plus className="h-4 w-4" />
-          Add Doctor / Staff
+          Add {directoryNoun}
         </button>
       </div>
 
@@ -203,10 +210,37 @@ export const AdminPeoplePage: React.FC = () => {
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search directory by name, department, cabin..."
+          placeholder="Search name, dept, or room..."
           className="input pl-10"
         />
       </div>
+
+      {/* Empty State */}
+      {filtered.length === 0 && (
+        <div className="rounded-3xl bg-white p-8 text-center ring-1 ring-slate-200 shadow-sm space-y-3">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-50 text-indigo-600">
+            <UserPlus className="h-6 w-6" />
+          </div>
+          <h2 className="font-display text-base font-extrabold text-slate-900">
+            {query.trim() ? 'No matching directory entries' : `No ${directoryNoun.toLowerCase()} added yet`}
+          </h2>
+          <p className="text-xs text-slate-500 max-w-sm mx-auto">
+            {query.trim()
+              ? 'Try another search keyword.'
+              : `Link faculty, coordinators, or staff to specific rooms in ${selectedVenue?.name || 'your venue'} so visitors can route straight to their cabin.`}
+          </p>
+          {!query.trim() && (
+            <button
+              type="button"
+              onClick={() => setAddOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-extrabold text-white shadow hover:bg-indigo-500 transition"
+            >
+              <Plus className="h-4 w-4" />
+              Add First {directoryNoun}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Directory Rows */}
       <div className="space-y-3.5">

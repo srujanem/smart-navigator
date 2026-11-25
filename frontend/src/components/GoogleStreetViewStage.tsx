@@ -52,6 +52,8 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
   onChangeDestination,
 }) => {
   const stageRef = useRef<HTMLDivElement>(null);
+  const panoCanvasRef = useRef<HTMLCanvasElement>(null);
+  const panoImgRef = useRef<HTMLImageElement | null>(null);
   const steps = route.steps;
   const activeStep = steps[activeStepIdx] ?? steps[0];
   const nextStep = activeStepIdx < steps.length - 1 ? steps[activeStepIdx + 1] : null;
@@ -186,6 +188,90 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
     () => resolveStepPhotoUrl(activeStepIdx),
     [resolveStepPhotoUrl, activeStepIdx],
   );
+
+  // Detect true 2:1 / cylindrical 360° panorama vs standard doorway/corridor photo cleanly on every URL change
+  useEffect(() => {
+    setIsTruePanorama(false);
+    panoImgRef.current = null;
+    if (!currentPhotoUrl) return;
+    let cancelled = false;
+    const im = new Image();
+    im.crossOrigin = 'anonymous';
+    im.onload = () => {
+      if (cancelled) return;
+      const ratio = (im.naturalWidth || 1) / Math.max(1, im.naturalHeight || 1);
+      panoImgRef.current = im;
+      setIsTruePanorama(ratio >= 1.65);
+    };
+    im.onerror = () => {
+      if (!cancelled && activeStep?.photo_url) {
+        setFailedUrls((prev) => new Set(prev).add(activeStep.photo_url!));
+      }
+    };
+    im.src = currentPhotoUrl;
+    return () => {
+      cancelled = true;
+    };
+  }, [currentPhotoUrl, activeStep?.photo_url]);
+
+  // True Spherical / Cylindrical Perspective 360° Canvas Projection Renderer
+  useEffect(() => {
+    if (!isTruePanorama) return;
+    const canvas = panoCanvasRef.current;
+    const img = panoImgRef.current;
+    if (!canvas || !img) return;
+    const rect = canvas.parentElement?.getBoundingClientRect();
+    const cw = Math.max(320, Math.round((rect?.width || 640) * Math.min(2, window.devicePixelRatio || 1)));
+    const ch = Math.max(240, Math.round((rect?.height || 480) * Math.min(2, window.devicePixelRatio || 1)));
+    if (canvas.width !== cw || canvas.height !== ch) {
+      canvas.width = cw;
+      canvas.height = ch;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const iw = img.naturalWidth || img.width;
+    const ih = img.naturalHeight || img.height;
+    const effectiveZoom = (signboardZoom ? 1.55 : fovZoom) * (dollyTransition ? 1.16 : 1);
+    const hfovDeg = clamp(88 / effectiveZoom, 38, 100);
+    const hfovRad = (hfovDeg * Math.PI) / 180;
+    const focal = (cw * 0.5) / Math.tan(hfovRad * 0.5);
+    const yawCenterFrac = ((((yaw + 180) % 360) + 360) % 360) / 360;
+    const pitchFrac = clamp(-pitch / 95, -0.26, 0.26);
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+
+    // Render 72 perspective-curved vertical slices across the 360° cylinder
+    const cols = 72;
+    const colW = cw / cols;
+    for (let c = 0; c < cols; c++) {
+      const screenX = (c + 0.5) * colW - cw * 0.5;
+      const dTheta = Math.atan2(screenX, focal);
+      const uFrac = ((yawCenterFrac + dTheta / (2 * Math.PI)) % 1 + 1) % 1;
+      const sx = Math.min(iw - 2, Math.floor(uFrac * iw));
+      const swSlice = Math.max(2, Math.ceil((iw * (hfovRad / cols)) / (2 * Math.PI)));
+
+      // Perspective vertical curvature cos(dTheta) makes straight walls bend naturally like real 360°!
+      const cosT = Math.cos(dTheta);
+      const vSpan = clamp((ih * 0.74) / effectiveZoom, ih * 0.28, ih * 0.94);
+      const syCenter = ih * (0.5 + pitchFrac);
+      const sy0 = clamp(syCenter - (vSpan * 0.5) / cosT, 0, ih - 2);
+      const shSlice = clamp(vSpan / cosT, 2, ih - sy0);
+
+      ctx.drawImage(
+        img,
+        sx,
+        sy0,
+        Math.min(iw - sx, swSlice),
+        shSlice,
+        Math.floor(c * colW),
+        0,
+        Math.ceil(colW) + 0.8,
+        ch,
+      );
+    }
+  }, [isTruePanorama, yaw, pitch, fovZoom, signboardZoom, dollyTransition, currentPhotoUrl]);
 
   // Smoothly recenter yaw towards the upcoming turn when step changes
   useEffect(() => {
@@ -360,9 +446,9 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
   const absCompassHeading = normalizeAngle(routeForwardHeading + yaw);
   const isFinalStep = activeStepIdx >= steps.length - 1;
 
-  // Pan offset for 360° look-around illusion: shifts panoramic triptych smoothly across -180..+180 deg
-  const panShiftPct = clamp((-yaw / 180) * 34, -34, 34);
-  const tiltShiftPct = clamp((pitch / 24) * 10, -10, 10);
+  // Pan offset for standard (non-360°) doorway/corridor photos: gentle ±9% parallax so it NEVER pans into dark sidebars!
+  const panShiftPct = isTruePanorama ? clamp((-yaw / 180) * 34, -34, 34) : clamp((-yaw / 60) * 8, -8, 8);
+  const tiltShiftPct = isTruePanorama ? clamp((pitch / 24) * 10, -10, 10) : clamp((pitch / 24) * 4, -4, 4);
 
   return (
     <div
@@ -450,97 +536,39 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
       <div className="absolute inset-0 overflow-hidden bg-[#060A14]">
         {currentPhotoUrl ? (
           isTruePanorama ? (
-            /* TRUE 360° CYLINDRICAL WRAP-AROUND PANORAMA (From 360° Spin Video or Phone Pano!) */
+            /* TRUE SPHERICAL / CYLINDRICAL 360° CANVAS PERSPECTIVE STAGE */
+            <div className="relative h-full w-full">
+              <canvas
+                ref={panoCanvasRef}
+                className="h-full w-full block"
+              />
+            </div>
+          ) : (
+            /* FULL-BLEED CRISP CORRIDOR / DOORWAY PHOTO STAGE (ZERO BLACK SIDEBARS!) */
             <div
               style={{
-                backgroundImage: `url("${currentPhotoUrl}")`,
-                backgroundRepeat: 'repeat-x',
-                backgroundSize: 'auto 100%',
-                backgroundPosition: `${50 - (yaw / 180) * 50}% ${50 + tiltShiftPct * 2}%`,
                 transform: `scale(${
-                  (signboardZoom ? 1.55 : fovZoom) * (dollyTransition ? 1.24 : 1.02)
-                })`,
+                  (signboardZoom ? 1.55 : Math.max(1.14, fovZoom * 1.12)) * (dollyTransition ? 1.18 : 1)
+                }) translate3d(${panShiftPct}%, ${signboardZoom ? 12 : tiltShiftPct}%, 0)`,
                 transition: isDraggingLook
                   ? 'none'
                   : dollyTransition
                     ? 'transform 420ms cubic-bezier(0.22, 1, 0.36, 1)'
-                    : 'background-position 90ms linear, transform 220ms ease-out',
+                    : 'transform 200ms ease-out',
               }}
-              className="relative h-full w-full"
+              className="relative h-full w-full overflow-hidden flex items-center justify-center"
             >
-              {/* Hidden probe img to re-detect aspect ratio whenever step photo URL changes */}
               <img
                 src={currentPhotoUrl}
                 alt={activeStep?.name || venue.name}
-                onLoad={(e) => {
-                  const ratio =
-                    e.currentTarget.naturalWidth / Math.max(1, e.currentTarget.naturalHeight);
-                  setIsTruePanorama(ratio >= 1.75);
-                }}
                 onError={() => {
                   if (activeStep?.photo_url) {
                     setFailedUrls((prev) => new Set(prev).add(activeStep.photo_url!));
                   }
                 }}
-                className="sr-only"
-              />
-            </div>
-          ) : (
-            <div
-              style={{
-                transform: `scale(${
-                  (signboardZoom ? 1.65 : fovZoom) * (dollyTransition ? 1.24 : 1.04)
-                }) translate3d(${panShiftPct}%, ${signboardZoom ? 16 : tiltShiftPct}%, 0)`,
-                transition: isDraggingLook
-                  ? 'none'
-                  : dollyTransition
-                    ? 'transform 420ms cubic-bezier(0.22, 1, 0.36, 1)'
-                    : 'transform 220ms ease-out',
-              }}
-              className="relative h-full w-[170%] -left-[35%] flex items-center justify-center"
-            >
-              {/* Ambient 360° peripheral surround backdrop */}
-              <img
-                src={currentPhotoUrl}
-                alt=""
-                aria-hidden="true"
-                className="absolute inset-0 h-full w-full object-cover blur-2xl scale-110 opacity-55"
-              />
-              {/* Mirrored Left Peripheral Wing for 360° look-around continuity */}
-              <img
-                src={currentPhotoUrl}
-                alt=""
-                aria-hidden="true"
-                style={{ transform: 'scaleX(-1)' }}
-                className="hidden sm:block h-full w-1/4 object-cover opacity-50 blur-[1px]"
-              />
-              {/* Primary Un-Cropped High-Clarity Corridor / Doorway Frame */}
-              <div className="relative h-full w-full sm:w-2/4 flex items-center justify-center overflow-hidden">
-                <img
-                  src={currentPhotoUrl}
-                  alt={activeStep?.name || venue.name}
-                  onLoad={(e) => {
-                    const ratio =
-                      e.currentTarget.naturalWidth / Math.max(1, e.currentTarget.naturalHeight);
-                    setIsTruePanorama(ratio >= 1.75);
-                  }}
-                  onError={() => {
-                    if (activeStep?.photo_url) {
-                      setFailedUrls((prev) => new Set(prev).add(activeStep.photo_url!));
-                    }
-                  }}
-                  className={`relative z-[2] h-full w-full object-contain sm:object-cover transition-all duration-300 ${
-                    dollyTransition ? 'scale-110 blur-[1.5px]' : 'scale-100'
-                  }`}
-                />
-              </div>
-              {/* Mirrored Right Peripheral Wing for 360° look-around continuity */}
-              <img
-                src={currentPhotoUrl}
-                alt=""
-                aria-hidden="true"
-                style={{ transform: 'scaleX(-1)' }}
-                className="hidden sm:block h-full w-1/4 object-cover opacity-50 blur-[1px]"
+                className={`h-full w-full object-cover object-center transition-all duration-300 ${
+                  dollyTransition ? 'scale-105 blur-[1px]' : 'scale-100'
+                }`}
               />
             </div>
           )
@@ -961,18 +989,24 @@ export const GoogleStreetViewStage: React.FC<GoogleStreetViewStageProps> = ({
               <span>{autoWalk ? 'Pause' : 'Walk'}</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => void toggleGyroMode()}
-              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-extrabold ring-1 shadow-lg transition ${
-                gyroEnabled
-                  ? 'bg-cyan-400 text-slate-950 ring-cyan-200'
-                  : 'bg-[#11161F]/95 text-emerald-300 ring-white/20 hover:bg-[#1B2230]'
-              }`}
-              title="Move your phone to look around in 360° (Gyroscope Sensor)"
-            >
-              <span>📱 {gyroEnabled ? '360° ON' : '360°'}</span>
-            </button>
+            {isTruePanorama ? (
+              <button
+                type="button"
+                onClick={() => void toggleGyroMode()}
+                className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[11px] font-extrabold ring-1 shadow-lg transition ${
+                  gyroEnabled
+                    ? 'bg-cyan-400 text-slate-950 ring-cyan-200'
+                    : 'bg-[#11161F]/95 text-emerald-300 ring-white/20 hover:bg-[#1B2230]'
+                }`}
+                title="Move your phone to look around in 360° (Gyroscope Sensor)"
+              >
+                <span>🌐 {gyroEnabled ? '360° ON' : '360° Gyro'}</span>
+              </button>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#11161F]/95 px-2.5 py-1.5 text-[10px] font-extrabold text-cyan-200 ring-1 ring-white/20 shadow-lg">
+                📷 HD View
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-1">

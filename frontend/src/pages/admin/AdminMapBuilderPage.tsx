@@ -32,7 +32,6 @@ import {
   getVenue,
   getVenueGraph,
   mediaUrl,
-  rebuildAdminIndex,
   updateAdminNode,
   updateAdminVenue,
   uploadAdminPhotos,
@@ -615,32 +614,31 @@ export const AdminMapBuilderPage: React.FC = () => {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5">
-      {/* Top Studio Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+      {/* Compact Studio Bar (Mobile-friendly — keeps floorplan high on screen!) */}
+      <div className="flex flex-wrap items-center justify-between gap-2.5">
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="font-display text-2xl font-extrabold text-slate-950">
-              Visual Map Builder · {venue.name}
+            <h1 className="font-display text-lg sm:text-2xl font-extrabold text-slate-950 truncate">
+              Map Builder · {venue.name}
             </h1>
             <span className="chip bg-cyan-50 text-cyan-800 ring-1 ring-cyan-200">
-              {graph.nodes.length} Pins · {graph.edges.length} Paths ·{' '}
-              {venue.stats.photos} Real Photos
+              {graph.nodes.length} Pins · {graph.edges.length} Paths
             </span>
           </div>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Upload architectural floorplan blueprints, drop room/corridor pins, attach real camera-angled photos, and connect walkable/lift paths.
+          <p className="hidden sm:block text-xs text-slate-500 mt-0.5">
+            Upload floorplan blueprints, drag pins, and connect walkable/lift paths.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
             disabled={busyAction}
             onClick={() => setCamera360Open(true)}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 px-3.5 py-2 text-xs font-extrabold text-white shadow-md shadow-cyan-500/20 hover:from-cyan-400 hover:to-indigo-500 transition"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 px-3 py-2 text-xs font-extrabold text-white shadow-sm hover:from-cyan-400 hover:to-indigo-500 transition"
           >
             <Globe className="h-3.5 w-3.5" />
-            🌐 360° Camera &amp; Auto-3D
+            <span>360° Camera</span>
           </button>
 
           <input
@@ -656,10 +654,10 @@ export const AdminMapBuilderPage: React.FC = () => {
           <button
             type="button"
             onClick={() => coverInputRef.current?.click()}
-            className="btn-ghost text-xs py-2"
+            className="btn-ghost text-xs py-2 px-2.5"
           >
             <ImageIcon className="h-3.5 w-3.5 text-indigo-600" />
-            Upload Venue Cover
+            <span>Cover Photo</span>
           </button>
 
           <button
@@ -677,7 +675,7 @@ export const AdminMapBuilderPage: React.FC = () => {
                 setGraph(g);
                 await refreshVenues();
                 showToast(
-                  `Auto-plotted ${res.total_nodes} nodes & ${res.total_edges} walkable edges (+${res.edges_created} new connections)`,
+                  `Connected ${res.total_nodes} rooms & ${res.total_edges} walk paths (+${res.edges_created} new)`,
                 );
               } catch (err) {
                 alert(err instanceof Error ? err.message : 'Auto-plot graph failed.');
@@ -688,39 +686,18 @@ export const AdminMapBuilderPage: React.FC = () => {
             className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-500 transition"
           >
             <GitCommit className="h-3.5 w-3.5" />
-            ⚡ Auto-Plot Graph &amp; 3D Routes
-          </button>
-
-          <button
-            type="button"
-            disabled={busyAction}
-            onClick={async () => {
-              setBusyAction(true);
-              try {
-                const rep = await rebuildAdminIndex(venue.slug);
-                showToast(
-                  `AI Index rebuilt (${rep.photos} photos · Top-1: ${Math.round(rep.top1 * 100)}%)`,
-                );
-              } catch (err) {
-                alert(err instanceof Error ? err.message : 'Rebuild failed.');
-              } finally {
-                setBusyAction(false);
-              }
-            }}
-            className="btn-primary text-xs py-2"
-          >
-            <Sparkles className="h-3.5 w-3.5" />
-            Rebuild AI Index
+            <span>Auto-Connect Paths</span>
           </button>
 
           <button
             type="button"
             disabled={busyAction}
             onClick={() => void handleDeleteCurrentVenue()}
-            className="rounded-xl bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 ring-1 ring-rose-200 hover:bg-rose-600 hover:text-white transition"
+            className="inline-flex items-center gap-1 rounded-xl bg-rose-50 px-2.5 py-2 text-xs font-bold text-rose-700 ring-1 ring-rose-200 hover:bg-rose-600 hover:text-white transition"
             title="Delete venue"
           >
             <Trash2 className="h-3.5 w-3.5" />
+            <span>Delete Venue</span>
           </button>
         </div>
       </div>
@@ -1097,7 +1074,7 @@ export const AdminMapBuilderPage: React.FC = () => {
 
               {!pendingCoords ? (
                 <p className="text-xs text-slate-500 leading-relaxed">
-                  Click on any room, doorway, corridor junction, lift, or staircase on the left blueprint to drop a pin at that exact spot.
+                  Tap on any room, doorway, corridor junction, lift, or staircase on the floorplan canvas above to drop a pin at that exact spot.
                 </p>
               ) : (
                 <form onSubmit={(e) => void handleCreateNodeSubmit(e)} className="space-y-3">

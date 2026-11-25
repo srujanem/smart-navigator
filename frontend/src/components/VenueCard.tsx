@@ -354,9 +354,9 @@ export const VenueCard: React.FC<VenueCardProps> = ({ venue, dark = false }) => 
               alt={venue.name}
               loading="lazy"
               onError={() => setImgFailed(true)}
-              className="h-full w-full object-cover hdr-photo transition-transform duration-700 ease-out group-hover:scale-110"
+              className="h-full w-full object-cover object-center brightness-110 contrast-105 saturate-110 transition-transform duration-700 ease-out group-hover:scale-105"
             />
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-[#050914]/90 via-[#050914]/25 to-transparent" />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-[#050914]/80 via-[#050914]/15 to-transparent" />
           </>
         ) : (
           <IsometricVenueArt

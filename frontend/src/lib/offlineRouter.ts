@@ -983,11 +983,18 @@ export function getBundledSampleQueries(
   bundle: BundledOfflineSnapshot,
 ): SampleQuery[] {
   const sigs = bundle.photo_index?.[slug] ?? [];
-  const seenNodes = new Set<string>();
+  // Prefer numbered rooms/labs first and deduplicate strictly by normalized place name
+  const sorted = [...sigs].sort((a, b) => {
+    const aNum = /\d/.test(a.node_name) ? 0 : a.node_name.toLowerCase().includes('entrance') ? 2 : 1;
+    const bNum = /\d/.test(b.node_name) ? 0 : b.node_name.toLowerCase().includes('entrance') ? 2 : 1;
+    return aNum - bNum;
+  });
+  const seenNames = new Set<string>();
   const samples: SampleQuery[] = [];
-  for (const s of sigs) {
-    if (seenNodes.has(s.node_id)) continue;
-    seenNodes.add(s.node_id);
+  for (const s of sorted) {
+    const key = s.node_name.trim().toLowerCase();
+    if (!key || seenNames.has(key)) continue;
+    seenNames.add(key);
     samples.push({
       id: s.photo_id,
       label: s.node_name,

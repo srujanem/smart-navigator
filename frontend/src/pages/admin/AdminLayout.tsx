@@ -20,9 +20,11 @@ import {
 } from 'lucide-react';
 import {
   clearAdminSession,
+  createAdminFloor,
   createAdminVenue,
   getAdminToken,
   getAdminVenues,
+  uploadAdminVenueCover,
 } from '../../lib/api';
 import { ErrorState } from '../../components/ErrorState';
 import { AdminVenueContext } from './adminVenueContext';
@@ -59,12 +61,15 @@ export const AdminLayout: React.FC = () => {
   const hasLoadedOnceRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
-  // "+ New Place" Simple Modal State
+  // "+ New Place" Complete Setup Modal State
   const [createOpen, setCreateOpen] = useState(false);
   const [vName, setVName] = useState('');
+  const [vSlug, setVSlug] = useState('');
   const [vType, setVType] = useState<VenueType>('campus');
   const [vCity, setVCity] = useState('');
   const [vInitialBldg, setVInitialBldg] = useState('Main Building');
+  const [vFloorCount, setVFloorCount] = useState<number>(1);
+  const [vCoverFile, setVCoverFile] = useState<File | null>(null);
   const [creatingVenue, setCreatingVenue] = useState(false);
   const [createErr, setCreateErr] = useState<string | null>(null);
 
@@ -188,6 +193,7 @@ export const AdminLayout: React.FC = () => {
     try {
       const created = await createAdminVenue({
         name: vName.trim(),
+        slug: vSlug.trim() || undefined,
         type: vType,
         city: vCity.trim() || 'Campus',
         tagline: `Indoor navigation for ${vName.trim()}`,
@@ -196,10 +202,22 @@ export const AdminLayout: React.FC = () => {
         initial_building_name: vInitialBldg.trim() || 'Main Building',
         initial_floor_name: 'Ground Floor',
       });
+
+      const bldgId = `${created.slug}:main`;
+      for (let lvl = 1; lvl < vFloorCount; lvl++) {
+        await createAdminFloor(created.slug, { building_id: bldgId, level: lvl });
+      }
+      if (vCoverFile) {
+        await uploadAdminVenueCover(created.slug, vCoverFile);
+      }
+
       setCreateOpen(false);
       setVName('');
+      setVSlug('');
       setVCity('');
       setVInitialBldg('Main Building');
+      setVFloorCount(1);
+      setVCoverFile(null);
       await refreshVenues();
       setSelectedSlug(created.slug);
       navigate(`/admin/dataset?venue=${encodeURIComponent(created.slug)}`);
@@ -394,7 +412,7 @@ export const AdminLayout: React.FC = () => {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-2.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div>
                     <label className="block text-xs font-bold text-slate-700 mb-1">
                       Type
@@ -424,17 +442,60 @@ export const AdminLayout: React.FC = () => {
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Main Building Name
-                  </label>
-                  <input
-                    type="text"
-                    value={vInitialBldg}
-                    onChange={(e) => setVInitialBldg(e.target.value)}
-                    placeholder="Main Building"
-                    className="w-full rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm font-semibold text-slate-900 ring-1 ring-slate-200"
-                  />
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Main Building Name
+                    </label>
+                    <input
+                      type="text"
+                      value={vInitialBldg}
+                      onChange={(e) => setVInitialBldg(e.target.value)}
+                      placeholder="Main Building"
+                      className="w-full rounded-xl bg-slate-50 px-3.5 py-2.5 text-sm font-semibold text-slate-900 ring-1 ring-slate-200"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Floors to Create
+                    </label>
+                    <select
+                      value={String(vFloorCount)}
+                      onChange={(e) => setVFloorCount(Number(e.target.value))}
+                      className="w-full rounded-xl bg-slate-50 px-3 py-2.5 text-sm font-semibold text-slate-900 ring-1 ring-slate-200"
+                    >
+                      <option value="1">Ground Floor Only</option>
+                      <option value="2">Ground + 1st Floor</option>
+                      <option value="3">Ground + 2 Floors</option>
+                      <option value="4">Ground + 3 Floors</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Custom URL Slug (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={vSlug}
+                      onChange={(e) => setVSlug(e.target.value)}
+                      placeholder="e.g. mite-cs-block"
+                      className="w-full rounded-xl bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-900 ring-1 ring-slate-200"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Cover Photo (Optional)
+                    </label>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => setVCoverFile(e.target.files?.[0] ?? null)}
+                      className="w-full rounded-xl bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 file:mr-2 file:rounded-lg file:border-0 file:bg-indigo-600 file:px-2.5 file:py-1 file:text-xs file:font-bold file:text-white"
+                    />
+                  </div>
                 </div>
 
                 <div className="flex items-center justify-end gap-2 pt-2">

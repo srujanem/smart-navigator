@@ -307,7 +307,7 @@ export const LandingPage: React.FC = () => {
                       Tap to Launch Live 3D Twin
                     </button>
                     <span className="mt-2 text-[11px] font-medium text-slate-300">
-                      Paused by default on mobile for instant zero-lag loading
+                      Click to orbit interactive 3D glass architecture
                     </span>
                   </div>
                 </div>
@@ -318,7 +318,7 @@ export const LandingPage: React.FC = () => {
                 <span className="h-2 w-2 rounded-full bg-cyan-400" />
                 {showInteractive3D
                   ? 'Live 3D Architectural Twin · Drag to Orbit'
-                  : 'Fast Mobile Digital Twin Preview'}
+                  : 'Interactive Digital Twin Preview'}
               </div>
 
               <div className="pointer-events-none absolute bottom-3 left-3 right-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl bg-slate-950/85 px-3.5 py-2 text-[11px] sm:text-xs ring-1 ring-white/15">

@@ -1,17 +1,23 @@
 import type {
   AdminOverview,
   AutoMapDatasetResponse,
+  Building,
+  Closure,
   CreateEdgePayload,
   CreateNodePayload,
+  CreatePersonPayload,
   CreateVenuePayload,
   DatasetNode,
   DatasetPhoto,
   DatasetResponse,
+  Floor,
   GEdge,
   GNode,
   Graph,
   IndexReport,
+  Person,
   UpdateNodePayload,
+  UpdatePersonPayload,
   UploadPhotosResponse,
   VenueDetail,
   VenueSummary,
@@ -22,7 +28,7 @@ import {
   computeBrowserImageSignature,
   loadBundledOfflineSnapshot,
 } from './offlineRouter';
-import { optimizePhotoOrPanorama } from './panorama360';
+import { optimizePhotoOrPanorama, rotateDataUrl90 } from './panorama360';
 
 const IDB_NAME = 'navigator_admin_vault_v1';
 const IDB_STORE = 'kv';
@@ -56,18 +62,46 @@ export interface VenuePublishStatus {
   paths: number;
 }
 
+export interface PortableVenuePackage {
+  version: 1;
+  exportedAt: string;
+  slug: string;
+  summary: VenueSummary;
+  detail: VenueDetail;
+  graph: Graph;
+  people: Person[];
+  photos: VaultPhotoRecord[];
+  blueprints: Record<string, string>;
+}
+
 interface VaultState {
   addedPhotos: VaultPhotoRecord[];
   movedPhotos: Record<string, { node_id?: string; heading_deg?: number | null; ocr_text?: string }>;
   deletedPhotoIds: string[];
   createdVenues?: VaultCreatedVenue[];
+  deletedVenueSlugs?: string[];
+  updatedVenues?: Record<
+    string,
+    Partial<CreateVenuePayload> & {
+      entrance_node_id?: string | null;
+      emergency_node_id?: string | null;
+    }
+  >;
+  venueCovers?: Record<string, string>;
+  blueprints?: Record<string, string>;
+  addedBuildings?: { slug: string; building: Building }[];
+  addedFloors?: { slug: string; buildingId: string; floor: Floor }[];
   addedNodes?: { slug: string; node: GNode }[];
+  updatedNodes?: Record<string, UpdateNodePayload>;
+  deletedNodeIds?: string[];
   addedEdges?: { slug: string; edge: GEdge }[];
+  deletedEdgeIds?: string[];
+  addedPeople?: { slug: string; person: Person }[];
+  updatedPeople?: Record<string, UpdatePersonPayload>;
+  addedClosures?: { slug: string; closure: Closure }[];
   publishedVenues?: Record<string, VenuePublishStatus>;
 }
 
-// Only the MITE primary owner account can edit the bundled MITE venue;
-// every other registered admin/creator ONLY sees & edits places they personally build!
 const MITE_OWNER_EMAILS = new Set([
   'admin@navigator.local',
   'admin@navigator.dev',
@@ -84,7 +118,7 @@ function getActiveOwnerEmail(explicitEmail?: string | null): string {
       if (parsed?.email) return parsed.email.trim().toLowerCase();
     }
   } catch {
-    // Ignore storage read errors
+    // Ignore
   }
   return '';
 }
@@ -122,8 +156,20 @@ async function getVaultState(): Promise<VaultState> {
         movedPhotos: {},
         deletedPhotoIds: [],
         createdVenues: [],
+        deletedVenueSlugs: [],
+        updatedVenues: {},
+        venueCovers: {},
+        blueprints: {},
+        addedBuildings: [],
+        addedFloors: [],
         addedNodes: [],
+        updatedNodes: {},
+        deletedNodeIds: [],
         addedEdges: [],
+        deletedEdgeIds: [],
+        addedPeople: [],
+        updatedPeople: {},
+        addedClosures: [],
         publishedVenues: {},
       };
       const db = await openVaultDb();
@@ -143,8 +189,20 @@ async function getVaultState(): Promise<VaultState> {
                     ...empty,
                     ...val,
                     createdVenues: Array.isArray(val.createdVenues) ? val.createdVenues : [],
+                    deletedVenueSlugs: Array.isArray(val.deletedVenueSlugs) ? val.deletedVenueSlugs : [],
+                    updatedVenues: val.updatedVenues ?? {},
+                    venueCovers: val.venueCovers ?? {},
+                    blueprints: val.blueprints ?? {},
+                    addedBuildings: Array.isArray(val.addedBuildings) ? val.addedBuildings : [],
+                    addedFloors: Array.isArray(val.addedFloors) ? val.addedFloors : [],
                     addedNodes: Array.isArray(val.addedNodes) ? val.addedNodes : [],
+                    updatedNodes: val.updatedNodes ?? {},
+                    deletedNodeIds: Array.isArray(val.deletedNodeIds) ? val.deletedNodeIds : [],
                     addedEdges: Array.isArray(val.addedEdges) ? val.addedEdges : [],
+                    deletedEdgeIds: Array.isArray(val.deletedEdgeIds) ? val.deletedEdgeIds : [],
+                    addedPeople: Array.isArray(val.addedPeople) ? val.addedPeople : [],
+                    updatedPeople: val.updatedPeople ?? {},
+                    addedClosures: Array.isArray(val.addedClosures) ? val.addedClosures : [],
                     publishedVenues: val.publishedVenues ?? {},
                   }
                 : empty;
@@ -189,57 +247,245 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+function dataUrlToFile(dataUrl: string, filename = 'rotated.webp'): File {
+  const parts = dataUrl.split(',');
+  const mimeMatch = parts[0]?.match(/:(.*?);/);
+  const mime = mimeMatch?.[1] || 'image/webp';
+  const bin = atob(parts[1] || '');
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return new File([u8], filename, { type: mime });
+}
+
 /**
- * Applies all on-device Admin Vault changes (created venues, added rooms, photos, moves, deletes)
- * into the live in-memory bundle so Street View, 2D Map, and Admin Studio stay 100% synced.
+ * Applies all durable Admin Vault state into the live in-memory bundle so public Street View,
+ * 2D Floorplan Blueprints, Staff Directory, and Admin Studio stay 100% synced across reloads!
  */
 export async function syncVaultIntoBundle(): Promise<BundledOfflineSnapshot | null> {
   const bundle = await loadBundledOfflineSnapshot();
   if (!bundle) return null;
   const vault = await getVaultState();
   const deletedSet = new Set(vault.deletedPhotoIds);
+  const deletedVenues = new Set(vault.deletedVenueSlugs ?? []);
+  const deletedNodes = new Set(vault.deletedNodeIds ?? []);
+  const deletedEdges = new Set(vault.deletedEdgeIds ?? []);
 
   if (!bundle.photo_index) bundle.photo_index = {};
+  if (!bundle.people) bundle.people = {};
 
-  // Merge any custom venues created by the admin (placed at the front so published venues appear #1!)
+  // Remove any explicitly deleted venues
+  if (deletedVenues.size > 0) {
+    bundle.venues = bundle.venues.filter((v) => !deletedVenues.has(v.slug));
+    for (const sl of deletedVenues) {
+      delete bundle.details[sl];
+      delete bundle.graphs[sl];
+    }
+  }
+
+  // Merge custom venues created by admins
   for (const cv of vault.createdVenues ?? []) {
     const sl = cv.summary.slug;
+    if (deletedVenues.has(sl)) continue;
     if (!bundle.venues.some((v) => v.slug === sl)) {
-      bundle.venues.unshift(cv.summary);
+      bundle.venues.unshift({ ...cv.summary, stats: { ...cv.summary.stats } });
     }
-    if (!bundle.details[sl]) bundle.details[sl] = cv.detail;
-    if (!bundle.graphs[sl]) bundle.graphs[sl] = cv.graph;
+    if (!bundle.details[sl]) {
+      bundle.details[sl] = JSON.parse(JSON.stringify(cv.detail)) as VenueDetail;
+    }
+    if (!bundle.graphs[sl]) {
+      bundle.graphs[sl] = JSON.parse(JSON.stringify(cv.graph)) as Graph;
+    }
     if (!bundle.people[sl]) bundle.people[sl] = [];
     if (!bundle.photo_index[sl]) bundle.photo_index[sl] = [];
   }
 
-  // Merge any custom rooms/nodes added by the admin
+  // Seed realistic default faculty for bundled MITE campus if empty so /v/mite/people works out of the box
+  if (bundle.graphs.mite && (!bundle.people.mite || bundle.people.mite.length === 0)) {
+    const mNodes = bundle.graphs.mite.nodes.filter((n) => n.is_place);
+    const pick = (sub: string, idx: number) =>
+      mNodes.find((n) => n.name.toLowerCase().includes(sub)) ?? mNodes[idx % Math.max(1, mNodes.length)];
+    const n1 = pick('301', 0);
+    const n2 = pick('304', 1);
+    const n3 = pick('308', 2);
+    if (n1 && n2 && n3) {
+      bundle.people.mite = [
+        {
+          id: 'mite-fac-1',
+          name: 'Dr. Rajesh Nayak',
+          role: 'Professor',
+          title: 'Head of Department & Senior Professor',
+          department: 'Computer Science & Engineering',
+          node_id: n1.id,
+          node_name: n1.name,
+          building_name: n1.building_name,
+          level: n1.level,
+          schedule: 'Mon–Sat · 9:00 AM – 4:30 PM',
+          status: 'available',
+          status_note: 'Available for project guidance & academic queries',
+          target_node_id: n1.id,
+          avatar_color: '#0284c7',
+        },
+        {
+          id: 'mite-fac-2',
+          name: 'Prof. Sneha Hegde',
+          role: 'Coordinator',
+          title: 'AI & Robotics Lab Coordinator',
+          department: 'Artificial Intelligence & ML',
+          node_id: n2.id,
+          node_name: n2.name,
+          building_name: n2.building_name,
+          level: n2.level,
+          schedule: 'Mon–Fri · 9:30 AM – 4:30 PM',
+          status: 'available',
+          status_note: 'Lab sessions open',
+          target_node_id: n2.id,
+          avatar_color: '#4f46e5',
+        },
+        {
+          id: 'mite-fac-3',
+          name: 'Prof. Karthik Shetty',
+          role: 'Faculty',
+          title: 'Placement & Exam Coordinator',
+          department: 'Academic Section',
+          node_id: n3.id,
+          node_name: n3.name,
+          building_name: n3.building_name,
+          level: n3.level,
+          schedule: 'Mon–Sat · 10:00 AM – 4:00 PM',
+          status: 'available',
+          status_note: '',
+          target_node_id: n3.id,
+          avatar_color: '#059669',
+        },
+      ];
+    }
+  }
+
+  // Merge added buildings & floors
+  for (const item of vault.addedBuildings ?? []) {
+    const det = bundle.details[item.slug];
+    if (det && !det.buildings.some((b) => b.id === item.building.id)) {
+      det.buildings.push(JSON.parse(JSON.stringify(item.building)) as Building);
+    }
+  }
+  for (const item of vault.addedFloors ?? []) {
+    const det = bundle.details[item.slug];
+    const bldg = det?.buildings.find((b) => b.id === item.buildingId) ?? det?.buildings[0];
+    if (bldg && !bldg.floors.some((f) => f.id === item.floor.id || f.level === item.floor.level)) {
+      bldg.floors.push({ ...item.floor });
+    }
+  }
+
+  // Apply persisted floorplan blueprints to every matching floor id!
+  for (const det of Object.values(bundle.details)) {
+    for (const b of det.buildings) {
+      for (const fl of b.floors) {
+        if (vault.blueprints?.[fl.id]) {
+          fl.blueprint_url = vault.blueprints[fl.id];
+        }
+      }
+    }
+  }
+
+  // Apply venue metadata updates & custom venue covers
+  for (const [sl, patch] of Object.entries(vault.updatedVenues ?? {})) {
+    const v = bundle.venues.find((x) => x.slug === sl);
+    const d = bundle.details[sl];
+    if (v) {
+      if (patch.name) v.name = patch.name;
+      if (patch.city) v.city = patch.city;
+      if (patch.tagline) v.tagline = patch.tagline;
+      if (patch.accent) v.accent = patch.accent;
+    }
+    if (d) {
+      if (patch.name) d.name = patch.name;
+      if (patch.city) d.city = patch.city;
+      if (patch.tagline) d.tagline = patch.tagline;
+      if (patch.description) d.description = patch.description;
+      if (patch.accent) d.accent = patch.accent;
+      if (patch.entrance_node_id !== undefined) d.entrance_node_id = patch.entrance_node_id;
+      if (patch.emergency_node_id !== undefined) d.emergency_node_id = patch.emergency_node_id;
+    }
+  }
+
+  // Merge custom rooms/nodes, node edits & node deletes
   for (const item of vault.addedNodes ?? []) {
+    if (deletedNodes.has(item.node.id)) continue;
     const g = bundle.graphs[item.slug];
     if (g && !g.nodes.some((n) => n.id === item.node.id)) {
-      g.nodes.push(item.node);
+      g.nodes.push({ ...item.node });
+    }
+  }
+  for (const g of Object.values(bundle.graphs)) {
+    if (deletedNodes.size > 0) {
+      g.nodes = g.nodes.filter((n) => !deletedNodes.has(n.id));
+      g.edges = g.edges.filter((e) => !deletedNodes.has(e.source) && !deletedNodes.has(e.target));
+    }
+    if (deletedEdges.size > 0) {
+      g.edges = g.edges.filter((e) => !deletedEdges.has(e.id));
+    }
+    for (const nd of g.nodes) {
+      const up = vault.updatedNodes?.[nd.id];
+      if (up) {
+        if (up.name !== undefined) nd.name = up.name;
+        if (up.kind !== undefined) nd.kind = up.kind;
+        if (up.category !== undefined) nd.category = up.category;
+        if (up.x !== undefined) nd.x = up.x;
+        if (up.y !== undefined) nd.y = up.y;
+        if (up.keywords !== undefined) nd.keywords = up.keywords;
+        if (up.is_place !== undefined) nd.is_place = up.is_place;
+      }
     }
   }
 
-  // Merge any custom walking edges added by the admin or auto-connector
+  // Merge custom walking edges & closures
   for (const item of vault.addedEdges ?? []) {
+    if (deletedEdges.has(item.edge.id) || deletedNodes.has(item.edge.source) || deletedNodes.has(item.edge.target)) {
+      continue;
+    }
     const g = bundle.graphs[item.slug];
     if (g && !g.edges.some((e) => e.id === item.edge.id)) {
-      g.edges.push(item.edge);
+      g.edges.push({ ...item.edge });
+    }
+  }
+  const closedEdgeIds = new Set((vault.addedClosures ?? []).map((c) => c.closure.edge_id));
+  if (closedEdgeIds.size > 0) {
+    for (const g of Object.values(bundle.graphs)) {
+      for (const e of g.edges) {
+        if (closedEdgeIds.has(e.id)) e.closed = true;
+      }
     }
   }
 
+  // Merge custom people & status updates
+  for (const item of vault.addedPeople ?? []) {
+    if (!bundle.people[item.slug]) bundle.people[item.slug] = [];
+    if (!bundle.people[item.slug].some((p) => p.id === item.person.id)) {
+      bundle.people[item.slug].unshift({ ...item.person });
+    }
+  }
+  for (const list of Object.values(bundle.people)) {
+    for (const p of list) {
+      const up = vault.updatedPeople?.[p.id];
+      if (up) {
+        if (up.status) p.status = up.status;
+        if (up.status_note !== undefined) p.status_note = up.status_note;
+        if (up.target_node_id) p.target_node_id = up.target_node_id;
+      }
+    }
+  }
+
+  // Sync photos & stats per venue
   for (const slug of Object.keys(bundle.graphs)) {
     const graph = bundle.graphs[slug];
+    const det = bundle.details[slug];
     const nodeMap = new Map<string, GNode>(graph.nodes.map((n) => [n.id, n]));
     const addedIds = new Set(vault.addedPhotos.map((ap) => ap.id));
 
-    // Keep base (bundled) photos that haven't been deleted (excluding already-merged vault photos)
     const staticBase = (bundle.photo_index[slug] ?? []).filter(
       (s) => !deletedSet.has(s.photo_id) && !addedIds.has(s.photo_id),
     );
 
-    // Apply moves/updates to existing bundled photos
     for (const s of staticBase) {
       const mv = vault.movedPhotos[s.photo_id];
       if (mv) {
@@ -256,7 +502,6 @@ export async function syncVaultIntoBundle(): Promise<BundledOfflineSnapshot | nu
       }
     }
 
-    // Build newest-first list of vault-added photos for this venue
     const vaultSigs: BundledPhotoSig[] = [];
     for (const ap of vault.addedPhotos) {
       if (ap.slug !== slug || deletedSet.has(ap.id)) continue;
@@ -281,7 +526,6 @@ export async function syncVaultIntoBundle(): Promise<BundledOfflineSnapshot | nu
     const mergedSigs = [...vaultSigs, ...staticBase];
     bundle.photo_index[slug] = mergedSigs;
 
-    // Refresh node photo_url and photo_count on the live graph (clear photo_url if all deleted!)
     const byNode = new Map<string, BundledPhotoSig[]>();
     for (const s of mergedSigs) {
       if (!byNode.has(s.node_id)) byNode.set(s.node_id, []);
@@ -294,19 +538,32 @@ export async function syncVaultIntoBundle(): Promise<BundledOfflineSnapshot | nu
     }
 
     const placeCount = graph.nodes.filter((n) => n.is_place).length || graph.nodes.length;
-    const firstPhoto = graph.nodes.find((n) => n.photo_url)?.photo_url ?? null;
+    const peopleCount = (bundle.people[slug] ?? []).length;
+    const explicitCover = vault.venueCovers?.[slug] ?? null;
+    const firstPhoto = explicitCover || graph.nodes.find((n) => n.photo_url)?.photo_url || null;
+    const bldgCount = det ? det.buildings.length : 1;
+    const floorCount = det
+      ? det.buildings.reduce((acc, b) => acc + b.floors.length, 0)
+      : 1;
+
     const vSum = bundle.venues.find((v) => v.slug === slug);
     if (vSum) {
       vSum.stats.photos = mergedSigs.length;
       vSum.stats.places = placeCount;
-      if (!vSum.cover_url && firstPhoto) vSum.cover_url = firstPhoto;
+      vSum.stats.people = peopleCount;
+      vSum.stats.buildings = bldgCount;
+      vSum.stats.floors = floorCount;
+      if (explicitCover) vSum.cover_url = explicitCover;
+      else if (!vSum.cover_url && firstPhoto) vSum.cover_url = firstPhoto;
     }
-    if (bundle.details[slug]) {
-      bundle.details[slug].stats.photos = mergedSigs.length;
-      bundle.details[slug].stats.places = placeCount;
-      if (!bundle.details[slug].cover_url && firstPhoto) {
-        bundle.details[slug].cover_url = firstPhoto;
-      }
+    if (det) {
+      det.stats.photos = mergedSigs.length;
+      det.stats.places = placeCount;
+      det.stats.people = peopleCount;
+      det.stats.buildings = bldgCount;
+      det.stats.floors = floorCount;
+      if (explicitCover) det.cover_url = explicitCover;
+      else if (!det.cover_url && firstPhoto) det.cover_url = firstPhoto;
     }
   }
 
@@ -330,19 +587,19 @@ export async function vaultGetAdminDataset(slug: string): Promise<DatasetRespons
   const byNode = new Map<string, DatasetPhoto[]>();
   for (const s of sigs) {
     if (!byNode.has(s.node_id)) byNode.set(s.node_id, []);
+    const isPano = is360Set.has(s.photo_id) || s.ocr_text === '360° Panorama';
     byNode.get(s.node_id)!.push({
       id: s.photo_id,
       url: s.photo_url,
       thumbnail_url: s.photo_url,
-      media_type: is360Set.has(s.photo_id) ? 'video' : 'photo',
-      ocr_text: is360Set.has(s.photo_id) ? '360° Panorama' : s.ocr_text || '',
+      media_type: isPano ? 'video' : 'photo',
+      ocr_text: isPano ? '360° Panorama' : s.ocr_text || '',
       source: s.photo_id.startsWith('local-') ? 'uploader' : 'admin',
       quality: 0.94,
       heading_deg: s.heading_deg,
     });
   }
 
-  // Compute node degree for decision-point advisor
   const degreeMap = new Map<string, number>();
   for (const e of graph.edges) {
     degreeMap.set(e.source, (degreeMap.get(e.source) ?? 0) + 1);
@@ -418,7 +675,7 @@ export async function vaultUploadPhotosToNode(
   const accepted: UploadPhotosResponse['accepted'] = [];
   const rejected: UploadPhotosResponse['rejected'] = [];
 
-  const roomDigitsMatch = targetNode?.name.match(/\b(30\d|310|\d{3})\b/);
+  const roomDigitsMatch = targetNode?.name.match(/\b(\d{2,4})\b/);
   const roomOcr = roomDigitsMatch ? roomDigitsMatch[1] : '';
 
   const total = Math.max(1, files.length);
@@ -432,7 +689,7 @@ export async function vaultUploadPhotosToNode(
       const processed = await optimizePhotoOrPanorama(rawFile, (subPct, stage) => {
         onProgress?.(
           Math.min(90, basePct + Math.round((subPct / 100) * sliceSpan)),
-          `${roomName} (${i + 1}/${total}): ${stage}`,
+          `${roomName}: ${stage}`,
         );
       });
 
@@ -447,7 +704,7 @@ export async function vaultUploadPhotosToNode(
         url: dataUrl,
         ocr_text: processed.isPanorama360 ? '360° Panorama' : roomOcr,
         heading_deg: headingDeg ?? null,
-        quality: 0.95,
+        quality: (processed.sharpnessScore ?? 92) / 100,
         source: 'uploader',
         sig,
         is_360: processed.isPanorama360,
@@ -458,22 +715,135 @@ export async function vaultUploadPhotosToNode(
         url: dataUrl,
         thumbnail_url: dataUrl,
         media_type: processed.isPanorama360 ? 'video' : 'photo',
-        quality: 0.95,
+        quality: (processed.sharpnessScore ?? 92) / 100,
         heading_deg: headingDeg ?? null,
       });
     } catch (err) {
       rejected.push({
         filename: rawFile.name,
-        reason: err instanceof Error ? err.message : 'Could not decode image or video on device.',
+        reason: err instanceof Error ? err.message : 'Could not decode image or video.',
       });
     }
   }
 
-  onProgress?.(94, `Saving ${accepted.length} item(s) to Admin Vault...`);
+  onProgress?.(95, `Saving ${accepted.length} item(s)...`);
   await saveVaultState(vault);
   await syncVaultIntoBundle();
-  onProgress?.(100, 'Upload complete!');
+  onProgress?.(100, 'Saved!');
   return { accepted, rejected };
+}
+
+/**
+ * Bulk Photo -> Auto-Room Creator:
+ * Drop/pick 2–30 photos at once; automatically matches existing room names or creates new
+ * clean room pins from filenames (e.g. "Lab_204.jpg" -> "Lab 204") and connects walking paths!
+ */
+export async function vaultBulkCreateRoomsFromPhotos(
+  slug: string,
+  files: File[],
+  buildingId: string,
+  floorId: string,
+  onProgress?: (pct: number, stage: string) => void,
+): Promise<{ roomsCreated: number; photosSaved: number; errors: string[] }> {
+  const bundle = await syncVaultIntoBundle();
+  if (!bundle?.graphs?.[slug]) throw new Error('Venue not found.');
+
+  let roomsCreated = 0;
+  let photosSaved = 0;
+  const errors: string[] = [];
+  const total = Math.max(1, files.length);
+
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const pct = Math.round(((i + 0.2) / total) * 92);
+    // Derive clean room title from filename
+    const rawStem = f.name
+      .replace(/\.[^.]+$/, '')
+      .replace(/[_-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const isGeneric = /^(img|dsc|pxl|photo|image|vid|whatsapp|snap|screenshot)\b/i.test(rawStem) || rawStem.length < 2;
+    const derivedName = isGeneric
+      ? `Room ${(bundle.graphs[slug].nodes.length || 0) + 1}`
+      : rawStem.replace(/\b\w/g, (c) => c.toUpperCase()).slice(0, 36);
+
+    onProgress?.(pct, `Mapping "${derivedName}" (${i + 1} of ${total})...`);
+
+    const existing = bundle.graphs[slug].nodes.find(
+      (n) => n.name.trim().toLowerCase() === derivedName.toLowerCase(),
+    );
+    let targetNodeId = existing?.id;
+    if (!targetNodeId) {
+      const idx = bundle.graphs[slug].nodes.length;
+      const created = await vaultCreateNode(slug, {
+        building_id: buildingId,
+        floor_id: floorId,
+        name: derivedName,
+        kind: 'room',
+        category: 'classroom',
+        x: 18 + (idx % 5) * 15,
+        y: 24 + Math.floor(idx / 5) * 15,
+        is_place: true,
+      });
+      targetNodeId = created.id;
+      roomsCreated++;
+    }
+
+    const res = await vaultUploadPhotosToNode(slug, targetNodeId, [f]);
+    photosSaved += res.accepted.length;
+    res.rejected.forEach((r) => errors.push(`${f.name}: ${r.reason}`));
+  }
+
+  onProgress?.(100, 'Bulk import complete!');
+  return { roomsCreated, photosSaved, errors };
+}
+
+export async function vaultRotatePhoto90(photoId: string): Promise<{ ok: boolean; url: string }> {
+  const vault = await getVaultState();
+  const target = vault.addedPhotos.find((p) => p.id === photoId);
+  if (!target) {
+    throw new Error('Only custom uploaded photos can be rotated.');
+  }
+  const rotatedUrl = await rotateDataUrl90(target.url);
+  const rotatedFile = dataUrlToFile(rotatedUrl, `${photoId}.webp`);
+  const newSig = await computeBrowserImageSignature(rotatedFile);
+  const imgProbe = await new Promise<{ w: number; h: number }>((res) => {
+    const im = new Image();
+    im.onload = () => res({ w: im.naturalWidth || 1, h: im.naturalHeight || 1 });
+    im.onerror = () => res({ w: 1, h: 1 });
+    im.src = rotatedUrl;
+  });
+  target.url = rotatedUrl;
+  target.sig = newSig;
+  target.is_360 = imgProbe.w / Math.max(1, imgProbe.h) >= 1.65;
+  target.ocr_text = target.is_360 ? '360° Panorama' : target.ocr_text === '360° Panorama' ? '' : target.ocr_text;
+  await saveVaultState(vault);
+  await syncVaultIntoBundle();
+  return { ok: true, url: rotatedUrl };
+}
+
+export async function vaultPromotePhotoCover(
+  slug: string,
+  photoId: string,
+  alsoSetVenueCover = false,
+): Promise<{ ok: boolean }> {
+  const vault = await getVaultState();
+  const idx = vault.addedPhotos.findIndex((p) => p.id === photoId);
+  if (idx > 0) {
+    const [picked] = vault.addedPhotos.splice(idx, 1);
+    vault.addedPhotos.unshift(picked);
+  }
+  if (alsoSetVenueCover) {
+    const bundle = await syncVaultIntoBundle();
+    const sig = bundle?.photo_index?.[slug]?.find((s) => s.photo_id === photoId);
+    if (sig?.photo_url) {
+      if (!vault.venueCovers) vault.venueCovers = {};
+      vault.venueCovers[slug] = sig.photo_url;
+    }
+  }
+  await saveVaultState(vault);
+  await syncVaultIntoBundle();
+  return { ok: true };
 }
 
 export async function vaultAutoMapPhotos(
@@ -506,17 +876,16 @@ export async function vaultAutoMapPhotos(
     const f = options.files[i];
     rawBytes += f.size;
     options.onProgressStage?.(
-      `On-device compressing & mapping photo ${i + 1} of ${options.files.length}...`,
+      `Compressing & mapping photo ${i + 1} of ${options.files.length}...`,
     );
     try {
-      const opt = await compressFn(f, 1280, 0.84);
+      const opt = await compressFn(f, 1280, 0.85);
       storedBytes += opt.size;
       const dataUrl = await fileToDataUrl(opt);
       const sig = await computeBrowserImageSignature(opt);
 
-      // Match room number from filename (e.g., "308", "room_304", "h9_0") or distribute across nodes
       const fnameLow = f.name.toLowerCase();
-      const numMatch = fnameLow.match(/\b(30\d|310|\d{3})\b/);
+      const numMatch = fnameLow.match(/\b(\d{3})\b/);
       let matchedNode: GNode | undefined;
       let method = 'Corridor Sequence Interpolated';
       let ocrToken = '';
@@ -622,7 +991,7 @@ export async function vaultGetIndexReport(slug: string): Promise<IndexReport> {
   const ds = await vaultGetAdminDataset(slug);
   const coveredNodes = ds.nodes.filter((n) => n.photo_count > 0);
   return {
-    embedder: 'dinov2-vits14',
+    embedder: 'vpr-v2-hog-zncc-ondevice',
     photos: ds.totals.photos,
     nodes: coveredNodes.length,
     top1: coveredNodes.length > 0 ? 0.96 : 0,
@@ -681,15 +1050,14 @@ export async function vaultGetAdminVenues(explicitEmail?: string | null): Promis
 
   if (!ownerEmail) return [];
 
-  // Slugs explicitly created by THIS exact signed-in account
+  const deletedSet = new Set(vault.deletedVenueSlugs ?? []);
   const ownedSlugs = new Set<string>(
     (vault.createdVenues ?? [])
-      .filter((cv) => (cv.owner_email || '').toLowerCase() === ownerEmail)
+      .filter((cv) => (cv.owner_email || '').toLowerCase() === ownerEmail && !deletedSet.has(cv.summary.slug))
       .map((cv) => cv.summary.slug),
   );
 
-  // Only the MITE primary owner account gets edit access to the bundled MITE venue
-  if (MITE_OWNER_EMAILS.has(ownerEmail)) {
+  if (MITE_OWNER_EMAILS.has(ownerEmail) && !deletedSet.has('mite')) {
     ownedSlugs.add('mite');
   }
 
@@ -697,16 +1065,22 @@ export async function vaultGetAdminVenues(explicitEmail?: string | null): Promis
 }
 
 export async function vaultCreateVenue(payload: CreateVenuePayload): Promise<VenueSummary> {
-  const bundle = await syncVaultIntoBundle();
   const vault = await getVaultState();
-  const ownerEmail = getActiveOwnerEmail() || 'admin@navigator.local';
-  const slug =
+  const ownerEmail = getActiveOwnerEmail() || 'creator@studio.local';
+  const rawSlug =
     payload.slug?.trim() ||
     payload.name
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/(^-|-$)/g, '') ||
-    `venue-${Date.now()}`;
+    `venue-${Date.now().toString(36)}`;
+  const slug = rawSlug.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/(^-|-$)/g, '');
+
+  // Ensure slug isn't marked deleted if recreated
+  if (vault.deletedVenueSlugs) {
+    vault.deletedVenueSlugs = vault.deletedVenueSlugs.filter((s) => s !== slug);
+  }
+
   const bId = `${slug}:main`;
   const fId = `${slug}:f0`;
   const summary: VenueSummary = {
@@ -733,7 +1107,7 @@ export async function vaultCreateVenue(payload: CreateVenuePayload): Promise<Ven
         x: 10,
         y: 10,
         w: 80,
-        d: 50,
+        d: 56,
         floors: [{ id: fId, level: 0, name: payload.initial_floor_name || 'Ground Floor' }],
       },
     ],
@@ -750,9 +1124,9 @@ export async function vaultCreateVenue(payload: CreateVenuePayload): Promise<Ven
         floor_id: fId,
         floor_name: payload.initial_floor_name || 'Ground Floor',
         level: 0,
-        x: 50,
-        y: 52,
-        keywords: 'entrance gate reception',
+        x: 20,
+        y: 35,
+        keywords: 'entrance gate reception lobby',
         is_place: true,
         photo_url: null,
         photo_count: 0,
@@ -765,18 +1139,137 @@ export async function vaultCreateVenue(payload: CreateVenuePayload): Promise<Ven
   vault.createdVenues = vault.createdVenues.filter((v) => v.summary.slug !== slug);
   vault.createdVenues.push({ owner_email: ownerEmail, summary, detail, graph });
   await saveVaultState(vault);
-
-  if (bundle) {
-    if (!bundle.venues.some((v) => v.slug === slug)) {
-      bundle.venues.push(summary);
-    }
-    bundle.details[slug] = detail;
-    bundle.graphs[slug] = graph;
-    bundle.people[slug] = [];
-    if (!bundle.photo_index) bundle.photo_index = {};
-    bundle.photo_index[slug] = [];
-  }
+  await syncVaultIntoBundle();
   return summary;
+}
+
+export async function vaultUpdateVenue(
+  slug: string,
+  payload: Partial<CreateVenuePayload> & {
+    entrance_node_id?: string | null;
+    emergency_node_id?: string | null;
+  },
+): Promise<VenueSummary> {
+  const vault = await getVaultState();
+  if (!vault.updatedVenues) vault.updatedVenues = {};
+  vault.updatedVenues[slug] = { ...(vault.updatedVenues[slug] ?? {}), ...payload };
+  await saveVaultState(vault);
+  const bundle = await syncVaultIntoBundle();
+  return (
+    bundle?.venues.find((x) => x.slug === slug) ?? {
+      id: slug,
+      slug,
+      name: payload.name || slug,
+      type: payload.type || 'campus',
+      city: payload.city || '',
+      tagline: payload.tagline || '',
+      accent: payload.accent || '#0ea5e9',
+      cover_url: null,
+      stats: { buildings: 1, floors: 1, places: 1, people: 0, photos: 0 },
+    }
+  );
+}
+
+export async function vaultDeleteVenue(slug: string): Promise<{ ok: boolean }> {
+  const vault = await getVaultState();
+  if (!vault.deletedVenueSlugs) vault.deletedVenueSlugs = [];
+  if (!vault.deletedVenueSlugs.includes(slug)) {
+    vault.deletedVenueSlugs.push(slug);
+  }
+  vault.createdVenues = (vault.createdVenues ?? []).filter((cv) => cv.summary.slug !== slug);
+  vault.addedPhotos = vault.addedPhotos.filter((p) => p.slug !== slug);
+  vault.addedNodes = (vault.addedNodes ?? []).filter((n) => n.slug !== slug);
+  vault.addedEdges = (vault.addedEdges ?? []).filter((e) => e.slug !== slug);
+  await saveVaultState(vault);
+  await syncVaultIntoBundle();
+  return { ok: true };
+}
+
+export async function vaultUploadVenueCover(slug: string, file: File): Promise<VenueSummary> {
+  const processed = await optimizePhotoOrPanorama(file);
+  const dataUrl = await fileToDataUrl(processed.file);
+  const vault = await getVaultState();
+  if (!vault.venueCovers) vault.venueCovers = {};
+  vault.venueCovers[slug] = dataUrl;
+  await saveVaultState(vault);
+  const bundle = await syncVaultIntoBundle();
+  return bundle!.venues.find((v) => v.slug === slug)!;
+}
+
+export async function vaultUploadBlueprint(
+  floorId: string,
+  file: File,
+): Promise<{ ok: boolean; blueprint_url: string }> {
+  const processed = await optimizePhotoOrPanorama(file);
+  const dataUrl = await fileToDataUrl(processed.file);
+  const vault = await getVaultState();
+  if (!vault.blueprints) vault.blueprints = {};
+  vault.blueprints[floorId] = dataUrl;
+  await saveVaultState(vault);
+  await syncVaultIntoBundle();
+  return { ok: true, blueprint_url: dataUrl };
+}
+
+export async function vaultCreateBuilding(
+  slug: string,
+  payload: {
+    name: string;
+    x?: number;
+    y?: number;
+    w?: number;
+    d?: number;
+    initial_level?: number;
+    initial_floor_name?: string;
+  },
+): Promise<Building> {
+  const vault = await getVaultState();
+  const b: Building = {
+    id: `${slug}:b-${Date.now().toString(36)}`,
+    name: payload.name,
+    x: payload.x ?? 10,
+    y: payload.y ?? 10,
+    w: payload.w ?? 60,
+    d: payload.d ?? 42,
+    floors: [
+      {
+        id: `${slug}:f-${Date.now().toString(36)}`,
+        level: payload.initial_level ?? 0,
+        name: payload.initial_floor_name ?? 'Ground Floor',
+      },
+    ],
+  };
+  if (!vault.addedBuildings) vault.addedBuildings = [];
+  vault.addedBuildings.push({ slug, building: b });
+  await saveVaultState(vault);
+  await syncVaultIntoBundle();
+  return b;
+}
+
+export async function vaultCreateFloor(
+  slug: string,
+  payload: { building_id: string; level: number; name?: string },
+): Promise<Floor> {
+  const vault = await getVaultState();
+  const defaultName =
+    payload.level === 0
+      ? 'Ground Floor'
+      : payload.level === 1
+        ? 'First Floor'
+        : payload.level === 2
+          ? 'Second Floor'
+          : payload.level === 3
+            ? 'Third Floor'
+            : `Floor ${payload.level}`;
+  const fl: Floor = {
+    id: `${slug}:f-${payload.level}-${Date.now().toString(36).slice(-3)}`,
+    level: payload.level,
+    name: payload.name?.trim() || defaultName,
+  };
+  if (!vault.addedFloors) vault.addedFloors = [];
+  vault.addedFloors.push({ slug, buildingId: payload.building_id, floor: fl });
+  await saveVaultState(vault);
+  await syncVaultIntoBundle();
+  return fl;
 }
 
 export async function vaultCreateNode(slug: string, payload: CreateNodePayload): Promise<GNode> {
@@ -805,33 +1298,31 @@ export async function vaultCreateNode(slug: string, payload: CreateNodePayload):
     photo_count: 0,
   };
 
-  // Automatically link this new room to the previous/nearest room so routing works immediately!
   const sameLevelExisting = existingNodes.filter((n) => n.level === node.level);
   const linkTarget =
     sameLevelExisting.length > 0
       ? sameLevelExisting[sameLevelExisting.length - 1]
       : existingNodes[existingNodes.length - 1] ?? null;
 
-  graph?.nodes.push(node);
   if (!vault.addedNodes) vault.addedNodes = [];
   vault.addedNodes.push({ slug, node });
 
-  if (linkTarget && graph) {
+  if (linkTarget) {
     const dist = Math.max(
       4,
       Math.round(Math.hypot(node.x - linkTarget.x, node.y - linkTarget.y) * 10) / 10,
     );
+    const isCrossFloor = linkTarget.level !== node.level;
     const autoEdge: GEdge = {
       id: `edge-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 5)}`,
       source: linkTarget.id,
       target: node.id,
       distance: dist,
-      kind: 'walk',
-      accessible: true,
-      stretcher_ok: true,
+      kind: isCrossFloor ? 'stairs' : 'walk',
+      accessible: !isCrossFloor || node.kind === 'lift' || linkTarget.kind === 'lift',
+      stretcher_ok: !isCrossFloor || node.kind === 'lift' || linkTarget.kind === 'lift',
       closed: false,
     };
-    graph.edges.push(autoEdge);
     if (!vault.addedEdges) vault.addedEdges = [];
     vault.addedEdges.push({ slug, edge: autoEdge });
   }
@@ -845,6 +1336,10 @@ export async function vaultUpdateNode(
   nodeId: string,
   payload: UpdateNodePayload,
 ): Promise<{ ok: boolean; x: number; y: number }> {
+  const vault = await getVaultState();
+  if (!vault.updatedNodes) vault.updatedNodes = {};
+  vault.updatedNodes[nodeId] = { ...(vault.updatedNodes[nodeId] ?? {}), ...payload };
+  await saveVaultState(vault);
   const bundle = await syncVaultIntoBundle();
   let x = payload.x ?? 0;
   let y = payload.y ?? 0;
@@ -852,13 +1347,6 @@ export async function vaultUpdateNode(
     for (const g of Object.values(bundle.graphs)) {
       const found = g.nodes.find((n) => n.id === nodeId);
       if (found) {
-        if (payload.name !== undefined) found.name = payload.name;
-        if (payload.kind !== undefined) found.kind = payload.kind;
-        if (payload.category !== undefined) found.category = payload.category;
-        if (payload.x !== undefined) found.x = payload.x;
-        if (payload.y !== undefined) found.y = payload.y;
-        if (payload.keywords !== undefined) found.keywords = payload.keywords;
-        if (payload.is_place !== undefined) found.is_place = payload.is_place;
         x = found.x;
         y = found.y;
         break;
@@ -869,23 +1357,17 @@ export async function vaultUpdateNode(
 }
 
 export async function vaultDeleteNode(nodeId: string): Promise<{ ok: boolean }> {
-  const bundle = await syncVaultIntoBundle();
   const vault = await getVaultState();
-  if (bundle) {
-    for (const g of Object.values(bundle.graphs)) {
-      g.nodes = g.nodes.filter((n) => n.id !== nodeId);
-      g.edges = g.edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
-    }
+  if (!vault.deletedNodeIds) vault.deletedNodeIds = [];
+  if (!vault.deletedNodeIds.includes(nodeId)) {
+    vault.deletedNodeIds.push(nodeId);
   }
-  if (vault.addedNodes) {
-    vault.addedNodes = vault.addedNodes.filter((n) => n.node.id !== nodeId);
-  }
-  if (vault.addedEdges) {
-    vault.addedEdges = vault.addedEdges.filter(
-      (e) => e.edge.source !== nodeId && e.edge.target !== nodeId,
-    );
-  }
+  vault.addedNodes = (vault.addedNodes ?? []).filter((n) => n.node.id !== nodeId);
+  vault.addedEdges = (vault.addedEdges ?? []).filter(
+    (e) => e.edge.source !== nodeId && e.edge.target !== nodeId,
+  );
   await saveVaultState(vault);
+  await syncVaultIntoBundle();
   return { ok: true };
 }
 
@@ -908,25 +1390,160 @@ export async function vaultCreateEdge(slug: string, payload: CreateEdgePayload):
     stretcher_ok: payload.stretcher_ok ?? true,
     closed: false,
   };
-  graph?.edges.push(edge);
   if (!vault.addedEdges) vault.addedEdges = [];
   vault.addedEdges.push({ slug, edge });
   await saveVaultState(vault);
+  await syncVaultIntoBundle();
   return edge;
 }
 
 export async function vaultDeleteEdge(edgeId: string): Promise<{ ok: boolean }> {
+  const vault = await getVaultState();
+  if (!vault.deletedEdgeIds) vault.deletedEdgeIds = [];
+  if (!vault.deletedEdgeIds.includes(edgeId)) {
+    vault.deletedEdgeIds.push(edgeId);
+  }
+  vault.addedEdges = (vault.addedEdges ?? []).filter((e) => e.edge.id !== edgeId);
+  await saveVaultState(vault);
+  await syncVaultIntoBundle();
+  return { ok: true };
+}
+
+export async function vaultAutoConnectGraph(slug: string): Promise<{
+  ok: boolean;
+  edges_created: number;
+  total_nodes: number;
+  total_edges: number;
+}> {
   const bundle = await syncVaultIntoBundle();
   const vault = await getVaultState();
-  if (bundle) {
-    for (const g of Object.values(bundle.graphs)) {
-      g.edges = g.edges.filter((e) => e.id !== edgeId);
+  const graph = bundle?.graphs?.[slug];
+  if (!graph) return { ok: true, edges_created: 0, total_nodes: 0, total_edges: 0 };
+
+  const existingPairs = new Set<string>();
+  for (const e of graph.edges) {
+    existingPairs.add(`${e.source}::${e.target}`);
+    existingPairs.add(`${e.target}::${e.source}`);
+  }
+  if (!vault.addedEdges) vault.addedEdges = [];
+  let created = 0;
+
+  for (let i = 1; i < graph.nodes.length; i++) {
+    const prev = graph.nodes[i - 1];
+    const cur = graph.nodes[i];
+    if (!existingPairs.has(`${prev.id}::${cur.id}`)) {
+      const dist = Math.max(4, Math.round(Math.hypot(cur.x - prev.x, cur.y - prev.y) * 10) / 10);
+      const isSameFloor = prev.level === cur.level;
+      const newEdge: GEdge = {
+        id: `edge-auto-${Date.now().toString(36)}-${i}`,
+        source: prev.id,
+        target: cur.id,
+        distance: dist,
+        kind: isSameFloor ? 'walk' : 'stairs',
+        accessible: isSameFloor,
+        stretcher_ok: isSameFloor,
+        closed: false,
+      };
+      vault.addedEdges.push({ slug, edge: newEdge });
+      existingPairs.add(`${prev.id}::${cur.id}`);
+      existingPairs.add(`${cur.id}::${prev.id}`);
+      created++;
     }
   }
-  if (vault.addedEdges) {
-    vault.addedEdges = vault.addedEdges.filter((e) => e.edge.id !== edgeId);
-  }
+
   await saveVaultState(vault);
+  const updated = await syncVaultIntoBundle();
+  const g2 = updated?.graphs?.[slug];
+  return {
+    ok: true,
+    edges_created: created,
+    total_nodes: g2?.nodes.length ?? 0,
+    total_edges: g2?.edges.length ?? 0,
+  };
+}
+
+export async function vaultCreatePerson(slug: string, payload: CreatePersonPayload): Promise<Person> {
+  const bundle = await syncVaultIntoBundle();
+  const vault = await getVaultState();
+  const node = bundle?.graphs?.[slug]?.nodes.find((n) => n.id === payload.node_id);
+  const p: Person = {
+    id: `p-${Date.now().toString(36)}`,
+    name: payload.name,
+    role: payload.role,
+    title: payload.title,
+    department: payload.department,
+    node_id: payload.node_id,
+    node_name: node?.name ?? payload.node_id,
+    building_name: node?.building_name ?? '',
+    level: node?.level ?? 0,
+    schedule: payload.schedule,
+    status: 'available',
+    status_note: '',
+    target_node_id: payload.node_id,
+    avatar_color: '#0ea5e9',
+  };
+  if (!vault.addedPeople) vault.addedPeople = [];
+  vault.addedPeople.unshift({ slug, person: p });
+  await saveVaultState(vault);
+  await syncVaultIntoBundle();
+  return p;
+}
+
+export async function vaultUpdatePerson(
+  personId: string,
+  payload: UpdatePersonPayload,
+): Promise<Person> {
+  const vault = await getVaultState();
+  if (!vault.updatedPeople) vault.updatedPeople = {};
+  vault.updatedPeople[personId] = { ...(vault.updatedPeople[personId] ?? {}), ...payload };
+  await saveVaultState(vault);
+  const bundle = await syncVaultIntoBundle();
+  if (bundle) {
+    for (const list of Object.values(bundle.people)) {
+      const found = list.find((p) => p.id === personId);
+      if (found) return found;
+    }
+  }
+  throw new Error('Person not found');
+}
+
+export async function vaultGetClosures(slug: string): Promise<Closure[]> {
+  const vault = await getVaultState();
+  return (vault.addedClosures ?? []).filter((c) => c.slug === slug).map((c) => c.closure);
+}
+
+export async function vaultCreateClosure(
+  slug: string,
+  edgeId: string,
+  reason: string,
+): Promise<Closure> {
+  const bundle = await syncVaultIntoBundle();
+  const vault = await getVaultState();
+  const g = bundle?.graphs?.[slug];
+  const edge = g?.edges.find((e) => e.id === edgeId);
+  const srcN = g?.nodes.find((n) => n.id === edge?.source);
+  const tgtN = g?.nodes.find((n) => n.id === edge?.target);
+  const cl: Closure = {
+    id: `cl-${Date.now().toString(36)}`,
+    edge_id: edgeId,
+    source: edge?.source ?? '',
+    target: edge?.target ?? '',
+    source_name: srcN?.name ?? edge?.source ?? '',
+    target_name: tgtN?.name ?? edge?.target ?? '',
+    reason,
+  };
+  if (!vault.addedClosures) vault.addedClosures = [];
+  vault.addedClosures.push({ slug, closure: cl });
+  await saveVaultState(vault);
+  await syncVaultIntoBundle();
+  return cl;
+}
+
+export async function vaultDeleteClosure(closureId: string): Promise<{ ok: boolean }> {
+  const vault = await getVaultState();
+  vault.addedClosures = (vault.addedClosures ?? []).filter((c) => c.closure.id !== closureId);
+  await saveVaultState(vault);
+  await syncVaultIntoBundle();
   return { ok: true };
 }
 
@@ -950,10 +1567,6 @@ export async function vaultGetPublishStatus(slug: string): Promise<VenuePublishS
   };
 }
 
-/**
- * Final Step: Validates the venue, auto-connects any unlinked rooms so every room is routable
- * in Google Street View, indexes all room photos & 360° panoramas, and publishes the venue live!
- */
 export async function vaultPublishVenue(
   slug: string,
   onProgress?: (pct: number, stage: string) => void,
@@ -965,7 +1578,8 @@ export async function vaultPublishVenue(
   paths: number;
   publishedAt: string;
 }> {
-  onProgress?.(12, 'Checking venue details & rooms...');
+  onProgress?.(14, 'Validating rooms & floor layouts...');
+  await vaultAutoConnectGraph(slug);
   const bundle = await syncVaultIntoBundle();
   const vault = await getVaultState();
   const graph = bundle?.graphs?.[slug];
@@ -973,52 +1587,16 @@ export async function vaultPublishVenue(
     throw new Error('Venue not found. Please create a venue first.');
   }
 
-  // Ensure every node is connected in a single walking network so Street View routes never fail
-  onProgress?.(38, 'Connecting room walking paths & 3D routes...');
-  const nodes = graph.nodes;
-  if (nodes.length >= 2) {
-    const existingPairs = new Set<string>();
-    for (const e of graph.edges) {
-      existingPairs.add(`${e.source}::${e.target}`);
-      existingPairs.add(`${e.target}::${e.source}`);
-    }
-    if (!vault.addedEdges) vault.addedEdges = [];
-    for (let i = 1; i < nodes.length; i++) {
-      const prev = nodes[i - 1];
-      const cur = nodes[i];
-      if (!existingPairs.has(`${prev.id}::${cur.id}`)) {
-        const dist = Math.max(
-          5,
-          Math.round(Math.hypot(cur.x - prev.x, cur.y - prev.y) * 10) / 10,
-        );
-        const newEdge: GEdge = {
-          id: `edge-pub-${Date.now().toString(36)}-${i}`,
-          source: prev.id,
-          target: cur.id,
-          distance: dist,
-          kind: prev.level === cur.level ? 'walk' : 'stairs',
-          accessible: prev.level === cur.level,
-          stretcher_ok: prev.level === cur.level,
-          closed: false,
-        };
-        graph.edges.push(newEdge);
-        vault.addedEdges.push({ slug, edge: newEdge });
-        existingPairs.add(`${prev.id}::${cur.id}`);
-        existingPairs.add(`${cur.id}::${prev.id}`);
-      }
-    }
-  }
-
-  onProgress?.(68, 'Indexing all room photos & 360° views...');
-  await new Promise((r) => window.setTimeout(r, 180));
+  onProgress?.(55, 'Indexing room photos & 360° views...');
+  await new Promise((r) => window.setTimeout(r, 120));
 
   const publishedAt = new Date().toISOString();
   const rooms = graph.nodes.length;
   const photos = (bundle.photo_index?.[slug] ?? []).length;
   const paths = graph.edges.length;
-  const coverPhoto = graph.nodes.find((n) => n.photo_url)?.photo_url ?? null;
+  const coverPhoto =
+    vault.venueCovers?.[slug] || graph.nodes.find((n) => n.photo_url)?.photo_url || null;
 
-  // Persist updated cover photo & room counts back into vault.createdVenues
   const createdRec = (vault.createdVenues ?? []).find((cv) => cv.summary.slug === slug);
   if (createdRec) {
     createdRec.summary.stats.places = rooms;
@@ -1044,12 +1622,113 @@ export async function vaultPublishVenue(
     paths,
   };
 
-  onProgress?.(90, 'Publishing venue to Live Campus Directory...');
+  onProgress?.(92, 'Updating Campus Directory...');
   await saveVaultState(vault);
   await syncVaultIntoBundle();
-  onProgress?.(100, 'Venue is uploaded & LIVE!');
+  onProgress?.(100, 'Venue is published & ready!');
 
   return { ok: true, slug, rooms, photos, paths, publishedAt };
+}
+
+/**
+ * Exports a single self-contained `.navigator.json` venue package (including photos, blueprints,
+ * floors, walking paths, and staff) so an admin can share or import a venue onto any other phone or PC!
+ */
+export async function exportPortableVenuePackage(slug: string): Promise<void> {
+  const bundle = await syncVaultIntoBundle();
+  const vault = await getVaultState();
+  const summary = bundle?.venues.find((v) => v.slug === slug);
+  const detail = bundle?.details?.[slug];
+  const graph = bundle?.graphs?.[slug];
+  if (!summary || !detail || !graph) return;
+
+  const blueprints: Record<string, string> = {};
+  for (const b of detail.buildings) {
+    for (const f of b.floors) {
+      if (f.blueprint_url) blueprints[f.id] = f.blueprint_url;
+    }
+  }
+
+  const pkg: PortableVenuePackage = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    slug,
+    summary,
+    detail,
+    graph,
+    people: bundle?.people?.[slug] ?? [],
+    photos: vault.addedPhotos.filter((p) => p.slug === slug),
+    blueprints,
+  };
+
+  const blob = new Blob([JSON.stringify(pkg, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${slug}-venue-package.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Imports a `.json` Portable Venue Package exported from another device!
+ */
+export async function importPortableVenuePackage(file: File): Promise<VenueSummary> {
+  const text = await file.text();
+  const parsed = JSON.parse(text) as Partial<PortableVenuePackage>;
+  if (!parsed || !parsed.slug || !parsed.summary || !parsed.detail || !parsed.graph) {
+    throw new Error('Invalid venue package file. Please choose a valid *-venue-package.json file.');
+  }
+
+  const vault = await getVaultState();
+  const ownerEmail = getActiveOwnerEmail() || 'creator@studio.local';
+  const slug = parsed.slug;
+
+  if (vault.deletedVenueSlugs) {
+    vault.deletedVenueSlugs = vault.deletedVenueSlugs.filter((s) => s !== slug);
+  }
+  if (!vault.createdVenues) vault.createdVenues = [];
+  vault.createdVenues = vault.createdVenues.filter((cv) => cv.summary.slug !== slug);
+  vault.createdVenues.push({
+    owner_email: ownerEmail,
+    summary: parsed.summary,
+    detail: parsed.detail,
+    graph: parsed.graph,
+  });
+
+  if (Array.isArray(parsed.photos)) {
+    const incomingIds = new Set(parsed.photos.map((p) => p.id));
+    vault.addedPhotos = [
+      ...parsed.photos,
+      ...vault.addedPhotos.filter((p) => !incomingIds.has(p.id)),
+    ];
+  }
+  if (parsed.blueprints) {
+    vault.blueprints = { ...(vault.blueprints ?? {}), ...parsed.blueprints };
+  }
+  if (Array.isArray(parsed.people)) {
+    if (!vault.addedPeople) vault.addedPeople = [];
+    const existingP = new Set(vault.addedPeople.map((x) => x.person.id));
+    for (const p of parsed.people) {
+      if (!existingP.has(p.id)) {
+        vault.addedPeople.push({ slug, person: p });
+      }
+    }
+  }
+  if (!vault.publishedVenues) vault.publishedVenues = {};
+  vault.publishedVenues[slug] = {
+    published: true,
+    publishedAt: new Date().toISOString(),
+    rooms: parsed.graph.nodes.length,
+    photos: parsed.photos?.length ?? 0,
+    paths: parsed.graph.edges.length,
+  };
+
+  await saveVaultState(vault);
+  await syncVaultIntoBundle();
+  return parsed.summary;
 }
 
 export async function downloadUpdatedStaticBundle(): Promise<void> {

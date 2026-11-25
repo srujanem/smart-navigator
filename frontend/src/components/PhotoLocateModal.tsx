@@ -509,7 +509,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                   </button>
                 </div>
 
-                {/* Drag-and-drop / Desktop Zone */}
+                {/* Drag-and-drop / Desktop Zone (Hidden on narrow mobile phones to save vertical thumb space) */}
                 <div
                   onDragOver={(e) => {
                     e.preventDefault();
@@ -525,7 +525,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                     }
                   }}
                   onClick={() => galleryInputRef.current?.click()}
-                  className={`cursor-pointer rounded-2xl border-2 border-dashed p-6 text-center transition-all ${
+                  className={`hidden sm:block cursor-pointer rounded-2xl border-2 border-dashed p-5 text-center transition-all ${
                     dragActive
                       ? 'border-cyan-500 bg-cyan-50/70 scale-[1.01]'
                       : 'border-slate-300 bg-slate-50/70 hover:border-cyan-500 hover:bg-cyan-50/30'
@@ -900,8 +900,8 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="overflow-hidden rounded-2xl bg-slate-950 ring-1 ring-slate-200 shadow-md">
-                      <div className="relative h-52 w-full bg-slate-950">
+                    <div className="overflow-hidden rounded-2xl bg-slate-900 ring-1 ring-slate-200 shadow-md">
+                      <div className="relative h-52 w-full bg-slate-900 overflow-hidden">
                         <img
                           src={
                             result.query_photo_url
@@ -909,7 +909,7 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                               : previewUrl || ''
                           }
                           alt="Your uploaded photo"
-                          className="h-full w-full object-contain"
+                          className="h-full w-full object-cover object-center"
                         />
                         {/* Smart AI Viewfinder Corner Brackets */}
                         <span className="pointer-events-none absolute left-2 top-2 h-3.5 w-3.5 border-l-2 border-t-2 border-cyan-300/75" />
@@ -960,13 +960,13 @@ export const PhotoLocateModal: React.FC<PhotoLocateModalProps> = ({
                       </div>
                     </div>
 
-                    <div className="overflow-hidden rounded-2xl bg-slate-950 ring-2 ring-emerald-500/65 shadow-[0_10px_28px_-8px_rgba(16,185,129,0.28)]">
-                      <div className="relative h-52 w-full flex items-center justify-center bg-slate-950">
+                    <div className="overflow-hidden rounded-2xl bg-slate-900 ring-2 ring-emerald-500/65 shadow-[0_10px_28px_-8px_rgba(16,185,129,0.28)]">
+                      <div className="relative h-52 w-full flex items-center justify-center bg-slate-900 overflow-hidden">
                         {result.best.matched_photo_url ? (
                           <img
                             src={mediaUrl(result.best.matched_photo_url)}
                             alt={result.best.name}
-                            className="h-full w-full object-contain"
+                            className="h-full w-full object-cover object-center"
                           />
                         ) : (
                           <div className="text-center text-slate-400 p-4">

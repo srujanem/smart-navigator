@@ -56,24 +56,28 @@ export const AdminLoginPage: React.FC = () => {
 
   const [tab, setTab] = useState<'login' | 'register'>(initialTab);
 
-  // Login state (prefilled for zero-struggle phone admin login)
-  const [email, setEmail] = useState('admin@navigator.local');
-  const [password, setPassword] = useState('Navigator2026!');
+  // Clean login state (no prefilled credentials leaking other venues)
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
-  const handleQuickPhoneAdmin = async (goDirectlyToDataset = true) => {
+  const handleQuickCreatorStart = async () => {
     setLoading(true);
     setError(null);
     try {
-      await adminLogin(email.trim() || 'admin@navigator.local', password || 'Navigator2026!');
-      const targetVenue = venueParam || 'mite';
-      navigate(
-        goDirectlyToDataset
-          ? `/admin/dataset?venue=${encodeURIComponent(targetVenue)}`
-          : `/admin?venue=${encodeURIComponent(targetVenue)}`,
-        { replace: true },
-      );
+      let devEmail = '';
+      try {
+        devEmail = localStorage.getItem('navigator_device_creator_email') || '';
+        if (!devEmail) {
+          devEmail = `creator-${Math.random().toString(36).slice(2, 8)}@studio.local`;
+          localStorage.setItem('navigator_device_creator_email', devEmail);
+        }
+      } catch {
+        devEmail = 'creator@studio.local';
+      }
+      await adminLogin(devEmail, 'StudioVault1!');
+      navigate('/admin/dataset', { replace: true });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to open Admin Studio.');
+      setError(err instanceof Error ? err.message : 'Unable to open Creator Studio.');
     } finally {
       setLoading(false);
     }
@@ -228,16 +232,16 @@ export const AdminLoginPage: React.FC = () => {
               <div className="rounded-2xl bg-emerald-500/10 p-3.5 ring-1 ring-emerald-500/30 space-y-2">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[11px] font-extrabold uppercase tracking-wider text-emerald-300">
-                    📱 Zero-Typing Phone Admin Access
+                    ⚡ Instant Creator Workspace
                   </span>
                   <span className="rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-200">
-                    Works Offline & Online
+                    Private Device Vault
                   </span>
                 </div>
                 <button
                   type="button"
                   disabled={loading}
-                  onClick={() => void handleQuickPhoneAdmin(true)}
+                  onClick={() => void handleQuickCreatorStart()}
                   className="w-full flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-600 px-4 py-3 text-xs sm:text-sm font-extrabold text-white shadow-lg shadow-emerald-500/25 hover:from-emerald-400 hover:to-cyan-500 active:scale-[0.99] transition"
                 >
                   {loading ? (
@@ -245,7 +249,7 @@ export const AdminLoginPage: React.FC = () => {
                   ) : (
                     <CheckCircle2 className="h-4 w-4" />
                   )}
-                  1-Tap Open Room Photo Uploader ({venueParam || 'mite'})
+                  1-Tap Start My Own Venue Studio
                 </button>
               </div>
 

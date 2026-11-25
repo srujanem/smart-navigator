@@ -58,6 +58,11 @@ const ScrollToTop: React.FC = () => {
   return null;
 };
 
+const AdminMapRedirect: React.FC = () => {
+  const { search } = useLocation();
+  return <Navigate to={`/admin/map-editor${search || ''}`} replace />;
+};
+
 const PageRouteFallback: React.FC = () => (
   <div className="min-h-[100dvh] w-full bg-[#070B18] flex flex-col items-center justify-center gap-3 text-white px-4">
     <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-400 to-indigo-600 shadow-lg shadow-cyan-500/20">
@@ -85,6 +90,7 @@ const App: React.FC = () => {
             <Route path="/admin/login" element={<AdminLoginPage />} />
             <Route path="/admin" element={<AdminLayout />}>
               <Route index element={<AdminOverviewPage />} />
+              <Route path="map" element={<AdminMapRedirect />} />
               <Route path="map-editor" element={<AdminMapBuilderPage />} />
               <Route path="dataset" element={<AdminDatasetPage />} />
               <Route path="people" element={<AdminPeoplePage />} />

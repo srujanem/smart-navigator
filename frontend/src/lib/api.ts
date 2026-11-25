@@ -49,23 +49,40 @@ import {
 } from './offlineRouter';
 import {
   downloadUpdatedStaticBundle,
+  exportPortableVenuePackage,
+  importPortableVenuePackage,
   syncVaultIntoBundle,
+  vaultAutoConnectGraph,
   vaultAutoMapPhotos,
+  vaultBulkCreateRoomsFromPhotos,
+  vaultCreateBuilding,
+  vaultCreateClosure,
   vaultCreateEdge,
+  vaultCreateFloor,
   vaultCreateNode,
+  vaultCreatePerson,
   vaultCreateVenue,
+  vaultDeleteClosure,
   vaultDeleteEdge,
   vaultDeleteNode,
   vaultDeletePhoto,
+  vaultDeleteVenue,
   vaultGetAdminDataset,
   vaultGetAdminOverview,
   vaultGetAdminVenues,
+  vaultGetClosures,
   vaultGetIndexReport,
   vaultGetPublishStatus,
+  vaultPromotePhotoCover,
   vaultPublishVenue,
+  vaultRotatePhoto90,
   vaultUpdateNode,
+  vaultUpdatePerson,
   vaultUpdatePhoto,
+  vaultUpdateVenue,
+  vaultUploadBlueprint,
   vaultUploadPhotosToNode,
+  vaultUploadVenueCover,
   type VenuePublishStatus,
 } from './adminVault';
 
@@ -873,61 +890,19 @@ export async function updateAdminVenue(
     emergency_node_id?: string | null;
   },
 ): Promise<VenueSummary> {
-  const bundle = await syncVaultIntoBundle();
-  const v = bundle?.venues.find((x) => x.slug === slug);
-  const d = bundle?.details?.[slug];
-  if (v) {
-    if (payload.name) v.name = payload.name;
-    if (payload.city) v.city = payload.city;
-    if (payload.tagline) v.tagline = payload.tagline;
-    if (payload.accent) v.accent = payload.accent;
-  }
-  if (d) {
-    if (payload.name) d.name = payload.name;
-    if (payload.city) d.city = payload.city;
-    if (payload.tagline) d.tagline = payload.tagline;
-    if (payload.description) d.description = payload.description;
-    if (payload.accent) d.accent = payload.accent;
-    if (payload.entrance_node_id !== undefined) d.entrance_node_id = payload.entrance_node_id;
-    if (payload.emergency_node_id !== undefined) d.emergency_node_id = payload.emergency_node_id;
-  }
-  return (
-    v ?? {
-      id: slug,
-      slug,
-      name: payload.name || slug,
-      type: payload.type || 'campus',
-      city: payload.city || '',
-      tagline: payload.tagline || '',
-      accent: payload.accent || '#0ea5e9',
-      cover_url: null,
-      stats: { buildings: 1, floors: 1, places: 1, people: 0, photos: 0 },
-    }
-  );
+  return vaultUpdateVenue(slug, payload);
 }
 
 export async function uploadAdminVenueCover(
   slug: string,
   file: File,
 ): Promise<VenueSummary> {
-  const opt = await compressImageForUpload(file, 1280, 0.85);
-  const url = URL.createObjectURL(opt);
-  const bundle = await syncVaultIntoBundle();
-  const v = bundle?.venues.find((x) => x.slug === slug);
-  if (v) v.cover_url = url;
-  if (bundle?.details?.[slug]) bundle.details[slug].cover_url = url;
-  return v!;
+  return vaultUploadVenueCover(slug, file);
 }
 
 export async function deleteAdminVenue(slug: string): Promise<{ ok: boolean }> {
-  const bundle = await syncVaultIntoBundle();
-  if (bundle) {
-    bundle.venues = bundle.venues.filter((v) => v.slug !== slug);
-    delete bundle.details[slug];
-    delete bundle.graphs[slug];
-  }
   clearDeviceVenueCache(slug);
-  return { ok: true };
+  return vaultDeleteVenue(slug);
 }
 
 export async function cleanAdminVenueData(
@@ -955,24 +930,7 @@ export async function createAdminBuilding(
     initial_floor_name?: string;
   },
 ): Promise<Building> {
-  const bundle = await syncVaultIntoBundle();
-  const b: Building = {
-    id: `${slug}:b-${Date.now().toString(36)}`,
-    name: payload.name,
-    x: payload.x ?? 10,
-    y: payload.y ?? 10,
-    w: payload.w ?? 60,
-    d: payload.d ?? 40,
-    floors: [
-      {
-        id: `${slug}:f-${Date.now().toString(36)}`,
-        level: payload.initial_level ?? 0,
-        name: payload.initial_floor_name ?? 'Ground Floor',
-      },
-    ],
-  };
-  bundle?.details?.[slug]?.buildings.push(b);
-  return b;
+  return vaultCreateBuilding(slug, payload);
 }
 
 export async function updateAdminBuilding(
@@ -986,23 +944,14 @@ export async function createAdminFloor(
   slug: string,
   payload: { building_id: string; level: number; name?: string },
 ): Promise<Floor> {
-  const bundle = await syncVaultIntoBundle();
-  const fl: Floor = {
-    id: `${slug}:f-${payload.level}-${Date.now().toString(36).slice(-3)}`,
-    level: payload.level,
-    name: payload.name || `Floor ${payload.level}`,
-  };
-  const bldg = bundle?.details?.[slug]?.buildings.find((b) => b.id === payload.building_id);
-  bldg?.floors.push(fl);
-  return fl;
+  return vaultCreateFloor(slug, payload);
 }
 
 export async function uploadFloorBlueprint(
-  _floorId: string,
+  floorId: string,
   file: File,
 ): Promise<{ ok: boolean; blueprint_url: string }> {
-  const opt = await compressImageForUpload(file, 1600, 0.86);
-  return { ok: true, blueprint_url: URL.createObjectURL(opt) };
+  return vaultUploadBlueprint(floorId, file);
 }
 
 export function createAdminNode(
@@ -1032,6 +981,36 @@ export function createAdminEdge(
 
 export function deleteAdminEdge(edgeId: string): Promise<{ ok: boolean }> {
   return vaultDeleteEdge(edgeId);
+}
+
+export function rotateAdminPhoto90(photoId: string): Promise<{ ok: boolean; url: string }> {
+  return vaultRotatePhoto90(photoId);
+}
+
+export function promoteAdminPhotoCover(
+  slug: string,
+  photoId: string,
+  alsoSetVenueCover = false,
+): Promise<{ ok: boolean }> {
+  return vaultPromotePhotoCover(slug, photoId, alsoSetVenueCover);
+}
+
+export function bulkCreateRoomsFromPhotos(
+  slug: string,
+  files: File[],
+  buildingId: string,
+  floorId: string,
+  onProgress?: (pct: number, stage: string) => void,
+): Promise<{ roomsCreated: number; photosSaved: number; errors: string[] }> {
+  return vaultBulkCreateRoomsFromPhotos(slug, files, buildingId, floorId, onProgress);
+}
+
+export function exportVenuePackage(slug: string): Promise<void> {
+  return exportPortableVenuePackage(slug);
+}
+
+export function importVenuePackage(file: File): Promise<VenueSummary> {
+  return importPortableVenuePackage(file);
 }
 
 // ---------------------------------------------------------------------------
@@ -1106,49 +1085,18 @@ export async function createAdminPerson(
   slug: string,
   payload: CreatePersonPayload,
 ): Promise<Person> {
-  const bundle = await syncVaultIntoBundle();
-  const node = bundle?.graphs?.[slug]?.nodes.find((n) => n.id === payload.node_id);
-  const p: Person = {
-    id: `p-${Date.now().toString(36)}`,
-    name: payload.name,
-    role: payload.role,
-    title: payload.title,
-    department: payload.department,
-    node_id: payload.node_id,
-    node_name: node?.name ?? payload.node_id,
-    building_name: node?.building_name ?? '',
-    level: node?.level ?? 0,
-    schedule: payload.schedule,
-    status: 'available',
-    status_note: '',
-    target_node_id: payload.node_id,
-    avatar_color: '#0ea5e9',
-  };
-  bundle?.people?.[slug]?.push(p);
-  return p;
+  return vaultCreatePerson(slug, payload);
 }
 
 export async function updateAdminPerson(
   personId: string,
   payload: UpdatePersonPayload,
 ): Promise<Person> {
-  const bundle = await syncVaultIntoBundle();
-  if (bundle) {
-    for (const list of Object.values(bundle.people)) {
-      const found = list.find((p) => p.id === personId);
-      if (found) {
-        if (payload.status) found.status = payload.status;
-        if (payload.status_note !== undefined) found.status_note = payload.status_note;
-        if (payload.target_node_id) found.target_node_id = payload.target_node_id;
-        return found;
-      }
-    }
-  }
-  throw new Error('Person not found');
+  return vaultUpdatePerson(personId, payload);
 }
 
-export async function getAdminClosures(_slug: string): Promise<Closure[]> {
-  return [];
+export async function getAdminClosures(slug: string): Promise<Closure[]> {
+  return vaultGetClosures(slug);
 }
 
 export async function createAdminClosure(
@@ -1156,22 +1104,11 @@ export async function createAdminClosure(
   edgeId: string,
   reason: string,
 ): Promise<Closure> {
-  const bundle = await syncVaultIntoBundle();
-  const edge = bundle?.graphs?.[slug]?.edges.find((e) => e.id === edgeId);
-  if (edge) edge.closed = true;
-  return {
-    id: `cl-${Date.now().toString(36)}`,
-    edge_id: edgeId,
-    source: edge?.source ?? '',
-    target: edge?.target ?? '',
-    source_name: edge?.source ?? '',
-    target_name: edge?.target ?? '',
-    reason,
-  };
+  return vaultCreateClosure(slug, edgeId, reason);
 }
 
-export async function deleteAdminClosure(_closureId: string): Promise<{ ok: boolean }> {
-  return { ok: true };
+export async function deleteAdminClosure(closureId: string): Promise<{ ok: boolean }> {
+  return vaultDeleteClosure(closureId);
 }
 
 export async function autoConnectAdminGraph(slug: string): Promise<{
@@ -1180,12 +1117,5 @@ export async function autoConnectAdminGraph(slug: string): Promise<{
   total_nodes: number;
   total_edges: number;
 }> {
-  const bundle = await syncVaultIntoBundle();
-  const g = bundle?.graphs?.[slug];
-  return {
-    ok: true,
-    edges_created: 0,
-    total_nodes: g?.nodes.length ?? 0,
-    total_edges: g?.edges.length ?? 0,
-  };
+  return vaultAutoConnectGraph(slug);
 }
