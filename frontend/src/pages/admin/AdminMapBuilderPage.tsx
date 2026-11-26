@@ -12,7 +12,9 @@ import {
   Loader2,
   MapPin,
   MousePointer,
+  Pencil,
   Plus,
+  RotateCcw,
   Save,
   Sparkles,
   Trash2,
@@ -22,6 +24,7 @@ import {
 import {
   autoConnectAdminGraph,
   autoMapAdminDataset,
+  cleanAdminVenueData,
   createAdminBuilding,
   createAdminEdge,
   createAdminFloor,
@@ -32,6 +35,7 @@ import {
   getVenue,
   getVenueGraph,
   mediaUrl,
+  updateAdminBuilding,
   updateAdminNode,
   updateAdminVenue,
   uploadAdminPhotos,
@@ -130,13 +134,19 @@ export const AdminMapBuilderPage: React.FC = () => {
   const [inspectorHeading, setInspectorHeading] = useState('');
   const [uploadingPhotos, setUploadingPhotos] = useState(false);
 
-  // Add Building / Add Floor Modals
+  // Add / Edit Building & Add Floor Modals
   const [showAddBuilding, setShowAddBuilding] = useState(false);
+  const [showEditBuilding, setShowEditBuilding] = useState(false);
   const [bldgName, setBldgName] = useState('');
   const [bldgW, setBldgW] = useState('60');
   const [bldgD, setBldgD] = useState('42');
   const [bldgX, setBldgX] = useState('0');
   const [bldgY, setBldgY] = useState('0');
+  const [editBldgName, setEditBldgName] = useState('');
+  const [editBldgW, setEditBldgW] = useState('60');
+  const [editBldgD, setEditBldgD] = useState('42');
+  const [editBldgX, setEditBldgX] = useState('0');
+  const [editBldgY, setEditBldgY] = useState('0');
 
   const [showAddFloor, setShowAddFloor] = useState(false);
   const [floorLevel, setFloorLevel] = useState('1');
@@ -150,37 +160,40 @@ export const AdminMapBuilderPage: React.FC = () => {
     setTimeout(() => setToast(null), 3500);
   };
 
-  const loadMapBundle = useCallback(async () => {
-    if (!selectedSlug) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const [v, g] = await Promise.all([
-        getVenue(selectedSlug),
-        getVenueGraph(selectedSlug),
-      ]);
-      setVenue(v);
-      setGraph(g);
-      if (v.buildings.length > 0) {
-        setSelectedBuildingId((prev) =>
-          prev && v.buildings.some((b) => b.id === prev) ? prev : v.buildings[0].id,
-        );
-        const allLvls = v.buildings.flatMap((b) => b.floors.map((f) => f.level));
-        if (allLvls.length > 0 && !allLvls.includes(selectedLevel)) {
-          setSelectedLevel(allLvls[0]);
-        }
+  const loadMapBundle = useCallback(
+    async (silent = false) => {
+      if (!selectedSlug) {
+        setLoading(false);
+        return;
       }
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Unable to load venue map builder.',
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedSlug, selectedLevel]);
+      if (!silent) setLoading(true);
+      setError(null);
+      try {
+        const [v, g] = await Promise.all([
+          getVenue(selectedSlug),
+          getVenueGraph(selectedSlug),
+        ]);
+        setVenue(v);
+        setGraph(g);
+        if (v.buildings.length > 0) {
+          setSelectedBuildingId((prev) =>
+            prev && v.buildings.some((b) => b.id === prev) ? prev : v.buildings[0].id,
+          );
+          const allLvls = v.buildings.flatMap((b) => b.floors.map((f) => f.level));
+          if (allLvls.length > 0) {
+            setSelectedLevel((prev) => (allLvls.includes(prev) ? prev : allLvls[0]));
+          }
+        }
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : 'Unable to load venue map builder.',
+        );
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [selectedSlug],
+  );
 
   useEffect(() => {
     void loadMapBundle();
@@ -194,14 +207,24 @@ export const AdminMapBuilderPage: React.FC = () => {
     [venue, selectedBuildingId],
   );
 
+  useEffect(() => {
+    if (!activeBuilding) return;
+    setEditBldgName(activeBuilding.name);
+    setEditBldgW(String(activeBuilding.w));
+    setEditBldgD(String(activeBuilding.d));
+    setEditBldgX(String(activeBuilding.x));
+    setEditBldgY(String(activeBuilding.y));
+  }, [activeBuilding]);
+
   const activeFloor = useMemo(() => {
     if (!activeBuilding) return null;
     return (
       activeBuilding.floors.find((f) => f.level === selectedLevel) ??
+      venue?.buildings.flatMap((b) => b.floors).find((f) => f.level === selectedLevel) ??
       activeBuilding.floors[0] ??
       null
     );
-  }, [activeBuilding, selectedLevel]);
+  }, [activeBuilding, venue, selectedLevel]);
 
   const selectedNode = useMemo(
     () => (selectedNodeId ? graph?.nodes.find((n) => n.id === selectedNodeId) ?? null : null),
@@ -284,14 +307,29 @@ export const AdminMapBuilderPage: React.FC = () => {
 
   const handleCreateNodeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedSlug || !activeBuilding || !activeFloor || !pendingCoords || !newNodeName.trim()) {
+    if (!selectedSlug || !activeBuilding || !pendingCoords || !newNodeName.trim()) {
       return;
     }
     setCreatingNode(true);
     try {
+      // Guarantee target floor matches the currently viewed selectedLevel!
+      let targetBuilding =
+        activeBuilding.floors.some((f) => f.level === selectedLevel)
+          ? activeBuilding
+          : venue?.buildings.find((b) => b.floors.some((f) => f.level === selectedLevel)) ??
+            activeBuilding;
+      let targetFloor =
+        targetBuilding.floors.find((f) => f.level === selectedLevel) ?? null;
+      if (!targetFloor) {
+        targetFloor = await createAdminFloor(selectedSlug, {
+          building_id: targetBuilding.id,
+          level: selectedLevel,
+        });
+      }
+
       const created = await createAdminNode(selectedSlug, {
-        building_id: activeBuilding.id,
-        floor_id: activeFloor.id,
+        building_id: targetBuilding.id,
+        floor_id: targetFloor.id,
         name: newNodeName.trim(),
         kind: newNodeKind,
         category: newNodeCategory.trim() || null,
@@ -470,12 +508,61 @@ export const AdminMapBuilderPage: React.FC = () => {
       });
       setBldgName('');
       setShowAddBuilding(false);
-      await loadMapBundle();
+      await loadMapBundle(true);
       setSelectedBuildingId(created.id);
       await refreshVenues();
       showToast(`Added building "${created.name}"!`);
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to create building.');
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handleUpdateBuilding = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedSlug || !activeBuilding || !editBldgName.trim()) return;
+    setBusyAction(true);
+    try {
+      await updateAdminBuilding(activeBuilding.id, {
+        name: editBldgName.trim(),
+        w: Number(editBldgW) || activeBuilding.w,
+        d: Number(editBldgD) || activeBuilding.d,
+        x: Number(editBldgX) || 0,
+        y: Number(editBldgY) || 0,
+      });
+      setShowEditBuilding(false);
+      await loadMapBundle(true);
+      await refreshVenues();
+      showToast(`Updated building "${editBldgName.trim()}"!`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to update building.');
+    } finally {
+      setBusyAction(false);
+    }
+  };
+
+  const handleCleanVenueMapData = async () => {
+    if (!venue) return;
+    if (
+      !window.confirm(
+        `Reset custom added pins, walking edges, and uploaded photos for "${venue.name}" back to a clean starting state?`,
+      )
+    ) {
+      return;
+    }
+    setBusyAction(true);
+    try {
+      const res = await cleanAdminVenueData(venue.slug, true);
+      setSelectedNodeId(null);
+      setSelectedEdgeId(null);
+      await loadMapBundle(true);
+      await refreshVenues();
+      showToast(
+        `Cleaned workspace: ${res.nodes_deleted} pins, ${res.edges_deleted} paths, and ${res.photos_deleted} photos cleared.`,
+      );
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Could not clean venue data.');
     } finally {
       setBusyAction(false);
     }
@@ -494,8 +581,8 @@ export const AdminMapBuilderPage: React.FC = () => {
       });
       setFloorName('');
       setShowAddFloor(false);
-      await loadMapBundle();
       setSelectedLevel(lvl);
+      await loadMapBundle(true);
       await refreshVenues();
       showToast(`Added ${formatLevel(lvl)} to ${activeBuilding.name}!`);
     } catch (err) {
@@ -692,6 +779,17 @@ export const AdminMapBuilderPage: React.FC = () => {
           <button
             type="button"
             disabled={busyAction}
+            onClick={() => void handleCleanVenueMapData()}
+            className="inline-flex items-center gap-1 rounded-xl bg-amber-50 px-2.5 py-2 text-xs font-bold text-amber-800 ring-1 ring-amber-200 hover:bg-amber-500 hover:text-white transition"
+            title="Reset added pins, paths & uploaded photos"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            <span>Reset Data</span>
+          </button>
+
+          <button
+            type="button"
+            disabled={busyAction}
             onClick={() => void handleDeleteCurrentVenue()}
             className="inline-flex items-center gap-1 rounded-xl bg-rose-50 px-2.5 py-2 text-xs font-bold text-rose-700 ring-1 ring-rose-200 hover:bg-rose-600 hover:text-white transition"
             title="Delete venue"
@@ -732,7 +830,22 @@ export const AdminMapBuilderPage: React.FC = () => {
             </select>
             <button
               type="button"
-              onClick={() => setShowAddBuilding((v) => !v)}
+              onClick={() => {
+                setShowEditBuilding((v) => !v);
+                setShowAddBuilding(false);
+              }}
+              className="inline-flex items-center gap-1 rounded-xl bg-slate-100 px-2.5 py-1.5 text-xs font-bold text-slate-700 ring-1 ring-slate-200 hover:bg-slate-200"
+              title="Edit building name & dimensions"
+            >
+              <Pencil className="h-3 w-3" />
+              <span>Edit</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowAddBuilding((v) => !v);
+                setShowEditBuilding(false);
+              }}
               className="rounded-xl bg-indigo-50 px-2.5 py-1.5 text-xs font-bold text-indigo-700 ring-1 ring-indigo-200 hover:bg-indigo-100"
             >
               + Building
@@ -831,7 +944,74 @@ export const AdminMapBuilderPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Optional Add Building / Add Floor Inline Forms */}
+      {/* Optional Edit Building / Add Building / Add Floor Inline Forms */}
+      {showEditBuilding && activeBuilding && (
+        <form
+          onSubmit={(e) => void handleUpdateBuilding(e)}
+          className="card p-4 grid grid-cols-2 sm:grid-cols-6 gap-3 items-end bg-amber-50/40"
+        >
+          <div className="col-span-2">
+            <label className="label">Building Name *</label>
+            <input
+              type="text"
+              required
+              value={editBldgName}
+              onChange={(e) => setEditBldgName(e.target.value)}
+              className="input py-2 text-xs"
+            />
+          </div>
+          <div>
+            <label className="label">Width (m)</label>
+            <input
+              type="number"
+              value={editBldgW}
+              onChange={(e) => setEditBldgW(e.target.value)}
+              className="input py-2 text-xs"
+            />
+          </div>
+          <div>
+            <label className="label">Depth (m)</label>
+            <input
+              type="number"
+              value={editBldgD}
+              onChange={(e) => setEditBldgD(e.target.value)}
+              className="input py-2 text-xs"
+            />
+          </div>
+          <div>
+            <label className="label">Offset X / Y (m)</label>
+            <div className="flex gap-1">
+              <input
+                type="number"
+                value={editBldgX}
+                onChange={(e) => setEditBldgX(e.target.value)}
+                placeholder="X"
+                className="input py-2 text-xs"
+              />
+              <input
+                type="number"
+                value={editBldgY}
+                onChange={(e) => setEditBldgY(e.target.value)}
+                placeholder="Y"
+                className="input py-2 text-xs"
+              />
+            </div>
+          </div>
+          <div className="flex gap-1.5">
+            <button type="submit" disabled={busyAction} className="btn-indigo py-2 px-3 text-xs flex-1">
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowEditBuilding(false)}
+              className="btn-ghost py-2 px-2.5 text-xs"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </form>
+      )}
+
       {showAddBuilding && (
         <form
           onSubmit={(e) => void handleCreateBuilding(e)}
@@ -1251,42 +1431,75 @@ export const AdminMapBuilderPage: React.FC = () => {
                 <h2 className="font-display text-base font-extrabold text-slate-950 mt-0.5">
                   {connectFromNode
                     ? `Connecting from: ${connectFromNode.name}`
-                    : 'Click first pin on the floorplan'}
+                    : 'Click first pin on the floorplan (or pick below)'}
                 </h2>
                 <p className="text-xs text-slate-500 mt-1">
                   Click Pin A then Pin B on the same floor to draw a walkable path — or use the Cross-Floor connector below to link lifts and stairs across floors!
                 </p>
               </div>
 
-              {connectFromNode && (
-                <div className="rounded-2xl bg-indigo-50/70 p-3.5 ring-1 ring-indigo-200 space-y-2.5">
-                  <div className="text-xs font-bold text-indigo-950">
-                    Connect "{connectFromNode.name}" to Another Floor (Lift / Stairs):
-                  </div>
+              <div className="rounded-2xl bg-indigo-50/70 p-3.5 ring-1 ring-indigo-200 space-y-2.5">
+                <div className="text-xs font-bold text-indigo-950">
+                  Cross-Floor Shaft Connector (Lift / Stairs):
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-indigo-800 mb-1">
+                    Source Pin (Floor A)
+                  </label>
+                  <select
+                    value={connectFromNodeId || ''}
+                    onChange={(e) => {
+                      setConnectFromNodeId(e.target.value || null);
+                      setCrossFloorTargetId('');
+                    }}
+                    className="input py-2 text-xs bg-white"
+                  >
+                    <option value="">Select starting lift / stair / room...</option>
+                    {graph.nodes.map((n) => (
+                      <option key={n.id} value={n.id}>
+                        {n.name} ({n.building_name} · {formatLevel(n.level)})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold uppercase tracking-wider text-indigo-800 mb-1">
+                    Target Pin on Another Floor (Floor B)
+                  </label>
                   <select
                     value={crossFloorTargetId}
                     onChange={(e) => setCrossFloorTargetId(e.target.value)}
-                    className="input py-2 text-xs bg-white"
+                    disabled={!connectFromNode}
+                    className="input py-2 text-xs bg-white disabled:opacity-60"
                   >
-                    <option value="">Select pin on another floor...</option>
-                    {graph.nodes
-                      .filter((n) => n.id !== connectFromNode.id && n.level !== connectFromNode.level)
-                      .map((n) => (
-                        <option key={n.id} value={n.id}>
-                          {n.name} ({n.building_name} · {formatLevel(n.level)})
-                        </option>
-                      ))}
+                    <option value="">
+                      {connectFromNode
+                        ? 'Select pin on another floor...'
+                        : 'Pick a Source Pin first...'}
+                    </option>
+                    {connectFromNode &&
+                      graph.nodes
+                        .filter(
+                          (n) => n.id !== connectFromNode.id && n.level !== connectFromNode.level,
+                        )
+                        .map((n) => (
+                          <option key={n.id} value={n.id}>
+                            {n.name} ({n.building_name} · {formatLevel(n.level)})
+                          </option>
+                        ))}
                   </select>
-                  <button
-                    type="button"
-                    disabled={!crossFloorTargetId || busyAction}
-                    onClick={() => void handleCrossFloorConnect()}
-                    className="btn-indigo w-full py-2 text-xs font-bold"
-                  >
-                    Link Cross-Floor Shaft
-                  </button>
                 </div>
-              )}
+
+                <button
+                  type="button"
+                  disabled={!connectFromNodeId || !crossFloorTargetId || busyAction}
+                  onClick={() => void handleCrossFloorConnect()}
+                  className="btn-indigo w-full py-2 text-xs font-bold"
+                >
+                  Link Cross-Floor Shaft
+                </button>
+              </div>
             </div>
           )}
 
@@ -1551,7 +1764,7 @@ export const AdminMapBuilderPage: React.FC = () => {
                 </li>
                 <li>
                   <strong>Connect Walkable & Lift Paths:</strong> Switch to{' '}
-                  <em>"3. Connect Walk / Lift Paths"</em> to link corridors and multi-floor shafts, then click <strong>Rebuild AI Index</strong>!
+                  <em>"3. Connect Walk / Lift Paths"</em> to link corridors and multi-floor shafts — live AI visual signatures &amp; A* routes update automatically!
                 </li>
               </ol>
             </div>

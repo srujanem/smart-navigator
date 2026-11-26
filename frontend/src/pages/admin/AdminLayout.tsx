@@ -8,6 +8,7 @@ import {
   useSearchParams,
 } from 'react-router-dom';
 import {
+  Activity,
   Camera,
   Compass,
   ExternalLink,
@@ -15,6 +16,8 @@ import {
   LogOut,
   Map as MapIcon,
   Plus,
+  ShieldAlert,
+  UserCheck,
   Users,
   X,
 } from 'lucide-react';
@@ -23,6 +26,7 @@ import {
   createAdminFloor,
   createAdminVenue,
   getAdminToken,
+  getAdminUser,
   getAdminVenues,
   uploadAdminVenueCover,
 } from '../../lib/api';
@@ -47,6 +51,16 @@ const DIRECT_TABS = [
     to: '/admin/people',
     label: 'Staff',
     icon: Users,
+  },
+  {
+    to: '/admin/closures',
+    label: 'Closures',
+    icon: ShieldAlert,
+  },
+  {
+    to: '/admin/overview',
+    label: 'Stats',
+    icon: Activity,
   },
 ];
 
@@ -296,6 +310,23 @@ export const AdminLayout: React.FC = () => {
                   </Link>
                 )}
 
+                <Link
+                  to={
+                    selectedSlug
+                      ? `/admin/profile?venue=${encodeURIComponent(selectedSlug)}`
+                      : '/admin/profile'
+                  }
+                  className={`inline-flex items-center gap-1 rounded-xl px-2.5 py-1.5 text-xs font-bold ring-1 transition ${
+                    location.pathname.startsWith('/admin/profile')
+                      ? 'bg-indigo-600 text-white ring-indigo-400'
+                      : 'bg-white/10 text-slate-200 ring-white/15 hover:bg-white/15'
+                  }`}
+                  title={`Account & Security Vault (${getAdminUser()?.email || 'Profile'})`}
+                >
+                  <UserCheck className="h-3.5 w-3.5 text-emerald-300" />
+                  <span className="hidden sm:inline">Account</span>
+                </Link>
+
                 <button
                   type="button"
                   onClick={handleLogout}
@@ -309,7 +340,7 @@ export const AdminLayout: React.FC = () => {
 
             {/* Row 2: Always-Visible Direct Navigation Tabs (Only shown once user owns a place) */}
             {selectedSlug && (
-              <nav className="grid grid-cols-3 gap-1.5">
+              <nav className="grid grid-cols-5 gap-1 sm:gap-1.5">
                 {DIRECT_TABS.map((tab) => {
                   const Icon = tab.icon;
                   const isActive = location.pathname.startsWith(tab.to);
@@ -319,7 +350,7 @@ export const AdminLayout: React.FC = () => {
                     <Link
                       key={tab.to}
                       to={targetHref}
-                      className={`flex items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-extrabold whitespace-nowrap transition ${
+                      className={`flex items-center justify-center gap-1 sm:gap-1.5 rounded-xl px-1.5 sm:px-2 py-2 text-[11px] sm:text-xs font-extrabold whitespace-nowrap transition ${
                         isActive
                           ? 'bg-gradient-to-r from-cyan-500 to-indigo-600 text-white shadow'
                           : 'bg-white/[0.06] text-slate-300 hover:bg-white/[0.12] hover:text-white'
@@ -346,7 +377,7 @@ export const AdminLayout: React.FC = () => {
             </div>
           ) : error ? (
             <ErrorState message={error} onRetry={() => void refreshVenues()} />
-          ) : !selectedSlug ? (
+          ) : !selectedSlug && !location.pathname.startsWith('/admin/profile') ? (
             <div className="mx-auto max-w-md rounded-3xl bg-white p-8 text-center shadow-lg ring-1 ring-slate-200 space-y-4 mt-8">
               <h2 className="font-display text-xl font-extrabold text-slate-950">
                 Create Your Own Place

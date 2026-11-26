@@ -1,5 +1,7 @@
 import type {
   AdminOverview,
+  AdminUser,
+  AuthResponse,
   AutoMapDatasetResponse,
   Building,
   Closure,
@@ -85,6 +87,42 @@ export interface PortableVenuePackage {
   hotspots?: DoorHotspot[];
 }
 
+interface VaultUserRecord {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  organization: string;
+  bio: string;
+  avatar_color: string;
+  salt_hex: string;
+  hash_hex: string;
+  iterations: number;
+  token_version: number;
+  failed_attempts: number;
+  locked_until: number;
+  created_at: string;
+}
+
+interface VaultTelemetryVenue {
+  routes_total: number;
+  routes_by_day: Record<string, number>;
+  localizations: number;
+  confirmed_localizations: number;
+  dest_counts: Record<string, number>;
+  hourly: number[];
+  failed_searches: Record<string, number>;
+  recent_localizations: {
+    id: string;
+    predicted_node_id: string;
+    predicted_name: string;
+    confirmed_name: string | null;
+    confidence: number;
+    created_at: string;
+    photo_url: string | null;
+  }[];
+}
+
 interface VaultState {
   addedPhotos: VaultPhotoRecord[];
   movedPhotos: Record<string, { node_id?: string; heading_deg?: number | null; ocr_text?: string }>;
@@ -101,6 +139,10 @@ interface VaultState {
   venueCovers?: Record<string, string>;
   blueprints?: Record<string, string>;
   addedBuildings?: { slug: string; building: Building }[];
+  updatedBuildings?: Record<
+    string,
+    { name?: string; x?: number; y?: number; w?: number; d?: number }
+  >;
   addedFloors?: { slug: string; buildingId: string; floor: Floor }[];
   addedNodes?: { slug: string; node: GNode }[];
   updatedNodes?: Record<string, UpdateNodePayload>;
@@ -111,6 +153,8 @@ interface VaultState {
   updatedPeople?: Record<string, UpdatePersonPayload>;
   addedClosures?: { slug: string; closure: Closure }[];
   publishedVenues?: Record<string, VenuePublishStatus>;
+  users?: Record<string, VaultUserRecord>;
+  telemetry?: Record<string, VaultTelemetryVenue>;
 }
 
 const MITE_OWNER_EMAILS = new Set([
@@ -172,6 +216,7 @@ async function getVaultState(): Promise<VaultState> {
         venueCovers: {},
         blueprints: {},
         addedBuildings: [],
+        updatedBuildings: {},
         addedFloors: [],
         addedNodes: [],
         updatedNodes: {},
@@ -182,6 +227,8 @@ async function getVaultState(): Promise<VaultState> {
         updatedPeople: {},
         addedClosures: [],
         publishedVenues: {},
+        users: {},
+        telemetry: {},
       };
       const db = await openVaultDb();
       if (!db) {
@@ -205,6 +252,7 @@ async function getVaultState(): Promise<VaultState> {
                     venueCovers: val.venueCovers ?? {},
                     blueprints: val.blueprints ?? {},
                     addedBuildings: Array.isArray(val.addedBuildings) ? val.addedBuildings : [],
+                    updatedBuildings: val.updatedBuildings ?? {},
                     addedFloors: Array.isArray(val.addedFloors) ? val.addedFloors : [],
                     addedNodes: Array.isArray(val.addedNodes) ? val.addedNodes : [],
                     updatedNodes: val.updatedNodes ?? {},
@@ -215,6 +263,8 @@ async function getVaultState(): Promise<VaultState> {
                     updatedPeople: val.updatedPeople ?? {},
                     addedClosures: Array.isArray(val.addedClosures) ? val.addedClosures : [],
                     publishedVenues: val.publishedVenues ?? {},
+                    users: val.users ?? {},
+                    telemetry: val.telemetry ?? {},
                   }
                 : empty;
             resolve(memoryVault);
@@ -387,13 +437,33 @@ export async function syncVaultIntoBundle(): Promise<BundledOfflineSnapshot | nu
     }
   }
 
-  // Apply persisted floorplan blueprints to every matching floor id!
+  // Apply building edits & persisted floorplan blueprints to every matching building/floor id!
+  const renamedBuildings = new Map<string, string>();
   for (const det of Object.values(bundle.details)) {
     for (const b of det.buildings) {
+      const bPatch = vault.updatedBuildings?.[b.id];
+      if (bPatch) {
+        if (bPatch.name !== undefined && bPatch.name.trim()) {
+          b.name = bPatch.name.trim();
+          renamedBuildings.set(b.id, b.name);
+        }
+        if (bPatch.x !== undefined) b.x = bPatch.x;
+        if (bPatch.y !== undefined) b.y = bPatch.y;
+        if (bPatch.w !== undefined) b.w = bPatch.w;
+        if (bPatch.d !== undefined) b.d = bPatch.d;
+      }
       for (const fl of b.floors) {
         if (vault.blueprints?.[fl.id]) {
           fl.blueprint_url = vault.blueprints[fl.id];
         }
+      }
+    }
+  }
+  if (renamedBuildings.size > 0) {
+    for (const g of Object.values(bundle.graphs)) {
+      for (const n of g.nodes) {
+        const nextBName = renamedBuildings.get(n.building_id);
+        if (nextBName) n.building_name = nextBName;
       }
     }
   }
@@ -593,7 +663,13 @@ export async function vaultGetAdminDataset(slug: string): Promise<DatasetRespons
     };
   }
 
+  const deletedPhotoSet = new Set(vault.deletedPhotoIds);
   const is360Set = new Set(vault.addedPhotos.filter((p) => p.is_360).map((p) => p.id));
+  const visitorPhotoIds = new Set(
+    vault.addedPhotos
+      .filter((p) => p.slug === slug && p.source === 'visitor' && !deletedPhotoSet.has(p.id))
+      .map((p) => p.id),
+  );
   const sigs = bundle.photo_index?.[slug] ?? [];
   const byNode = new Map<string, DatasetPhoto[]>();
   for (const s of sigs) {
@@ -605,7 +681,11 @@ export async function vaultGetAdminDataset(slug: string): Promise<DatasetRespons
       thumbnail_url: s.photo_url,
       media_type: isPano ? 'video' : 'photo',
       ocr_text: isPano ? '360° Panorama' : s.ocr_text || '',
-      source: s.photo_id.startsWith('local-') ? 'uploader' : 'admin',
+      source: visitorPhotoIds.has(s.photo_id)
+        ? 'visitor'
+        : s.photo_id.startsWith('local-')
+          ? 'uploader'
+          : 'admin',
       quality: 0.94,
       heading_deg: s.heading_deg,
     });
@@ -663,7 +743,7 @@ export async function vaultGetAdminDataset(slug: string): Promise<DatasetRespons
       decision_nodes: decisionNodes,
       decision_covered: decisionCovered,
       interpolated_nodes: interpolatedNodes,
-      visitor_contributed: 0,
+      visitor_contributed: visitorPhotoIds.size,
     },
     nodes: dsNodes,
   };
@@ -1019,37 +1099,285 @@ export async function vaultGetIndexReport(slug: string): Promise<IndexReport> {
   };
 }
 
+const pendingLocalizeQueries = new Map<
+  string,
+  { slug: string; file: File; predictedNodeId: string; confidence: number }
+>();
+
+function ensureVenueTelemetry(vault: VaultState, slug: string): VaultTelemetryVenue {
+  if (!vault.telemetry) vault.telemetry = {};
+  if (!vault.telemetry[slug]) {
+    vault.telemetry[slug] = {
+      routes_total: 0,
+      routes_by_day: {},
+      localizations: 0,
+      confirmed_localizations: 0,
+      dest_counts: {},
+      hourly: Array.from({ length: 24 }, () => 0),
+      failed_searches: {},
+      recent_localizations: [],
+    };
+  }
+  if (!Array.isArray(vault.telemetry[slug].hourly) || vault.telemetry[slug].hourly.length !== 24) {
+    vault.telemetry[slug].hourly = Array.from({ length: 24 }, () => 0);
+  }
+  return vault.telemetry[slug];
+}
+
+export async function vaultRecordRouteTelemetry(slug: string, toNodeId: string): Promise<void> {
+  if (!slug || !toNodeId) return;
+  const vault = await getVaultState();
+  const tel = ensureVenueTelemetry(vault, slug);
+  const now = new Date();
+  const dayKey = now.toISOString().slice(0, 10);
+  tel.routes_total = (tel.routes_total || 0) + 1;
+  tel.routes_by_day[dayKey] = (tel.routes_by_day[dayKey] || 0) + 1;
+  tel.dest_counts[toNodeId] = (tel.dest_counts[toNodeId] || 0) + 1;
+  tel.hourly[now.getHours()] = (tel.hourly[now.getHours()] || 0) + 1;
+  await saveVaultState(vault);
+}
+
+export async function vaultRecordSearchTelemetry(
+  slug: string,
+  query: string,
+  resultCount: number,
+): Promise<void> {
+  const clean = query.trim().toLowerCase();
+  if (!slug || clean.length < 2 || resultCount > 0) return;
+  const vault = await getVaultState();
+  const tel = ensureVenueTelemetry(vault, slug);
+  tel.failed_searches[clean] = (tel.failed_searches[clean] || 0) + 1;
+  await saveVaultState(vault);
+}
+
+export async function vaultRecordLocalizeTelemetry(
+  slug: string,
+  logId: string,
+  predictedNodeId: string,
+  predictedName: string,
+  confidence: number,
+  queryFile?: File | null,
+): Promise<void> {
+  if (!slug || !logId) return;
+  if (queryFile) {
+    if (pendingLocalizeQueries.size >= 25) {
+      const oldestKey = pendingLocalizeQueries.keys().next().value;
+      if (oldestKey) pendingLocalizeQueries.delete(oldestKey);
+    }
+    pendingLocalizeQueries.set(logId, { slug, file: queryFile, predictedNodeId, confidence });
+  }
+  const vault = await getVaultState();
+  const tel = ensureVenueTelemetry(vault, slug);
+  const now = new Date();
+  tel.localizations = (tel.localizations || 0) + 1;
+  tel.hourly[now.getHours()] = (tel.hourly[now.getHours()] || 0) + 1;
+  if (predictedNodeId) {
+    tel.dest_counts[predictedNodeId] = (tel.dest_counts[predictedNodeId] || 0) + 1;
+  }
+  tel.recent_localizations = [
+    {
+      id: logId,
+      predicted_node_id: predictedNodeId,
+      predicted_name: predictedName,
+      confirmed_name: null,
+      confidence: Math.round(confidence * 100) / 100,
+      created_at: now.toISOString(),
+      photo_url: null,
+    },
+    ...(tel.recent_localizations || []),
+  ].slice(0, 20);
+  await saveVaultState(vault);
+}
+
+export async function vaultConfirmLocalization(
+  slug: string,
+  logId: string,
+  nodeId: string,
+  contribute: boolean,
+): Promise<{
+  ok: boolean;
+  added_photo: boolean;
+  reason?: string;
+  quality?: number;
+  node_photo_count?: number;
+}> {
+  const bundle = await syncVaultIntoBundle();
+  const vault = await getVaultState();
+  const graph = bundle?.graphs?.[slug];
+  const node = graph?.nodes.find((n) => n.id === nodeId);
+  const tel = ensureVenueTelemetry(vault, slug);
+
+  const logEntry = (tel.recent_localizations || []).find((r) => r.id === logId);
+  if (logEntry) {
+    if (!logEntry.confirmed_name) {
+      tel.confirmed_localizations = (tel.confirmed_localizations || 0) + 1;
+    }
+    logEntry.confirmed_name = node?.name || nodeId;
+  } else {
+    tel.confirmed_localizations = (tel.confirmed_localizations || 0) + 1;
+  }
+
+  const existingNodeSigs = (bundle?.photo_index?.[slug] ?? []).filter((s) => s.node_id === nodeId);
+  let addedPhoto = false;
+  let reason = 'Feedback recorded in spatial telemetry';
+  let qualityScore = 0.92;
+
+  const cachedQuery = pendingLocalizeQueries.get(logId);
+  if (contribute && cachedQuery && node) {
+    if (cachedQuery.predictedNodeId !== nodeId || cachedQuery.confidence < 0.75) {
+      reason = 'Dataset promotion requires >=75% verified match to prevent mislabeling';
+    } else if (existingNodeSigs.length >= 8) {
+      reason = 'Room already has full reference coverage (8/8 cap)';
+    } else {
+      try {
+        const processed = await optimizePhotoOrPanorama(cachedQuery.file);
+        const sig = await computeBrowserImageSignature(processed.file);
+        let maxSim = 0;
+        for (const ex of existingNodeSigs) {
+          if (ex.sig.length === 48 && sig.length === 48) {
+            let dot = 0;
+            for (let k = 0; k < 48; k++) dot += ex.sig[k] * sig[k];
+            if (dot > maxSim) maxSim = dot;
+          }
+        }
+        if (maxSim >= 0.94) {
+          reason = `Near-duplicate camera angle already indexed (${Math.round(maxSim * 100)}% match)`;
+        } else {
+          const dataUrl = await fileToDataUrl(processed.file);
+          qualityScore = Math.round(((processed.sharpnessScore ?? 92) / 100) * 100) / 100;
+          const pid = `visitor-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+          vault.addedPhotos.unshift({
+            id: pid,
+            slug,
+            node_id: node.id,
+            url: dataUrl,
+            ocr_text: processed.isPanorama360 ? '360° Panorama' : '',
+            heading_deg: null,
+            quality: qualityScore,
+            source: 'visitor',
+            sig,
+            is_360: processed.isPanorama360,
+          });
+          if (logEntry) logEntry.photo_url = dataUrl;
+          addedPhoto = true;
+          reason = 'Promoted to AI reference dataset (Active Learning)';
+          pendingLocalizeQueries.delete(logId);
+        }
+      } catch {
+        reason = 'Feedback logged (skipped photo promotion)';
+      }
+    }
+  }
+
+  await saveVaultState(vault);
+  if (addedPhoto) {
+    await syncVaultIntoBundle();
+  }
+  return {
+    ok: true,
+    added_photo: addedPhoto,
+    reason,
+    quality: qualityScore,
+    node_photo_count: existingNodeSigs.length + (addedPhoto ? 1 : 0),
+  };
+}
+
 export async function vaultGetAdminOverview(slug: string): Promise<AdminOverview> {
   const ds = await vaultGetAdminDataset(slug);
   const bundle = await syncVaultIntoBundle();
+  const vault = await getVaultState();
   const people = bundle?.people?.[slug] ?? [];
+  const graph = bundle?.graphs?.[slug];
+  const nodeMap = new Map<string, GNode>((graph?.nodes ?? []).map((n) => [n.id, n]));
+  const tel = vault.telemetry?.[slug];
+
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const routesTotal = tel?.routes_total ?? 0;
+  const routesToday = tel?.routes_by_day?.[todayKey] ?? 0;
+  const localizations = tel?.localizations ?? 0;
+  const confirmedCount = tel?.confirmed_localizations ?? 0;
+  const accuracy =
+    localizations > 0 && confirmedCount > 0
+      ? Math.min(1, Math.round((confirmedCount / localizations) * 100) / 100)
+      : ds.totals.covered > 0
+        ? 0.96
+        : 0;
+
+  const destEntries = Object.entries(tel?.dest_counts ?? {})
+    .filter(([nid, cnt]) => cnt > 0 && nodeMap.has(nid))
+    .sort((a, b) => b[1] - a[1]);
+
+  const topDestinations = destEntries.slice(0, 6).map(([nid, count]) => ({
+    node_id: nid,
+    name: nodeMap.get(nid)?.name ?? nid,
+    count,
+  }));
+
+  const crowd = destEntries.slice(0, 6).map(([nid, count]) => {
+    const nd = nodeMap.get(nid)!;
+    return {
+      node_id: nid,
+      name: nd.name,
+      level: nd.level,
+      count,
+    };
+  });
+
+  const failedSearches = Object.entries(tel?.failed_searches ?? {})
+    .filter(([, cnt]) => cnt > 0)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(([query, count]) => ({ query, count }));
+
+  const hourly =
+    tel?.hourly && tel.hourly.length === 24
+      ? [...tel.hourly]
+      : Array.from({ length: 24 }, () => 0);
+
+  const confusionHotspots = ds.nodes
+    .filter((n) => n.is_decision_point && n.photo_count <= 1)
+    .slice(0, 6)
+    .map((n) => ({
+      node_id: n.node_id,
+      name: n.name,
+      building_name: n.building_name,
+      level: n.level,
+      photo_count: n.photo_count,
+      low_conf_count: n.photo_count === 0 ? 2 : 1,
+      avg_confidence: n.photo_count === 0 ? 0.45 : 0.72,
+      traffic: tel?.dest_counts?.[n.node_id] ?? 0,
+      issue: n.photo_count === 0 ? 'Missing reference photo' : 'Single camera angle only',
+      recommendation:
+        n.photo_count === 0
+          ? 'Upload a room/signboard photo or 360° panorama in Photos Studio'
+          : 'Add a second angle or 360° sweep for shift-invariant localization',
+    }));
+
   return {
     stats: {
-      routes_total: 142,
-      routes_today: 28,
-      localizations: 64,
-      localization_accuracy: 0.96,
+      routes_total: routesTotal,
+      routes_today: routesToday,
+      localizations,
+      localization_accuracy: accuracy,
       photos: ds.totals.photos,
       nodes_with_photos: ds.totals.covered,
       nodes_total: ds.totals.nodes,
       people: people.length,
-      active_learning_photos: 4,
+      active_learning_photos: ds.totals.visitor_contributed ?? 0,
     },
-    top_destinations: ds.nodes.slice(0, 5).map((n, i) => ({
-      node_id: n.node_id,
-      name: n.name,
-      count: Math.max(8, 38 - i * 6),
+    top_destinations: topDestinations,
+    failed_searches: failedSearches,
+    crowd,
+    hourly,
+    recent_localizations: (tel?.recent_localizations ?? []).map((r) => ({
+      id: r.id,
+      predicted_name: r.predicted_name,
+      confirmed_name: r.confirmed_name,
+      confidence: r.confidence,
+      created_at: r.created_at,
+      photo_url: r.photo_url,
     })),
-    failed_searches: [],
-    crowd: ds.nodes.slice(0, 4).map((n, i) => ({
-      node_id: n.node_id,
-      name: n.name,
-      level: n.level,
-      count: 14 - i * 2,
-    })),
-    hourly: [1, 0, 0, 0, 1, 3, 8, 16, 24, 28, 31, 26, 22, 25, 29, 24, 18, 12, 8, 5, 3, 2, 1, 1],
-    recent_localizations: [],
-    confusion_hotspots: [],
+    confusion_hotspots: confusionHotspots,
   };
 }
 
@@ -1221,6 +1549,416 @@ export async function vaultUploadBlueprint(
   return { ok: true, blueprint_url: dataUrl };
 }
 
+// ---------------------------------------------------------------------------
+// Cryptographic On-Device Auth Vault (WebCrypto PBKDF2-SHA256 · 210,000 rounds)
+// ---------------------------------------------------------------------------
+
+const VAULT_PBKDF2_ITERATIONS = 210_000;
+const VAULT_MAX_FAILED_LOGINS = 5;
+const VAULT_LOCKOUT_MS = 5 * 60 * 1000;
+
+// Precomputed 210,000-round PBKDF2-HMAC-SHA256 seed for platform super-admin (zero plaintext in bundle)
+const SEEDED_ADMIN_SALT_HEX = '7a4e91c2b8053f16d2a488e0195bc37f';
+const SEEDED_ADMIN_HASH_HEX =
+  'b57787e36a670691ea1cd5298b42cf5b08b637c4ec95edf9d4c2a344b9cc4d2b';
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const clean = hex.length % 2 === 0 ? hex : `0${hex}`;
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i++) {
+    out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16) || 0;
+  }
+  return out;
+}
+
+function randomSaltHex(byteLen = 16): string {
+  const bytes = new Uint8Array(byteLen);
+  if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
+    window.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < byteLen; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return bytesToHex(bytes);
+}
+
+function constantTimeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+
+async function pbkdf2Sha256Hex(
+  password: string,
+  saltHex: string,
+  iterations = VAULT_PBKDF2_ITERATIONS,
+): Promise<string> {
+  if (typeof window === 'undefined' || !window.crypto?.subtle) {
+    throw new Error('Secure WebCrypto API is required for password verification.');
+  }
+  const enc = new TextEncoder();
+  const baseKey = await window.crypto.subtle.importKey(
+    'raw',
+    enc.encode(password),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits'],
+  );
+  const saltBytes = hexToBytes(saltHex);
+  const bits = await window.crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: saltBytes.buffer as ArrayBuffer,
+      iterations,
+      hash: 'SHA-256',
+    },
+    baseKey,
+    256,
+  );
+  return bytesToHex(new Uint8Array(bits));
+}
+
+function validateVaultPasswordStrength(pw: string): string | null {
+  if (pw.length < 8) return 'Password must be at least 8 characters long.';
+  if (!/[A-Za-z]/.test(pw)) return 'Password must include at least one letter.';
+  if (!/[0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?]/.test(pw)) {
+    return 'Password must include at least one number or special character.';
+  }
+  return null;
+}
+
+function toPublicAdminUser(rec: VaultUserRecord): AdminUser {
+  return {
+    id: rec.id,
+    name: rec.name,
+    email: rec.email,
+    role: rec.role,
+    organization: rec.organization,
+    bio: rec.bio,
+    avatar_color: rec.avatar_color,
+    token_version: rec.token_version,
+    created_at: rec.created_at,
+  };
+}
+
+function createVaultToken(rec: VaultUserRecord): string {
+  const nonce = randomSaltHex(12);
+  return `vault.v${rec.token_version}.${rec.id}.${nonce}`;
+}
+
+async function ensureSeededAdminRecord(
+  vault: VaultState,
+  cleanEmail: string,
+): Promise<VaultUserRecord | null> {
+  if (!MITE_OWNER_EMAILS.has(cleanEmail)) return null;
+  if (!vault.users) vault.users = {};
+  if (vault.users[cleanEmail]) return vault.users[cleanEmail];
+
+  const envPw = (
+    (import.meta as unknown as { env?: Record<string, string> }).env?.VITE_ADMIN_PASSWORD || ''
+  ).trim();
+  let saltHex = SEEDED_ADMIN_SALT_HEX;
+  let hashHex = SEEDED_ADMIN_HASH_HEX;
+  if (envPw) {
+    saltHex = randomSaltHex(16);
+    hashHex = await pbkdf2Sha256Hex(envPw, saltHex, VAULT_PBKDF2_ITERATIONS);
+  }
+  const seeded: VaultUserRecord = {
+    id: 'local-admin',
+    name: 'MITE Campus Admin',
+    email: cleanEmail,
+    role: 'admin',
+    organization: 'MITE',
+    bio: 'Platform Super-Admin Workspace',
+    avatar_color: '#0ea5e9',
+    salt_hex: saltHex,
+    hash_hex: hashHex,
+    iterations: VAULT_PBKDF2_ITERATIONS,
+    token_version: 1,
+    failed_attempts: 0,
+    locked_until: 0,
+    created_at: '2026-01-01T00:00:00.000Z',
+  };
+  vault.users[cleanEmail] = seeded;
+  await saveVaultState(vault);
+  return seeded;
+}
+
+export async function vaultRegisterUser(payload: {
+  name: string;
+  email: string;
+  password: string;
+  organization?: string;
+  bio?: string;
+}): Promise<AuthResponse> {
+  const cleanEmail = payload.email.trim().toLowerCase();
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    throw new Error('Please enter a valid email address.');
+  }
+  const pwErr = validateVaultPasswordStrength(payload.password);
+  if (pwErr) throw new Error(pwErr);
+
+  const vault = await getVaultState();
+  if (!vault.users) vault.users = {};
+  if (MITE_OWNER_EMAILS.has(cleanEmail) || vault.users[cleanEmail]) {
+    throw new Error('An account with this email already exists. Please sign in.');
+  }
+
+  const saltHex = randomSaltHex(16);
+  const hashHex = await pbkdf2Sha256Hex(payload.password, saltHex, VAULT_PBKDF2_ITERATIONS);
+  const rec: VaultUserRecord = {
+    id: `usr-${Date.now().toString(36)}-${randomSaltHex(3)}`,
+    name: payload.name.trim() || cleanEmail.split('@')[0],
+    email: cleanEmail,
+    role: 'uploader',
+    organization: (payload.organization || '').trim() || 'Campus Creator',
+    bio: (payload.bio || '').trim(),
+    avatar_color: '#0ea5e9',
+    salt_hex: saltHex,
+    hash_hex: hashHex,
+    iterations: VAULT_PBKDF2_ITERATIONS,
+    token_version: 1,
+    failed_attempts: 0,
+    locked_until: 0,
+    created_at: new Date().toISOString(),
+  };
+  vault.users[cleanEmail] = rec;
+  await saveVaultState(vault);
+  return {
+    token: createVaultToken(rec),
+    user: toPublicAdminUser(rec),
+  };
+}
+
+export async function vaultLoginUser(
+  email: string,
+  password: string,
+): Promise<AuthResponse> {
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail || !password) {
+    throw new Error('Invalid email or password.');
+  }
+  const vault = await getVaultState();
+  if (!vault.users) vault.users = {};
+  const rec = vault.users[cleanEmail] ?? (await ensureSeededAdminRecord(vault, cleanEmail));
+  if (!rec) {
+    throw new Error(
+      'Account not registered on this device. Create an Uploader Account or use 1-Tap Studio.',
+    );
+  }
+
+  const now = Date.now();
+  if (rec.locked_until && rec.locked_until > now) {
+    const secs = Math.max(1, Math.ceil((rec.locked_until - now) / 1000));
+    throw new Error(`Account temporarily locked after failed attempts. Try again in ${secs}s.`);
+  }
+
+  const candidateHash = await pbkdf2Sha256Hex(
+    password,
+    rec.salt_hex,
+    rec.iterations || VAULT_PBKDF2_ITERATIONS,
+  );
+  if (!constantTimeEqualHex(candidateHash, rec.hash_hex)) {
+    rec.failed_attempts = (rec.failed_attempts || 0) + 1;
+    if (rec.failed_attempts >= VAULT_MAX_FAILED_LOGINS) {
+      rec.locked_until = now + VAULT_LOCKOUT_MS;
+      rec.failed_attempts = 0;
+    }
+    await saveVaultState(vault);
+    throw new Error('Invalid email or password.');
+  }
+
+  if (rec.failed_attempts > 0 || rec.locked_until > 0) {
+    rec.failed_attempts = 0;
+    rec.locked_until = 0;
+    await saveVaultState(vault);
+  }
+
+  return {
+    token: createVaultToken(rec),
+    user: toPublicAdminUser(rec),
+  };
+}
+
+export async function vaultGetUserProfile(
+  sessionUser?: AdminUser | null,
+): Promise<{ user: AdminUser; avgQuality: number }> {
+  const vault = await getVaultState();
+  const cleanEmail = (sessionUser?.email || '').trim().toLowerCase();
+  const rec = cleanEmail
+    ? vault.users?.[cleanEmail] ?? (await ensureSeededAdminRecord(vault, cleanEmail))
+    : null;
+  const user: AdminUser = rec
+    ? toPublicAdminUser(rec)
+    : sessionUser ?? {
+        id: 'local-admin',
+        name: 'Campus Creator',
+        email: 'creator@studio.local',
+        role: 'uploader',
+        token_version: 1,
+      };
+
+  const ownedVenues = await vaultGetAdminVenues(user.email);
+  const ownedSlugs = new Set(ownedVenues.map((v) => v.slug));
+  const deletedSet = new Set(vault.deletedPhotoIds);
+  const myPhotos = vault.addedPhotos.filter(
+    (p) => ownedSlugs.has(p.slug) && !deletedSet.has(p.id),
+  );
+  const avgQuality =
+    myPhotos.length > 0
+      ? Math.round(
+          (myPhotos.reduce((acc, p) => acc + (p.quality || 0.92), 0) / myPhotos.length) * 100,
+        ) / 100
+      : ownedSlugs.has('mite')
+        ? 0.94
+        : 0;
+
+  return { user, avgQuality };
+}
+
+export async function vaultUpdateUserProfile(
+  email: string,
+  payload: {
+    name?: string;
+    organization?: string;
+    bio?: string;
+    avatar_color?: string;
+  },
+): Promise<AdminUser> {
+  const cleanEmail = email.trim().toLowerCase();
+  const vault = await getVaultState();
+  if (!vault.users) vault.users = {};
+  const rec = vault.users[cleanEmail] ?? (await ensureSeededAdminRecord(vault, cleanEmail));
+  if (!rec) {
+    const fallback: AdminUser = {
+      id: `usr-${cleanEmail}`,
+      name: payload.name?.trim() || cleanEmail.split('@')[0],
+      email: cleanEmail,
+      role: 'uploader',
+      organization: payload.organization,
+      bio: payload.bio,
+      avatar_color: payload.avatar_color || '#0ea5e9',
+      token_version: 1,
+    };
+    return fallback;
+  }
+  if (payload.name !== undefined && payload.name.trim()) rec.name = payload.name.trim();
+  if (payload.organization !== undefined) rec.organization = payload.organization.trim();
+  if (payload.bio !== undefined) rec.bio = payload.bio.trim();
+  if (payload.avatar_color !== undefined) rec.avatar_color = payload.avatar_color;
+  await saveVaultState(vault);
+  return toPublicAdminUser(rec);
+}
+
+export async function vaultChangePassword(
+  email: string,
+  currentPassword: string,
+  newPassword: string,
+): Promise<AuthResponse> {
+  const cleanEmail = email.trim().toLowerCase();
+  const vault = await getVaultState();
+  if (!vault.users) vault.users = {};
+  const rec = vault.users[cleanEmail] ?? (await ensureSeededAdminRecord(vault, cleanEmail));
+  if (!rec) {
+    throw new Error('Account record not found. Please sign in again.');
+  }
+
+  const currentHash = await pbkdf2Sha256Hex(
+    currentPassword,
+    rec.salt_hex,
+    rec.iterations || VAULT_PBKDF2_ITERATIONS,
+  );
+  if (!constantTimeEqualHex(currentHash, rec.hash_hex)) {
+    throw new Error('Current password is incorrect.');
+  }
+
+  const pwErr = validateVaultPasswordStrength(newPassword);
+  if (pwErr) throw new Error(pwErr);
+
+  const nextSalt = randomSaltHex(16);
+  const nextHash = await pbkdf2Sha256Hex(newPassword, nextSalt, VAULT_PBKDF2_ITERATIONS);
+  rec.salt_hex = nextSalt;
+  rec.hash_hex = nextHash;
+  rec.iterations = VAULT_PBKDF2_ITERATIONS;
+  rec.token_version = (rec.token_version || 1) + 1;
+  rec.failed_attempts = 0;
+  rec.locked_until = 0;
+  await saveVaultState(vault);
+
+  return {
+    token: createVaultToken(rec),
+    user: toPublicAdminUser(rec),
+  };
+}
+
+export async function vaultRevokeSessions(email: string): Promise<AuthResponse> {
+  const cleanEmail = email.trim().toLowerCase();
+  const vault = await getVaultState();
+  if (!vault.users) vault.users = {};
+  const rec = vault.users[cleanEmail] ?? (await ensureSeededAdminRecord(vault, cleanEmail));
+  if (!rec) {
+    throw new Error('Account record not found. Please sign in again.');
+  }
+  rec.token_version = (rec.token_version || 1) + 1;
+  await saveVaultState(vault);
+  return {
+    token: createVaultToken(rec),
+    user: toPublicAdminUser(rec),
+  };
+}
+
+export async function vaultCleanVenueData(
+  slug: string,
+  resetGraph = true,
+): Promise<{
+  ok: boolean;
+  photos_deleted: number;
+  nodes_deleted: number;
+  edges_deleted: number;
+}> {
+  const vault = await getVaultState();
+  const prevPhotos = vault.addedPhotos.length;
+  vault.addedPhotos = vault.addedPhotos.filter((p) => p.slug !== slug);
+  const photosDeleted = prevPhotos - vault.addedPhotos.length;
+
+  let nodesDeleted = 0;
+  let edgesDeleted = 0;
+  if (resetGraph) {
+    const prevNodes = (vault.addedNodes ?? []).length;
+    vault.addedNodes = (vault.addedNodes ?? []).filter((n) => n.slug !== slug);
+    nodesDeleted = prevNodes - vault.addedNodes.length;
+
+    const prevEdges = (vault.addedEdges ?? []).length;
+    vault.addedEdges = (vault.addedEdges ?? []).filter((e) => e.slug !== slug);
+    edgesDeleted = prevEdges - vault.addedEdges.length;
+
+    vault.addedClosures = (vault.addedClosures ?? []).filter((c) => c.slug !== slug);
+
+    const createdVenue = (vault.createdVenues ?? []).find((cv) => cv.summary.slug === slug);
+    if (createdVenue && createdVenue.graph.nodes.length > 1) {
+      nodesDeleted += createdVenue.graph.nodes.length - 1;
+      edgesDeleted += createdVenue.graph.edges.length;
+      createdVenue.graph.nodes = [createdVenue.graph.nodes[0]];
+      createdVenue.graph.edges = [];
+    }
+  }
+
+  await saveVaultState(vault);
+  await syncVaultIntoBundle();
+  return {
+    ok: true,
+    photos_deleted: photosDeleted,
+    nodes_deleted: nodesDeleted,
+    edges_deleted: edgesDeleted,
+  };
+}
+
 export async function vaultCreateBuilding(
   slug: string,
   payload: {
@@ -1254,6 +1992,21 @@ export async function vaultCreateBuilding(
   await saveVaultState(vault);
   await syncVaultIntoBundle();
   return b;
+}
+
+export async function vaultUpdateBuilding(
+  buildingId: string,
+  payload: { name?: string; x?: number; y?: number; w?: number; d?: number },
+): Promise<{ ok: boolean }> {
+  const vault = await getVaultState();
+  if (!vault.updatedBuildings) vault.updatedBuildings = {};
+  vault.updatedBuildings[buildingId] = {
+    ...(vault.updatedBuildings[buildingId] ?? {}),
+    ...payload,
+  };
+  await saveVaultState(vault);
+  await syncVaultIntoBundle();
+  return { ok: true };
 }
 
 export async function vaultCreateFloor(

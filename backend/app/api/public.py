@@ -7,7 +7,7 @@ import shutil
 from typing import List, Optional
 import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 from starlette.concurrency import run_in_threadpool
@@ -536,9 +536,11 @@ def venue_multistop_route(slug: str, payload: MultiStopRoutePayload, session: Se
 # Cross-Device Cloud Venue Sync Relay (/api/cloud-venues)
 # ---------------------------------------------------------------------------
 
+import hmac as _hmac
 import re as _re
 
 _SAFE_SLUG_RE = _re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+_PROTECTED_SEEDED_SLUGS = {"mite", "city-care", "horizon-campus", "metro-civic"}
 
 
 def _cloud_venues_dir():
@@ -547,11 +549,19 @@ def _cloud_venues_dir():
     return d
 
 
+def _hash_owner_key(raw_key: str) -> str:
+    return hashlib.sha256(f"navigator-cloud-owner:{raw_key}".encode("utf-8")).hexdigest()
+
+
 @router.get("/cloud-venues")
 def list_cloud_venues():
     d = _cloud_venues_dir()
     items = []
-    files = sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:25]
+    files = sorted(
+        [p for p in d.glob("*.json") if not p.name.endswith(".meta.json")],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )[:25]
     for fp in files:
         try:
             items.append(json.loads(fp.read_text(encoding="utf-8")))
@@ -575,14 +585,45 @@ def get_cloud_venue(slug: str):
 
 
 @router.post("/cloud-venues/{slug}")
-async def upsert_cloud_venue(slug: str, payload: dict):
+async def upsert_cloud_venue(
+    slug: str,
+    payload: dict,
+    x_venue_owner_key: Optional[str] = Header(default=None, alias="X-Venue-Owner-Key"),
+    session: Session = Depends(get_session),
+):
     clean = slug.strip().lower()
     if not _SAFE_SLUG_RE.match(clean):
         raise HTTPException(status_code=400, detail="Invalid venue slug.")
+    if clean in _PROTECTED_SEEDED_SLUGS or session.exec(select(Venue).where(Venue.slug == clean)).first() is not None:
+        raise HTTPException(
+            status_code=403,
+            detail="Protected system venue cannot be overwritten via public cloud relay.",
+        )
+    owner_key = (x_venue_owner_key or "").strip()
+    if len(owner_key) < 16:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or invalid X-Venue-Owner-Key header for venue ownership verification.",
+        )
+    key_digest = _hash_owner_key(owner_key)
+    d = _cloud_venues_dir()
+    fp = d / f"{clean}.json"
+    meta_fp = d / f"{clean}.meta.json"
+    if meta_fp.exists():
+        try:
+            meta = json.loads(meta_fp.read_text(encoding="utf-8"))
+            existing_digest = str(meta.get("owner_key_sha256") or "")
+        except Exception:
+            existing_digest = ""
+        if existing_digest and not _hmac.compare_digest(existing_digest, key_digest):
+            raise HTTPException(
+                status_code=403,
+                detail="This venue slug belongs to another creator workspace.",
+            )
     raw = json.dumps(payload, ensure_ascii=False)
     if len(raw.encode("utf-8")) > 18 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Venue package exceeds 18 MB limit.")
-    fp = _cloud_venues_dir() / f"{clean}.json"
     fp.write_text(raw, encoding="utf-8")
+    meta_fp.write_text(json.dumps({"owner_key_sha256": key_digest}), encoding="utf-8")
     return {"ok": True, "slug": clean}
 

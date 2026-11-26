@@ -58,6 +58,9 @@ import {
   vaultAutoConnectGraph,
   vaultAutoMapPhotos,
   vaultBulkCreateRoomsFromPhotos,
+  vaultChangePassword,
+  vaultCleanVenueData,
+  vaultConfirmLocalization,
   vaultCreateBuilding,
   vaultCreateClosure,
   vaultCreateEdge,
@@ -76,12 +79,21 @@ import {
   vaultGetClosures,
   vaultGetIndexReport,
   vaultGetPublishStatus,
+  vaultGetUserProfile,
+  vaultLoginUser,
   vaultPromotePhotoCover,
   vaultPublishVenue,
+  vaultRecordLocalizeTelemetry,
+  vaultRecordRouteTelemetry,
+  vaultRecordSearchTelemetry,
+  vaultRegisterUser,
+  vaultRevokeSessions,
   vaultRotatePhoto90,
+  vaultUpdateBuilding,
   vaultUpdateNode,
   vaultUpdatePerson,
   vaultUpdatePhoto,
+  vaultUpdateUserProfile,
   vaultUpdateVenue,
   vaultUploadBlueprint,
   vaultUploadPhotosToNode,
@@ -146,14 +158,24 @@ export function clearAdminSession(): void {
 }
 
 export const API_BASE = (
-  (import.meta as any).env?.VITE_API_URL ||
-  'https://slim-adopted-curve-bras.trycloudflare.com'
-).replace(/\/$/, '');
+  ((import.meta as unknown as { env?: Record<string, string> }).env?.VITE_API_URL || '').trim()
+).replace(/\/+$/, '');
+
+function hasConfiguredBackendServer(): boolean {
+  if (API_BASE.length > 0) return true;
+  if (
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+  ) {
+    return true;
+  }
+  return false;
+}
 
 let apiServerDownUntil = 0;
 
 function isOfflineFallbackError(err: unknown): boolean {
-  return err instanceof ApiError && (err.status === 0 || err.status >= 502);
+  return err instanceof ApiError && (err.status === 0 || err.status === 404 || err.status === 405 || err.status >= 502);
 }
 
 async function resolveOfflineGraph(slug: string): Promise<Graph | null> {
@@ -176,10 +198,11 @@ export function mediaUrl(url: string | null | undefined): string {
   }
   const normalized = `${url.startsWith('/') ? '' : '/'}${url}`;
   // Static media bundled inside frontend/public/media/... is served directly from same-origin CDN with zero database/server call
-  if (normalized.startsWith('/media/venues/') && !normalized.includes('/queries/')) {
-    return normalized;
-  }
-  if (Date.now() < apiServerDownUntil) {
+  if (
+    !API_BASE ||
+    (normalized.startsWith('/media/venues/') && !normalized.includes('/queries/')) ||
+    Date.now() < apiServerDownUntil
+  ) {
     return normalized;
   }
   return `${API_BASE}${normalized}`;
@@ -191,6 +214,13 @@ async function request<T>(
   auth = false,
   timeoutMs = 0,
 ): Promise<T> {
+  if (!path.startsWith('http') && !hasConfiguredBackendServer()) {
+    throw new ApiError(
+      'Static deployment active — operating via on-device spatial vault.',
+      0,
+    );
+  }
+
   const canFastFallback =
     !auth &&
     (!options.method ||
@@ -233,6 +263,13 @@ async function request<T>(
     );
   } finally {
     if (timerId !== null) window.clearTimeout(timerId);
+  }
+
+  const contentType = (res.headers.get('content-type') || '').toLowerCase();
+  // Detect static SPA hosts returning index.html for /api/* routes
+  if (res.ok && res.status !== 204 && !contentType.includes('application/json')) {
+    apiServerDownUntil = Date.now() + 60_000;
+    throw new ApiError('Static host HTML fallback detected.', 0);
   }
 
   if (res.status >= 502) {
@@ -362,19 +399,23 @@ export async function searchVenue(
   if (graph) {
     const bundle = await syncVaultIntoBundle();
     const people = bundle?.people?.[slug] ?? getCachedVenuePeople(slug) ?? [];
-    return computeOfflineSearch(graph, people, q, fromNodeId);
+    const res = computeOfflineSearch(graph, people, q, fromNodeId);
+    void vaultRecordSearchTelemetry(slug, q, res.results.length);
+    return res;
   }
   const params = new URLSearchParams();
   params.set('q', q);
   if (fromNodeId) {
     params.set('from', fromNodeId);
   }
-  return request<SearchResponse>(
+  const res = await request<SearchResponse>(
     `/api/venues/${encodeURIComponent(slug)}/search?${params.toString()}`,
     {},
     false,
     5500,
   );
+  void vaultRecordSearchTelemetry(slug, q, res.results.length);
+  return res;
 }
 
 function isLikelyImageFile(file: File): boolean {
@@ -590,7 +631,16 @@ export async function localizePhoto(
   );
   const bundle = await syncVaultIntoBundle();
   if (bundle?.graphs?.[slug]) {
-    return computeOfflineLocalize(slug, optimizedFile, bundle, level, priorNodeId);
+    const res = await computeOfflineLocalize(slug, optimizedFile, bundle, level, priorNodeId);
+    void vaultRecordLocalizeTelemetry(
+      slug,
+      res.log_id,
+      res.best?.node_id || '',
+      res.best?.name || 'Unmatched',
+      res.confidence,
+      optimizedFile,
+    );
+    return res;
   }
   const fd = new FormData();
   fd.append('file', optimizedFile);
@@ -600,7 +650,7 @@ export async function localizePhoto(
   if (priorNodeId) {
     fd.append('prior_node_id', priorNodeId);
   }
-  return request<LocalizeResult>(
+  const res = await request<LocalizeResult>(
     `/api/venues/${encodeURIComponent(slug)}/localize`,
     {
       method: 'POST',
@@ -609,6 +659,15 @@ export async function localizePhoto(
     false,
     25000,
   );
+  void vaultRecordLocalizeTelemetry(
+    slug,
+    res.log_id,
+    res.best?.node_id || '',
+    res.best?.name || 'Unmatched',
+    res.confidence,
+    optimizedFile,
+  );
+  return res;
 }
 
 export async function fetchSamplePhotoAsFile(
@@ -648,12 +707,12 @@ export async function confirmLocalization(
   quality?: number;
   node_photo_count?: number;
 }> {
-  if (logId.startsWith('static-')) {
-    return {
-      ok: true,
-      added_photo: false,
-      reason: 'Confirmed against bundled static model',
-    };
+  if (
+    logId.startsWith('vpr2-') ||
+    logId.startsWith('static-') ||
+    !hasConfiguredBackendServer()
+  ) {
+    return vaultConfirmLocalization(slug, logId, nodeId, contribute);
   }
   try {
     return await request<{
@@ -670,7 +729,7 @@ export async function confirmLocalization(
       },
     );
   } catch {
-    return { ok: true, added_photo: false };
+    return vaultConfirmLocalization(slug, logId, nodeId, contribute);
   }
 }
 
@@ -683,9 +742,11 @@ export async function computeRoute(
 ): Promise<Route> {
   const cachedGraph = await resolveOfflineGraph(slug);
   if (cachedGraph) {
-    return computeOfflineRoute(cachedGraph, fromNode, toNode, profile);
+    const route = computeOfflineRoute(cachedGraph, fromNode, toNode, profile);
+    void vaultRecordRouteTelemetry(slug, route.to_node);
+    return route;
   }
-  return request<Route>(
+  const route = await request<Route>(
     `/api/venues/${encodeURIComponent(slug)}/route`,
     {
       method: 'POST',
@@ -700,6 +761,8 @@ export async function computeRoute(
     false,
     7000,
   );
+  void vaultRecordRouteTelemetry(slug, route.to_node);
+  return route;
 }
 
 export async function computeNearestRoute(
@@ -711,9 +774,11 @@ export async function computeNearestRoute(
 ): Promise<Route> {
   const cachedGraph = await resolveOfflineGraph(slug);
   if (cachedGraph) {
-    return computeOfflineNearestRoute(cachedGraph, fromNode, targetKind, profile);
+    const route = computeOfflineNearestRoute(cachedGraph, fromNode, targetKind, profile);
+    void vaultRecordRouteTelemetry(slug, route.to_node);
+    return route;
   }
-  return request<Route>(
+  const route = await request<Route>(
     `/api/venues/${encodeURIComponent(slug)}/route/nearest`,
     {
       method: 'POST',
@@ -728,6 +793,8 @@ export async function computeNearestRoute(
     false,
     7000,
   );
+  void vaultRecordRouteTelemetry(slug, route.to_node);
+  return route;
 }
 
 export async function computeMultiStopRoute(
@@ -738,9 +805,11 @@ export async function computeMultiStopRoute(
 ): Promise<Route> {
   const cachedGraph = await resolveOfflineGraph(slug);
   if (cachedGraph) {
-    return computeOfflineMultiStopRoute(cachedGraph, stops, profile);
+    const route = computeOfflineMultiStopRoute(cachedGraph, stops, profile);
+    void vaultRecordRouteTelemetry(slug, route.to_node);
+    return route;
   }
-  return request<Route>(
+  const route = await request<Route>(
     `/api/venues/${encodeURIComponent(slug)}/route/multi`,
     {
       method: 'POST',
@@ -755,32 +824,46 @@ export async function computeMultiStopRoute(
     false,
     7000,
   );
+  void vaultRecordRouteTelemetry(slug, route.to_node);
+  return route;
 }
 
 // ---------------------------------------------------------------------------
-// Secure Uploader Auth & User Profile Vault API (With On-Device Admin Fallback)
+// Secure Uploader Auth & User Profile Vault API (PBKDF2-SHA256 + Backend Sync)
 // ---------------------------------------------------------------------------
 
 export async function adminLogin(
   email: string,
   password: string,
 ): Promise<AuthResponse> {
-  const cleanEmail = email.trim().toLowerCase();
-  const isMiteOwner =
-    cleanEmail === 'admin@navigator.local' || cleanEmail === 'admin@navigator.dev';
-  const user: AdminUser = {
-    id: isMiteOwner ? 'local-admin' : `local-${cleanEmail}`,
-    name: isMiteOwner ? 'MITE Campus Admin' : cleanEmail.split('@')[0],
-    email: cleanEmail,
-    role: isMiteOwner ? 'admin' : 'uploader',
-    organization: isMiteOwner ? 'MITE' : 'Campus Creator',
-    avatar_color: '#0ea5e9',
-  };
-  const data: AuthResponse = {
-    token: `local-vault-token-${Date.now()}`,
-    user,
-  };
-  void password;
+  if (hasConfiguredBackendServer() && Date.now() >= apiServerDownUntil) {
+    try {
+      const data = await request<AuthResponse>(
+        '/api/auth/login',
+        {
+          method: 'POST',
+          body: JSON.stringify({ email: email.trim().toLowerCase(), password }),
+        },
+        false,
+        4500,
+      );
+      setAdminSession(data.token, data.user);
+      return data;
+    } catch (err) {
+      if (!isOfflineFallbackError(err)) {
+        throw err;
+      }
+    }
+  }
+  let data: AuthResponse;
+  try {
+    data = await vaultLoginUser(email, password);
+  } catch (err) {
+    throw new ApiError(
+      err instanceof Error ? err.message : 'Invalid email or password.',
+      401,
+    );
+  }
   setAdminSession(data.token, data.user);
   return data;
 }
@@ -792,31 +875,40 @@ export async function registerUploader(payload: {
   organization?: string;
   bio?: string;
 }): Promise<AuthResponse> {
-  const cleanEmail = payload.email.trim().toLowerCase();
-  const user: AdminUser = {
-    id: `local-${Date.now()}`,
-    name: payload.name.trim(),
-    email: cleanEmail,
-    role: 'uploader',
-    organization: payload.organization || 'Campus Creator',
-    bio: payload.bio || '',
-    avatar_color: '#0ea5e9',
-  };
-  const data: AuthResponse = {
-    token: `local-vault-token-${Date.now()}`,
-    user,
-  };
+  if (hasConfiguredBackendServer() && Date.now() >= apiServerDownUntil) {
+    try {
+      const data = await request<AuthResponse>(
+        '/api/auth/register',
+        {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        },
+        false,
+        4500,
+      );
+      setAdminSession(data.token, data.user);
+      return data;
+    } catch (err) {
+      if (!isOfflineFallbackError(err)) {
+        throw err;
+      }
+    }
+  }
+  let data: AuthResponse;
+  try {
+    data = await vaultRegisterUser(payload);
+  } catch (err) {
+    throw new ApiError(
+      err instanceof Error ? err.message : 'Could not create uploader account.',
+      400,
+    );
+  }
   setAdminSession(data.token, data.user);
   return data;
 }
 
 export async function getMyProfile(): Promise<UploaderProfileResponse> {
-  const user = getAdminUser() ?? {
-    id: 'local-admin',
-    name: 'MITE Campus Admin',
-    email: 'admin@navigator.local',
-    role: 'admin',
-  };
+  const { user, avgQuality } = await vaultGetUserProfile(getAdminUser());
   // Strictly return ONLY venues built/owned by THIS signed-in account!
   const venues = await vaultGetAdminVenues(user.email);
   const totalPhotos = venues.reduce((a, v) => a + v.stats.photos, 0);
@@ -827,7 +919,7 @@ export async function getMyProfile(): Promise<UploaderProfileResponse> {
       venues_created: venues.length,
       nodes_mapped: totalPlaces,
       photos_uploaded: totalPhotos,
-      avg_photo_quality: 0.94,
+      avg_photo_quality: avgQuality,
     },
     venues,
   };
@@ -841,36 +933,41 @@ export async function updateMyProfile(payload: {
 }): Promise<{ user: AdminUser }> {
   const cur = getAdminUser() ?? {
     name: 'Admin',
-    email: 'admin@navigator.dev',
+    email: 'admin@navigator.local',
     role: 'admin',
   };
-  const updated: AdminUser = { ...cur, ...payload };
-  const tok = getAdminToken() || 'local-vault-token';
+  const updated = await vaultUpdateUserProfile(cur.email, payload);
+  const tok = getAdminToken() || `local-vault-token-${Date.now()}`;
   setAdminSession(tok, updated);
   return { user: updated };
 }
 
 export async function changeAdminPassword(
-  _currentPassword: string,
-  _newPassword: string,
+  currentPassword: string,
+  newPassword: string,
 ): Promise<AuthResponse> {
-  const user = getAdminUser() ?? {
-    name: 'Admin',
-    email: 'admin@navigator.dev',
-    role: 'admin',
-  };
-  const data: AuthResponse = { token: `local-vault-token-${Date.now()}`, user };
-  setAdminSession(data.token, data.user);
-  return data;
+  const cur = getAdminUser();
+  if (!cur?.email) {
+    throw new ApiError('Your session expired. Please sign in again.', 401);
+  }
+  try {
+    const data = await vaultChangePassword(cur.email, currentPassword, newPassword);
+    setAdminSession(data.token, data.user);
+    return data;
+  } catch (err) {
+    throw new ApiError(
+      err instanceof Error ? err.message : 'Password update failed.',
+      400,
+    );
+  }
 }
 
 export async function revokeOtherSessions(): Promise<AuthResponse> {
-  const user = getAdminUser() ?? {
-    name: 'Admin',
-    email: 'admin@navigator.dev',
-    role: 'admin',
-  };
-  const data: AuthResponse = { token: `local-vault-token-${Date.now()}`, user };
+  const cur = getAdminUser();
+  if (!cur?.email) {
+    throw new ApiError('Your session expired. Please sign in again.', 401);
+  }
+  const data = await vaultRevokeSessions(cur.email);
   setAdminSession(data.token, data.user);
   return data;
 }
@@ -911,7 +1008,7 @@ export async function deleteAdminVenue(slug: string): Promise<{ ok: boolean }> {
 
 export async function cleanAdminVenueData(
   slug: string,
-  _resetGraph = true,
+  resetGraph = true,
 ): Promise<{
   ok: boolean;
   photos_deleted: number;
@@ -919,7 +1016,7 @@ export async function cleanAdminVenueData(
   edges_deleted: number;
 }> {
   clearDeviceVenueCache(slug);
-  return { ok: true, photos_deleted: 0, nodes_deleted: 0, edges_deleted: 0 };
+  return vaultCleanVenueData(slug, resetGraph);
 }
 
 export async function createAdminBuilding(
@@ -938,10 +1035,10 @@ export async function createAdminBuilding(
 }
 
 export async function updateAdminBuilding(
-  _buildingId: string,
-  _payload: { name?: string; x?: number; y?: number; w?: number; d?: number },
+  buildingId: string,
+  payload: { name?: string; x?: number; y?: number; w?: number; d?: number },
 ): Promise<{ ok: boolean }> {
-  return { ok: true };
+  return vaultUpdateBuilding(buildingId, payload);
 }
 
 export async function createAdminFloor(

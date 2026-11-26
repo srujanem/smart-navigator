@@ -65,16 +65,42 @@ export const AdminLoginPage: React.FC = () => {
     setError(null);
     try {
       let devEmail = '';
+      let devSecret = '';
       try {
         devEmail = localStorage.getItem('navigator_device_creator_email') || '';
         if (!devEmail) {
           devEmail = `creator-${Math.random().toString(36).slice(2, 8)}@studio.local`;
           localStorage.setItem('navigator_device_creator_email', devEmail);
         }
+        devSecret = localStorage.getItem('navigator_device_creator_secret') || '';
+        if (!devSecret) {
+          const rnd = new Uint8Array(12);
+          if (typeof window !== 'undefined' && window.crypto?.getRandomValues) {
+            window.crypto.getRandomValues(rnd);
+          }
+          const hex = Array.from(rnd, (b) => b.toString(16).padStart(2, '0')).join('');
+          devSecret = `Vault#${hex || Math.random().toString(36).slice(2)}9A`;
+          localStorage.setItem('navigator_device_creator_secret', devSecret);
+        }
       } catch {
         devEmail = 'creator@studio.local';
+        devSecret = 'StudioVault1!';
       }
-      await adminLogin(devEmail, 'StudioVault1!');
+      try {
+        await adminLogin(devEmail, devSecret);
+      } catch (loginErr) {
+        const msg = loginErr instanceof Error ? loginErr.message : '';
+        if (msg.toLowerCase().includes('not registered')) {
+          await registerUploader({
+            name: 'Campus Creator',
+            email: devEmail,
+            password: devSecret,
+            organization: 'Private Device Studio',
+          });
+        } else {
+          throw loginErr;
+        }
+      }
       navigate('/admin/dataset', { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to open Creator Studio.');

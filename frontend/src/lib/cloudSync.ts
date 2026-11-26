@@ -14,11 +14,32 @@
 import type { PortableVenuePackage } from './adminVault';
 
 const SUPABASE_CFG_KEY = 'navigator_supabase_cloud_cfg_v1';
+const CLOUD_OWNER_KEY_STORAGE = 'navigator_cloud_owner_key_v1';
 const OFFLINE_VENUES_META_KEY = 'navigator_offline_saved_venues_v1';
 const OFFLINE_MEDIA_CACHE = 'navigator-offline-venues-v1';
 const EXPLICIT_API_BASE = (
   (import.meta.env.VITE_API_URL as string | undefined)?.trim() || ''
 ).replace(/\/+$/, '');
+
+function getOrCreateCloudOwnerKey(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    let key = localStorage.getItem(CLOUD_OWNER_KEY_STORAGE) || '';
+    if (key.length >= 24) return key;
+    const bytes = new Uint8Array(24);
+    if (window.crypto?.getRandomValues) {
+      window.crypto.getRandomValues(bytes);
+    }
+    key = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    if (key.length < 24) {
+      key = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+    }
+    localStorage.setItem(CLOUD_OWNER_KEY_STORAGE, key);
+    return key;
+  } catch {
+    return '';
+  }
+}
 
 function getRelayApiBase(): string | null {
   if (EXPLICIT_API_BASE) return EXPLICIT_API_BASE;
@@ -133,14 +154,27 @@ export async function pushVenueToCloud(
     try {
       const ctrl = new AbortController();
       const timer = window.setTimeout(() => ctrl.abort(), 4500);
+      const ownerKey = getOrCreateCloudOwnerKey();
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (ownerKey) headers['X-Venue-Owner-Key'] = ownerKey;
+      try {
+        const tok = localStorage.getItem('navigator_admin_token');
+        if (tok) headers.Authorization = `Bearer ${tok}`;
+      } catch {
+        // Ignore
+      }
       const res = await fetch(`${relayBase}/api/cloud-venues/${encodeURIComponent(pkg.slug)}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(pkg),
         signal: ctrl.signal,
       });
       window.clearTimeout(timer);
-      if (res.ok && syncedTarget === 'local') {
+      if (
+        res.ok &&
+        (res.headers.get('content-type') || '').includes('application/json') &&
+        syncedTarget === 'local'
+      ) {
         syncedTarget = 'api';
       }
     } catch {

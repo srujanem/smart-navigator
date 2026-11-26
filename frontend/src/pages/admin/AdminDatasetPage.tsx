@@ -1472,6 +1472,7 @@ export const AdminDatasetPage: React.FC = () => {
               ? `Synced "${venue.name}" to ${res.target === 'supabase' ? 'Supabase Cloud' : 'Cloud API Relay'}!`
               : 'Saved to local vault (configure Supabase URL & Key for global sync).',
           );
+          return res;
         }}
       />
 

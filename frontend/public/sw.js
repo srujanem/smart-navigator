@@ -1,4 +1,4 @@
-const CACHE_NAME = 'navigator-pwa-v18';
+const CACHE_NAME = 'navigator-pwa-v19';
 const OFFLINE_VENUES_CACHE = 'navigator-offline-venues-v1';
 const SHELL_ASSETS = ['/', '/index.html', '/manifest.json', '/favicon.svg', '/offline-bundle.json'];
 
@@ -47,10 +47,11 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Never intercept or cache private auth, admin APIs, or privacy-sensitive visitor query photos
+  // Never intercept or cache private auth, admin APIs, live cloud venue sync, or privacy-sensitive visitor query photos
   if (
     url.pathname.startsWith('/api/admin') ||
     url.pathname.startsWith('/api/auth') ||
+    url.pathname.startsWith('/api/cloud-venues') ||
     url.pathname.includes('/queries/')
   ) {
     return;

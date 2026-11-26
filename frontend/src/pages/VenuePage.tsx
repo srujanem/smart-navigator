@@ -1554,7 +1554,15 @@ export const VenuePage: React.FC = () => {
 
                   <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-xs">
                     <span className="text-slate-500 truncate pr-2">
-                      {p.building_name} · {p.node_name}
+                      {(() => {
+                        const relocated =
+                          p.status === 'moved' && p.target_node_id !== p.node_id
+                            ? graph.nodes.find((n) => n.id === p.target_node_id)
+                            : null;
+                        return relocated
+                          ? `${relocated.building_name} · ${relocated.name} (from ${p.node_name})`
+                          : `${p.building_name} · ${p.node_name}`;
+                      })()}
                     </span>
                     <button
                       type="button"

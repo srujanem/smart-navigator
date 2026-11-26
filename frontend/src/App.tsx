@@ -90,6 +90,7 @@ const App: React.FC = () => {
             <Route path="/admin/login" element={<AdminLoginPage />} />
             <Route path="/admin" element={<AdminLayout />}>
               <Route index element={<AdminOverviewPage />} />
+              <Route path="overview" element={<AdminOverviewPage />} />
               <Route path="map" element={<AdminMapRedirect />} />
               <Route path="map-editor" element={<AdminMapBuilderPage />} />
               <Route path="dataset" element={<AdminDatasetPage />} />

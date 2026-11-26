@@ -38,14 +38,14 @@ export const CloudSyncModal: React.FC<{
   open: boolean;
   onClose: () => void;
   venueName: string;
-  onTriggerCloudSync: () => Promise<void>;
+  onTriggerCloudSync: () => Promise<{ synced: boolean; target: 'supabase' | 'api' | 'local' }>;
 }> = ({ open, onClose, venueName, onTriggerCloudSync }) => {
   const existing = getSupabaseConfig();
   const [sbUrl, setSbUrl] = useState(existing?.url || '');
   const [sbKey, setSbKey] = useState(existing?.anonKey || '');
   const [copiedSql, setCopiedSql] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [savedMsg, setSavedMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   if (!open) return null;
 
@@ -59,8 +59,22 @@ export const CloudSyncModal: React.FC<{
     setSyncing(true);
     setSavedMsg(null);
     try {
-      await onTriggerCloudSync();
-      setSavedMsg('Synced! Visitors opening your link on other devices will receive the latest map.');
+      const res = await onTriggerCloudSync();
+      if (res.synced) {
+        setSavedMsg({
+          ok: true,
+          text: `Synced to ${
+            res.target === 'supabase' ? 'Supabase Cloud' : 'Cloud API Relay'
+          }! Visitors opening your link on other devices will receive the latest map.`,
+        });
+      } else {
+        setSavedMsg({
+          ok: false,
+          text: sbUrl.trim()
+            ? 'Could not reach Supabase table (verify URL, Anon Key & SQL table setup above). Map remains safely saved in your On-Device Vault.'
+            : 'Saved in On-Device Vault. Enter a free Supabase URL + Anon Key above (or use Export Package) to sync across other devices.',
+        });
+      }
     } finally {
       setSyncing(false);
     }
@@ -85,7 +99,7 @@ export const CloudSyncModal: React.FC<{
                 Cloud Sync · {venueName}
               </h2>
               <p className="text-xs text-slate-500">
-                Automatic API relay is active; connect free Supabase for permanent cross-device storage
+                Connect free Supabase for permanent cross-device sync, or use Export Package offline
               </p>
             </div>
           </div>
@@ -153,8 +167,15 @@ export const CloudSyncModal: React.FC<{
           </div>
 
           {savedMsg && (
-            <div className="rounded-xl bg-emerald-50 px-3.5 py-2.5 text-xs font-bold text-emerald-800 ring-1 ring-emerald-200">
-              ✅ {savedMsg}
+            <div
+              className={`rounded-xl px-3.5 py-2.5 text-xs font-bold ring-1 ${
+                savedMsg.ok
+                  ? 'bg-emerald-50 text-emerald-800 ring-emerald-200'
+                  : 'bg-sky-50 text-sky-900 ring-sky-200'
+              }`}
+            >
+              {savedMsg.ok ? '✅ ' : 'ℹ️ '}
+              {savedMsg.text}
             </div>
           )}
 
