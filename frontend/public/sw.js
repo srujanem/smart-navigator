@@ -1,4 +1,4 @@
-const CACHE_NAME = 'navigator-pwa-v19';
+const CACHE_NAME = 'navigator-pwa-v20';
 const OFFLINE_VENUES_CACHE = 'navigator-offline-venues-v1';
 const SHELL_ASSETS = ['/', '/index.html', '/manifest.json', '/favicon.svg', '/offline-bundle.json'];
 
