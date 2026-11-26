@@ -44,6 +44,7 @@ import {
 const IDB_NAME = 'navigator_admin_vault_v1';
 const IDB_STORE = 'kv';
 const VAULT_STATE_KEY = 'vault_state_v1';
+const PHOTO_PURGE_FLAG_KEY = 'navigator_photos_purged_20261126_v1';
 
 interface VaultPhotoRecord {
   id: string;
@@ -241,7 +242,7 @@ async function getVaultState(): Promise<VaultState> {
           const req = tx.objectStore(IDB_STORE).get(VAULT_STATE_KEY);
           req.onsuccess = () => {
             const val = req.result as VaultState | undefined;
-            memoryVault =
+            let loaded: VaultState =
               val && Array.isArray(val.addedPhotos)
                 ? {
                     ...empty,
@@ -267,6 +268,50 @@ async function getVaultState(): Promise<VaultState> {
                     telemetry: val.telemetry ?? {},
                   }
                 : empty;
+
+            try {
+              if (
+                typeof window !== 'undefined' &&
+                window.localStorage.getItem(PHOTO_PURGE_FLAG_KEY) !== '1'
+              ) {
+                loaded = {
+                  ...loaded,
+                  addedPhotos: [],
+                  movedPhotos: {},
+                  deletedPhotoIds: [],
+                  venueCovers: {},
+                  createdVenues: (loaded.createdVenues ?? []).map((cv) => ({
+                    ...cv,
+                    summary: {
+                      ...cv.summary,
+                      cover_url: null,
+                      stats: { ...cv.summary.stats, photos: 0 },
+                    },
+                    detail: {
+                      ...cv.detail,
+                      cover_url: null,
+                      stats: { ...cv.detail.stats, photos: 0 },
+                    },
+                    graph: {
+                      ...cv.graph,
+                      nodes: cv.graph.nodes.map((n) => ({
+                        ...n,
+                        photo_url: null,
+                        photo_count: 0,
+                        video_url: null,
+                        duration_s: null,
+                      })),
+                    },
+                  })),
+                };
+                window.localStorage.setItem(PHOTO_PURGE_FLAG_KEY, '1');
+                void saveVaultState(loaded);
+              }
+            } catch {
+              // Ignore storage access errors
+            }
+
+            memoryVault = loaded;
             resolve(memoryVault);
           };
           req.onerror = () => {
